@@ -14,7 +14,8 @@
 //  11. Linux CI passes (this check is the CI run itself).
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,31 +41,73 @@ function commitSha(): string {
   }
 }
 
+/** Compute SHA-256 hex of a file. */
+function fileSha256(path: string): string {
+  const content = readFileSync(path);
+  return createHash("sha256").update(content).digest("hex");
+}
+
 async function main(): Promise<void> {
   const startedAt = new Date().toISOString();
   const sha = commitSha();
   const checks: GateCheck[] = [];
 
-  // 1. Provenance points to the exact tag and commit
+  // 0. Compose Phase 0.0 gate (a phase-exit command includes its dependencies)
   {
-    const provenance = readFileSync(join(ROOT, "docs/provenance/pi.md"), "utf-8");
-    const hasTag = provenance.includes("v0.81.1");
-    const hasCommit = provenance.includes("20be4b18d4c57487f8993d2762bace129f0cf7c6");
+    const result = run("npx", ["tsx", "scripts/gate/gate-0.0.ts"], {
+      cwd: ROOT, throwOnError: false,
+    });
+    const passed = result.exitCode === 0;
+    const statusMatch = result.stdout.match(/Gate 0\.0:\s+(PASSED|FAILED)/);
     checks.push({
-      id: "provenance.pi.tag_and_commit",
-      status: hasTag && hasCommit ? "passed" : "failed",
-      evidence: hasTag && hasCommit ? "v0.81.1 + commit pinned" : "missing tag or commit",
+      id: "phase0.gate_composition",
+      status: passed ? "passed" : "failed",
+      evidence: statusMatch ? statusMatch[0] : (passed ? "gate:0.0 passed" : "gate:0.0 FAILED"),
     });
   }
 
-  // 2. Imported-file checksums recorded
+  // 1. Provenance manifest exists and points to the exact tag and commit
   {
-    const provenance = readFileSync(join(ROOT, "docs/provenance/pi.md"), "utf-8");
-    const hasChecksums = provenance.includes("3f2bef7c") && provenance.includes("b1b1655f");
+    const manifestPath = join(ROOT, "docs/provenance/pi-v0.81.1.import.json");
+    const manifestExists = existsSync(manifestPath);
+    let tagOk = false;
+    let commitOk = false;
+    if (manifestExists) {
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
+      tagOk = manifest?.source?.tag === "v0.81.1";
+      commitOk = manifest?.source?.commit === "20be4b18d4c57487f8993d2762bace129f0cf7c6";
+    }
     checks.push({
-      id: "provenance.pi.checksums",
-      status: hasChecksums ? "passed" : "failed",
-      evidence: hasChecksums ? "4 SHA-256 checksums recorded" : "checksums missing",
+      id: "provenance.pi.tag_and_commit",
+      status: manifestExists && tagOk && commitOk ? "passed" : "failed",
+      evidence: tagOk && commitOk ? "v0.81.1 + commit pinned in manifest" : "missing or incorrect",
+    });
+  }
+
+  // 2. Imported-file checksums: compute SHA-256 of all 4 files and compare
+  {
+    const manifestPath = join(ROOT, "docs/provenance/pi-v0.81.1.import.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
+    const files: Array<{ destination: string; sha256: string }> = manifest?.files ?? [];
+    let allMatch = true;
+    let detail = "";
+    for (const f of files) {
+      const fullPath = join(ROOT, f.destination);
+      if (!existsSync(fullPath)) {
+        allMatch = false;
+        detail += `MISSING ${f.destination}; `;
+        continue;
+      }
+      const computed = fileSha256(fullPath);
+      if (computed !== f.sha256) {
+        allMatch = false;
+        detail += `MISMATCH ${f.destination}: got ${computed.slice(0, 16)} expected ${f.sha256.slice(0, 16)}; `;
+      }
+    }
+    checks.push({
+      id: "provenance.pi.checksums_verified",
+      status: allMatch && files.length === 4 ? "passed" : "failed",
+      evidence: allMatch && files.length === 4 ? "4/4 SHA-256 verified" : detail || "checksum verification failed",
     });
   }
 
@@ -93,18 +136,6 @@ async function main(): Promise<void> {
       id: `${pkg}.tests`,
       status: passed ? "passed" : "failed",
       evidence: summaryMatch ? summaryMatch[0] : (passed ? "vitest pass" : failureOutput.slice(0, 200)),
-    });
-  }
-
-  // 6. Phase 0.0 events package still passes (regression check)
-  {
-    const result = run("npx", ["tsc", "--noEmit", "-p", "packages/events/tsconfig.json"], {
-      cwd: ROOT, throwOnError: false,
-    });
-    checks.push({
-      id: "phase0.events.typecheck",
-      status: result.exitCode === 0 ? "passed" : "failed",
-      evidence: result.exitCode === 0 ? "0.0 regression clean" : "REGRESSION",
     });
   }
 

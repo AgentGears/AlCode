@@ -1,13 +1,19 @@
 // ALCODE-owned headless bash tool. Fresh implementation (not imported from
 // pi — upstream bash.ts depends on pi-tui). Implements:
-//   - explicit working directory
-//   - scratch-repository containment
+//   - explicit working directory (cwd scoping — NOT a filesystem sandbox)
 //   - captured stdout/stderr + exit code
 //   - timeout
 //   - abort handling (child killed on abort)
-//   - no detached process (parent owns the child handle)
+//   - no child process intentionally left running after completion,
+//     timeout, or cancellation (tree-kill via process group or taskkill /T)
 //   - output-size bound (truncated)
 //   - clear result for failed/cancelled/timed-out
+//
+// No filesystem or network sandbox is claimed. A command can still use
+// absolute paths, '..', environment variables, or network clients to act
+// outside the working directory. Actual containment belongs before the
+// bash tool is exposed to untrusted model-generated commands in the
+// durable runtime.
 //
 // The result retains enough raw facts (stdout, stderr, exitCode, durationMs)
 // for the Phase 0.2 outcome/effect-certainty state machine, but that durable
@@ -81,8 +87,11 @@ export function createBashTool(opts: {
   return {
     name: "bash",
     description:
-      "Execute a shell command. Returns stdout, stderr, exit code, and duration. " +
-      "Output is truncated to 1MB per stream. Commands are scoped to the working directory.",
+      "Execute a shell command in the working directory. Returns stdout, stderr, " +
+      "exit code, and duration. Output is truncated to 1MB per stream. " +
+      "The working directory is the cwd, not a sandbox — commands can access " +
+      "absolute paths and the network. No child process is left running after " +
+      "completion, timeout, or cancellation.",
     inputSchema: {
       type: "object",
       properties: {

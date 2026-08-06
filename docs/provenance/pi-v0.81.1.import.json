@@ -1,0 +1,36 @@
+{
+  "source": {
+    "repository": "earendil-works/pi-mono",
+    "url": "https://github.com/earendil-works/pi-mono",
+    "tag": "v0.81.1",
+    "commit": "20be4b18d4c57487f8993d2762bace129f0cf7c6",
+    "releaseDate": "2026-07-21",
+    "license": "MIT"
+  },
+  "import": {
+    "date": "2026-08-06",
+    "importedBy": "AgentGears"
+  },
+  "files": [
+    {
+      "source": "packages/agent/src/agent-loop.ts",
+      "destination": "packages/agent-core/src/imported/agent-loop.ts",
+      "sha256": "3f2bef7cd470395d62d869eba2b8d6ade47d4643db71b67f7a25dd2686cc462c"
+    },
+    {
+      "source": "packages/agent/src/agent.ts",
+      "destination": "packages/agent-core/src/imported/agent.ts",
+      "sha256": "b1b1655f0d27a038a0ec8091e213aba070bc99041d778135d3dccaab51f0146b"
+    },
+    {
+      "source": "packages/agent/src/types.ts",
+      "destination": "packages/agent-core/src/imported/types.ts",
+      "sha256": "10d1a6b6eb051f01ed5bae889cd4a1258d470083bfebaddbd4879d32caf9c495"
+    },
+    {
+      "source": "packages/agent/src/stream-fn.ts",
+      "destination": "packages/agent-core/src/imported/stream-fn.ts",
+      "sha256": "1f9dee101a5ce1052558458d9ce47e53e05187224e879217899059a80d90bc45"
+    }
+  ]
+}

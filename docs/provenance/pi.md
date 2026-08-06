@@ -14,8 +14,8 @@ commit is separate. Both are immutable history once committed.
 - **Release date:** 2026-07-21
 - **Local reference copy:** `C:/AlCode/ref/pi-main` (read-only; verified
   byte-identical to the pinned tag — see checksum verification below).
-- **Import date:** `<fill at import commit: YYYY-MM-DD>`
-- **Imported by:** `<fill at import commit>`
+- **Import date:** 2026-08-06
+- **Imported by:** AgentGears
 
 ## Checksum verification
 

@@ -215,12 +215,15 @@ resist ownership conversion (jiti, pi-tui, pi-ai provider bundle coupling).
      `jiti`, no runtime TS loading, no marketplace). This proves the seam
      where the cognition spine will mount in 0.5;
    - write a fresh headless `bash` tool against the owned `AgentTool`
-     interface (no pi-tui): explicit working directory, scratch-repo
-     containment, captured stdout/stderr, exit code, timeout, abort
-     handling, output-size bound, no detached process, clear result for
-     failed/cancelled/timed-out. The result retains enough raw facts
-     (stdout, stderr, exitCode, durationMs) for the 0.2 outcome/effect-
-     certainty state machine, but that integration is 0.2;
+     interface (no pi-tui): explicit working directory (cwd scoping, NOT a
+     filesystem sandbox), captured stdout/stderr, exit code, timeout, abort
+     handling, output-size bound, no child process intentionally left running
+     after completion/timeout/cancellation (tree-kill via process group or
+     taskkill /T), clear result for failed/cancelled/timed-out. No filesystem
+     or network sandbox is claimed — actual containment belongs before the
+     bash tool is exposed to untrusted model-generated commands. The result
+     retains enough raw facts (stdout, stderr, exitCode, durationMs) for the
+     0.2 outcome/effect-certainty state machine, but that integration is 0.2;
    - CLI skeleton: `alcode -p "hello"` against the test-provider (offline,
      deterministic). Live providers are 0.1B.
 
