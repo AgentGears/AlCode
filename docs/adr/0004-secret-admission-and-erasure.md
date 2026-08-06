@@ -39,26 +39,63 @@ Pipeline:
 This is **not** absolute exclusion — no entropy or pattern detector can
 promise that. The guarantee is scoped to what detection can enforce.
 
-## Decision — incident handling for a secret that evades detection
+## Decision — masking vs erasure (honesty about the sidecar)
 
-If a secret evades detection and is persisted:
+An earlier draft described sidecar redaction as "effective erasure." It is
+not. Sidecar redaction substitutes a `secretref:` marker when *replay* yields
+events to projections, but **anyone reading the SQLite row directly can still
+recover the raw secret**, and the value persists in WAL, backups, and any
+already-derived artifact. Calling this "erasure" overstates the guarantee.
 
-1. **Taint the event.** Mark the event row tainted in a sidecar table.
-2. **Purge downstream artifacts.** Any artifact, projection receipt, memory
-   record, or diagnostic derived from the tainted event is purged.
-3. **Quarantine the event value.** The log is append-only, so the secret
-   value is overwritten with a redaction marker in a sidecar (`event_redactions`
-   table mapping `eventId` + `jsonPointer` → `secretref:<digest>`), not
-   row-deleted. Replay applies redactions from the sidecar before yielding
-   events to projections.
-4. **Document the incident.** An incident record captures what evaded
-   detection, how it was discovered, and the detector improvement.
+Two remediation models are available; ALCODE adopts the first as the default
+incident response and offers the second as a stronger option.
+
+### Model A — Physical security-redaction exception (default)
+
+When a persisted secret is discovered, the append-only rule is *intentionally
+overridden* for this one class of incident. Logical history and auditability
+are preserved by recording what was removed; physical storage is rewritten.
+
+1. **Revoke or rotate the compromised credential immediately.** This is the
+   primary control; storage remediation is secondary.
+2. **Acquire exclusive workspace ownership** (the OS lock, ADR 0002).
+3. **Record a `security.redaction_applied` audit event** containing hashes and
+   metadata (event id, json pointer, detector version, redactor version) —
+   never the secret itself. This event is the audit trail.
+4. **Rewrite or compact the physical event store** to remove the value from
+   the affected event payload (replacing it with `secretref:<digest>` in the
+   row itself, not only in a sidecar). WAL checkpoints and temporary files are
+   addressed by the rewrite.
+5. **Rebuild all projections and downstream artifacts** from the rewritten
+   store so derived state converges to "no secret present."
+6. **Verify the raw value is absent** from the database, WAL, artifacts,
+   backups, receipts, and diagnostics. The gate is absence-in-place, not just
+   absence-on-replay.
+
+This admits that security erasure can override physical append-only storage.
+The audit event preserves the *fact* of removal without preserving the value.
+
+### Model B — Per-payload encryption with key destruction (optional, stronger)
+
+Encrypt every event payload at append time with sufficiently granular keys;
+make key destruction the erasure mechanism. Destroying the key for a tainted
+event renders its payload cryptographically unrecoverable without rewriting
+the row. Encrypting only large artifacts does **not** solve secrets
+accidentally persisted in ordinary event rows, so this option requires
+per-payload (or per-event-type) encryption, not just artifact encryption.
+
+Model B is more expensive (key management, per-event crypto) and is therefore
+optional. If a deployment's threat model demands cryptographic erasure,
+adopt Model B from the start; otherwise Model A is the default.
 
 ## Consequences
 
-- The append-only log's immutability is preserved (no row deletion) while
-  still enabling effective erasure via sidecar redaction.
-- Detection is treated as best-effort, with explicit incident handling for
-  the residual risk.
-- Projections that consume events always see the redacted form once a
-  redaction exists, so downstream state converges to "no secret present."
+- The system does not claim physical erasure it cannot perform. Sidecar
+  redaction is documented as *masking on replay*, useful for projections and
+  context construction but insufficient for security erasure.
+- A discovered secret triggers Model A by default: a recorded audit event, a
+  physical store rewrite, projection rebuild, and an absence-in-place check.
+- Model B is available for deployments requiring cryptographic erasure.
+- Detection remains best-effort; the residual risk (a secret evades detection
+  and is only later discovered) is handled by the incident models above, not
+  promised away.

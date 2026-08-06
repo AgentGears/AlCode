@@ -52,15 +52,24 @@ section of `docs/rules.md`.
 
 ## Incident handling (secret evades detection)
 
-Per ADR 0004:
+Per ADR 0004. The default response is the **physical security-redaction
+exception** (Model A), not sidecar masking alone — sidecar redaction masks
+the value from projections but anyone reading the SQLite row directly can
+still recover it, so it is not erasure.
 
-1. **Taint the event** in `event_redactions` sidecar (eventId + jsonPointer → `secretref:<digest>`).
-2. **Purge downstream artifacts** — artifacts, receipts, memories, diagnostics
-   derived from the tainted event.
-3. **Quarantine the value** — the original is overwritten in the sidecar; the
-   append-only row is never deleted, but replay yields the redacted form.
-4. **Document the incident** — what evaded detection, how discovered, detector
-   improvement recorded.
+1. **Revoke or rotate the compromised credential immediately** (primary control).
+2. **Acquire exclusive workspace ownership** (OS lock).
+3. **Record a `security.redaction_applied` audit event** with hashes/metadata,
+   never the secret.
+4. **Rewrite or compact the physical event store** to remove the value from
+   the row (in place, not only in a sidecar); address WAL and temp files.
+5. **Rebuild all projections and downstream artifacts.**
+6. **Verify absence in place** — DB, WAL, artifacts, backups, receipts,
+   diagnostics.
+
+For deployments requiring cryptographic erasure, Model B (per-payload
+encryption + key destruction) is available; it must be adopted from the start
+and requires per-event-type key management.
 
 ## Guarantees ALCODE does NOT make
 

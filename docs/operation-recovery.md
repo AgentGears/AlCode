@@ -19,24 +19,28 @@ On opening a workspace:
 
 ## Operation state transitions
 
-```
-requested → started → succeeded | failed | cancelled | timed_out
-                     ↘ indeterminate
-```
+An operation's terminal state is a *pair* (see ADR 0003):
 
-On startup, an operation in `requested` or `started` from a prior session is
-treated as `indeterminate` (the runtime cannot know whether the tool actually
-ran). It is **not auto-retried**.
+- **ExecutionOutcome**: `succeeded` | `failed` | `cancelled` | `timed_out`
+- **EffectCertainty**: `confirmed` | `absent` | `indeterminate`
+
+Default certainty mapping: `succeeded` → `confirmed`; `failed` → `absent`/`confirmed`;
+`cancelled` and `timed_out` → `indeterminate` (a cancelled or timed-out process
+may have produced partial effects).
+
+On startup, any surviving `requested` or `started` operation from a prior
+session is treated as `EffectCertainty: "indeterminate"` (the runtime cannot
+know whether the tool actually ran). `cancelled`/`timed_out` operations from a
+prior session keep `indeterminate` unless reconciliation proves otherwise. None
+of these are auto-retried.
 
 ## Indeterminate resolution
 
 An `indeterminate` operation resolves only via reconciliation that produces
 evidence:
 
-- `reconciled_succeeded` — evidence the effect occurred correctly (e.g., for
-  `bash`: git status shows the expected change, file mtimes match, expected
-  output exists).
-- `reconciled_failed` — evidence the effect did not occur or failed.
+- `confirmed` (`reconciled_succeeded`) — evidence the effect occurred correctly.
+- `absent` (`reconciled_failed`) — evidence the effect did not occur or failed.
 - `unresolved` — preserved indefinitely when evidence is insufficient;
   surfaces to the user for a decision.
 
@@ -63,8 +67,8 @@ Recovery is correct when:
 
 ## What recovery does NOT do
 
-- **Auto-retry `indeterminate` operations.** The whole point of the state is
-  to avoid duplicating effects that may already have happened.
+- **Auto-retry `indeterminate`-certainty operations.** The whole point of the
+  state is to avoid duplicating effects that may already have happened.
 - **Silently assume a tool succeeded.** Uncertainty is preserved and surfaced.
 - **Roll back repository mutations.** External side effects (files written,
   shells run, network calls made) are not reversible by the runtime. The

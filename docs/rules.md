@@ -77,21 +77,24 @@ locking, uncertainty, and secret rules live here.
 
 ## Tool operations and uncertainty
 
-- **Operations have a state machine:**
-  ```
-  requested → started → succeeded | failed | cancelled | timed_out
-                       ↘ indeterminate
-  ```
-  An `indeterminate` operation is **never auto-retried**. A crash can occur
-  after a shell command mutated the repository but before `tool.completed`
-  persisted; on restart the runtime cannot know whether the command ran,
-  failed, or partially ran.
+- **Operations have a state machine pairing ExecutionOutcome with
+  EffectCertainty** (see ADR 0003):
+  - **ExecutionOutcome:** `succeeded` | `failed` | `cancelled` | `timed_out`
+  - **EffectCertainty:** `confirmed` | `absent` | `indeterminate`
+
+  An operation whose `EffectCertainty` is `indeterminate` is **never
+  auto-retried**. A crash can occur after a shell command mutated the
+  repository but before `tool.completed` persisted; on restart the runtime
+  cannot know whether the command ran, failed, or partially ran. A cancelled
+  or timed-out process may already have produced partial effects, so
+  `cancelled`/`timed_out` default to `indeterminate` unless reconciliation
+  proves otherwise.
 
 - **`indeterminate` resolves only via reconciliation.** It does not transition
-  to `succeeded` merely because the process restarted. A reconciliation
-  operation must produce evidence and then resolve to a terminal state:
-  `reconciled_succeeded` or `reconciled_failed`, or remain `unresolved`.
-  See `docs/operation-recovery.md`.
+  to `confirmed` merely because the process restarted. A reconciliation
+  operation must produce evidence and then resolve to a terminal state
+  (`reconciled_succeeded`/`confirmed` or `reconciled_failed`/`absent`), or
+  remain `unresolved`. See `docs/operation-recovery.md`.
 
 - **The honest guarantee is "effectively once where supported, otherwise detect
   and preserve uncertainty."** Restrict "exactly once" to operations with
@@ -122,11 +125,13 @@ locking, uncertainty, and secret rules live here.
   records, tool logs without redaction, projection receipts, repository files,
   or exported diagnostics. See `docs/threat-model.md`.
 
-- **Incident handling for a secret that evades detection** is documented in
-  `docs/threat-model.md`: the event is marked tainted, downstream artifacts are
-  purged, and the affected event row is quarantined (the log is append-only,
-  so the value is overwritten with a redaction marker in a sidecar rather than
-  row-deleted — see the threat model for the exact mechanism).
+- **Incident handling for a secret that evades detection** follows ADR 0004's
+  Model A (physical security-redaction exception): revoke/rotate the credential,
+  record a `security.redaction_applied` audit event (no secret), rewrite the
+  physical store to remove the value in place, rebuild projections, and verify
+  absence in place. Sidecar redaction alone is *masking, not erasure* — it
+  hides the value from replay but the raw value persists in the SQLite row,
+  WAL, and backups. See `docs/threat-model.md` and ADR 0004.
 
 ## Cognition boundaries
 

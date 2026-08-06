@@ -9,9 +9,9 @@ Frozen now: `workspace_id`, `session_id`, `event_id`, `operation_id`, `memory_id
 `reasoning_node_id`, `event_sequence`, `schema_version`.
 
 - `installation_id` — when multi-machine sync or licensing matters.
-- `repository_id` — **PROMOTED to required-before-0.2** (see "Workspace
-  identity" below). A path cannot be "only an attribute" and simultaneously
-  the sole durable identity used to recognize moves.
+- `repository_id` (now `repositoryId`) — **PROMOTED to required-before-0.2**
+  (see "Workspace identity" below). A path cannot be "only an attribute" and
+  simultaneously the sole durable identity used to recognize moves.
 - `worktree_id` — when subagent isolation uses git worktrees.
 - `task_id` — when a unit of work spans sessions (long-horizon tasks).
 - `turn_id` — when turn-level attribution is needed for receipts/analytics.
@@ -27,15 +27,19 @@ These three were deferred in an earlier draft and are now required before the
 
 ### Workspace identity and resolution protocol
 
-- Stable `repository_id` independent of path. A path cannot be "only an
-  attribute" and the sole durable identity.
-- How a path is initially assigned to a `workspace_id`.
-- How the same repository is recognized after a move (content fingerprint,
-  not path).
-- Whether worktrees share or separate workspace state.
-- How path aliases are updated.
-- How cloned repositories are distinguished from moved repositories.
-- See ADR 0002 for the locking protocol; this section covers identity.
+- Stable `repositoryId` independent of path (installation-assigned UUID).
+  A path cannot be "only an attribute" and the sole durable identity.
+- Identity vs recognition split (ADR 0002): `repositoryId` (stable primary
+  key), `repositoryLineage` (shared-clone hint), `repositoryFingerprint`
+  (mutable recognition evidence), `workspaceId` (execution/state scope).
+- How a path is initially assigned a `repositoryId` and `workspaceId`.
+- Recognition policy: same-filesystem move via filesystem object identity;
+  known path alias updates the registry; cross-filesystem move vs clone is
+  inherently ambiguous and requires explicit `alcode workspace link`.
+- Whether worktrees share or separate workspace state (default: share
+  repositoryId, separate workspaceId).
+- Content hashing never claims to distinguish a move from a clone.
+- See ADR 0002 for the identity model and the locking protocol.
 
 ### Secret detection and pre-persistence redaction
 

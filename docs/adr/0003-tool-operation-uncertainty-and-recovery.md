@@ -13,22 +13,54 @@ whether the command ran, failed, or partially ran. The earlier draft's
 ## Decision — operation state machine
 
 ```
-requested → started → succeeded | failed | cancelled | timed_out
-                     ↘ indeterminate
+requested → started → (terminal ExecutionOutcome + EffectCertainty, see below)
 ```
 
+An operation's terminal state is a *pair*: what the execution concluded, and
+how certain we are about the external effect. These must be modeled separately
+because a cancelled or timed-out shell process may already have produced
+partial external effects, and the prior draft conflated execution outcome
+with effect certainty.
+
+```ts
+type ExecutionOutcome =
+  | "succeeded"      // the execution itself completed nominally
+  | "failed"         // the execution reported failure
+  | "cancelled"      // the execution was cancelled
+  | "timed_out";     // the execution exceeded its timeout
+
+type EffectCertainty =
+  | "confirmed"      // evidence the effect occurred (or for failed, did not)
+  | "absent"         // evidence the effect did not occur
+  | "indeterminate"; // cannot prove whether the effect occurred
+```
+
+Default mapping (tool-specific reconciliation can override):
+
+| ExecutionOutcome | Default EffectCertainty | Reason |
+|---|---|---|
+| `succeeded` | `confirmed` | the tool reported success and returned a result |
+| `failed` | `confirmed` (absent) | the tool reported failure before completing the effect |
+| `cancelled` | `indeterminate` | a cancelled process may have produced partial effects |
+| `timed_out` | `indeterminate` | a timed-out process may have produced partial effects |
+
+On startup, any surviving `requested` or `started` operation from a prior
+session is treated as `indeterminate` (the runtime cannot know whether the
+tool actually ran). `cancelled`/`timed_out` operations from a prior session
+keep `indeterminate` unless reconciliation proves otherwise.
+
+- Any operation with `EffectCertainty: "indeterminate"` is **never
+  auto-retried**. Auto-retry risks duplicating an effect that already happened.
 - `indeterminate` is a real, persistent state, not a transient one.
-- An `indeterminate` operation is **never auto-retried**. Auto-retry risks
-  duplicating an effect that already happened.
 
 ## Decision — reconciliation
 
-An `indeterminate` operation does **not** transition to `succeeded` merely
+An `indeterminate` operation does **not** transition to `confirmed` merely
 because the process restarted. It resolves only via a reconciliation operation
-that produces evidence and then moves it to a terminal state:
+that produces evidence and then moves `EffectCertainty` to a terminal value:
 
-- `reconciled_succeeded` — evidence shows the effect occurred correctly.
-- `reconciled_failed` — evidence shows the effect did not occur or failed.
+- `confirmed` (via `reconciled_succeeded`) — evidence the effect occurred correctly.
+- `absent` (via `reconciled_failed`) — evidence the effect did not occur or failed.
 - `unresolved` — preserved indefinitely when evidence is insufficient.
 
 Reconciliation is tool-specific. The `bash` tool may inspect repository state
