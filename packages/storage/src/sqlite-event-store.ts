@@ -211,22 +211,38 @@ function verifyEventRow(row: EventRow, expectedWorkspaceId: string): PersistedDo
 }
 
 // ---------------------------------------------------------------------------
-// SqliteEventStore
+// Operational interface (public) + implementation class (module-internal)
 // ---------------------------------------------------------------------------
 
-export class SqliteEventStore {
+/**
+ * The operational surface of a workspace event store. Callers receive this
+ * interface; they cannot construct it, access the database handle, or close
+ * the database independently. Use openLockedWorkspaceStore() to obtain one.
+ */
+export interface WorkspaceEventStore {
   readonly workspaceId: string;
-  private readonly db: Database.Database;
+  append(drafts: readonly EventDraft<string, unknown>[]): Promise<PersistedDomainEvent<string, unknown>[]>;
+  replay(fromSequence?: number, toSequence?: number): AsyncIterable<PersistedDomainEvent<string, unknown>>;
+  get(eventId: string): Promise<PersistedDomainEvent<string, unknown> | undefined>;
+  headSequence(): Promise<number>;
+  getCursor(name: string): number;
+  advanceCursor(name: string, seq: number, sv?: number): void;
+  getUnappliedEvents(name: string): PersistedDomainEvent<string, unknown>[];
+  transaction<T>(fn: () => T): T;
+}
 
-  /** Module-internal constructor. Use openLockedWorkspaceStore() instead. */
-  private constructor(db: Database.Database, workspaceId: string) {
+/**
+ * Module-internal implementation. NOT exported. Only openLockedWorkspaceStore
+ * can instantiate it. The database handle and closeDatabase() are not
+ * accessible outside this module.
+ */
+class SqliteEventStoreImpl implements WorkspaceEventStore {
+  private readonly db: Database.Database;
+  readonly workspaceId: string;
+
+  constructor(db: Database.Database, workspaceId: string) {
     this.db = db;
     this.workspaceId = workspaceId;
-  }
-
-  /** Internal factory — only callable from openLockedWorkspaceStore. */
-  static _create(db: Database.Database, workspaceId: string): SqliteEventStore {
-    return new SqliteEventStore(db, workspaceId);
   }
 
   async append(
@@ -365,7 +381,9 @@ export class SqliteEventStore {
     return rows.map((row) => verifyEventRow(row, this.workspaceId));
   }
   transaction<T>(fn: () => T): T { return this.db.transaction(fn)(); }
-  close(): void { this.db.close(); }
+
+  /** Module-internal: closes the database handle. Only callable from openLockedWorkspaceStore's close(). */
+  closeDatabase(): void { this.db.close(); }
 }
 
 // ---------------------------------------------------------------------------
@@ -374,7 +392,7 @@ export class SqliteEventStore {
 
 /** A runtime handle that owns the lock + DB + store as one lifecycle. */
 export interface LockedWorkspaceStore {
-  readonly store: SqliteEventStore;
+  readonly store: WorkspaceEventStore;
   /** Close the database, then release the OS lock. Call on shutdown. */
   close(): void;
 }
@@ -426,13 +444,13 @@ export async function openLockedWorkspaceStore(
     // 4. Bind + verify identity
     bindWorkspace(db, opts.workspaceId, opts.repositoryId);
 
-    // 5. Construct store (private constructor via internal factory)
-    const store = SqliteEventStore._create(db, opts.workspaceId);
+    // 5. Construct store (internal class — not exported)
+    const store = new SqliteEventStoreImpl(db, opts.workspaceId);
 
     return {
       store,
       close() {
-        try { store.close(); } catch { /* already closed */ }
+        try { store.closeDatabase(); } catch { /* already closed */ }
         lock.release();
       },
     };

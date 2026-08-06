@@ -35,10 +35,8 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      # esbuild (vitest's dep) needs its postinstall to run; CI installs are
-      # trusted, so allow it.
-      - name: Rebuild native modules
-        run: pnpm rebuild esbuild fs-ext better-sqlite3
+      # Native modules (esbuild, fs-ext, better-sqlite3) are built during
+      # install via pnpm.onlyBuiltDependencies in the root package.json.
 
       - name: Run Phase 0.0 gate
         env:

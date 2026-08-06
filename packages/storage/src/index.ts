@@ -2,7 +2,7 @@
 
 export { initWorkspaceDb, getSchemaVersion, bindWorkspace, WorkspaceMismatchError, SCHEMA_VERSION } from "./schema.ts";
 export {
-  SqliteEventStore,
+  type WorkspaceEventStore,
   EventIdentityConflictError,
   IdempotencyConflictError,
   WorkspaceIdMismatchError,

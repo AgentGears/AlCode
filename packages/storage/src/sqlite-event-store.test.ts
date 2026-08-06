@@ -16,7 +16,7 @@ import {
 import {
   initWorkspaceDb,
   bindWorkspace,
-  SqliteEventStore,
+  type WorkspaceEventStore,
   EventIdentityConflictError,
   IdempotencyConflictError,
   WorkspaceIdMismatchError,
@@ -59,7 +59,7 @@ async function openStore(dbPath: string): Promise<LockedWorkspaceStore> {
 describeLocked("SqliteEventStore — basic operations", () => {
   let dir: string;
   let rt: LockedWorkspaceStore;
-  let store: SqliteEventStore;
+  let store: WorkspaceEventStore;
 
   beforeEach(async () => {
     dir = mkdtempSync(join(tmpdir(), "alcode-"));
@@ -153,7 +153,7 @@ describeLocked("SqliteEventStore — workspace binding via openLockedWorkspaceSt
 describeLocked("SqliteEventStore — idempotency with conflict detection", () => {
   let dir: string;
   let rt: LockedWorkspaceStore;
-  let store: SqliteEventStore;
+  let store: WorkspaceEventStore;
 
   beforeEach(async () => { dir = mkdtempSync(join(tmpdir(), "alcode-idem-")); rt = await openStore(join(dir, "ws.sqlite")); store = rt.store; });
   afterEach(() => { rt.close(); });
@@ -211,7 +211,7 @@ describeLocked("SqliteEventStore — idempotency with conflict detection", () =>
 describeLocked("SqliteEventStore — verified reads (integrity)", () => {
   let dir: string;
   let rt: LockedWorkspaceStore;
-  let store: SqliteEventStore;
+  let store: WorkspaceEventStore;
   let db: import("better-sqlite3").Database;
 
   beforeEach(async () => {
@@ -398,5 +398,65 @@ describe("workspace lock — cross-process contention", () => {
       const lock = acquireWorkspaceLock(lockPath);
       lock.release();
     }).not.toThrow();
+  });
+});
+
+describe("openLockedWorkspaceStore — enforced lifecycle", () => {
+  const describeLocked2 = process.platform === "win32" ? describe.skip : describe;
+
+  describeLocked2("open → second fails → close → reopen", () => {
+    let dir: string;
+
+    beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "alcode-life-")); });
+
+    it("first handle opens successfully", async () => {
+      const rt = await openLockedWorkspaceStore({
+        databasePath: join(dir, "ws.sqlite"), lockPath: join(dir, "ws.lock"),
+        workspaceId: TEST_WS, repositoryId: TEST_REPO,
+      });
+      expect(rt.store.workspaceId).toBe(TEST_WS);
+      rt.close();
+    });
+
+    it("second handle cannot open while first is live", async () => {
+      const rt1 = await openLockedWorkspaceStore({
+        databasePath: join(dir, "ws.sqlite"), lockPath: join(dir, "ws.lock"),
+        workspaceId: TEST_WS, repositoryId: TEST_REPO,
+      });
+      await expect(openLockedWorkspaceStore({
+        databasePath: join(dir, "ws.sqlite"), lockPath: join(dir, "ws.lock"),
+        workspaceId: TEST_WS, repositoryId: TEST_REPO,
+      })).rejects.toThrow(/lock/);
+      rt1.close();
+    });
+
+    it("close() closes SQLite and releases lock; new handle opens", async () => {
+      const rt1 = await openLockedWorkspaceStore({
+        databasePath: join(dir, "ws.sqlite"), lockPath: join(dir, "ws.lock"),
+        workspaceId: TEST_WS, repositoryId: TEST_REPO,
+      });
+      await rt1.store.append([makeDraft()]);
+      expect(await rt1.store.headSequence()).toBe(1);
+      rt1.close();
+
+      // A new handle can open immediately
+      const rt2 = await openLockedWorkspaceStore({
+        databasePath: join(dir, "ws.sqlite"), lockPath: join(dir, "ws.lock"),
+        workspaceId: TEST_WS, repositoryId: TEST_REPO,
+      });
+      expect(await rt2.store.headSequence()).toBe(1); // data persisted
+      rt2.close();
+    });
+
+    it("public package surface has no constructor accepting a raw database", () => {
+      // The WorkspaceEventStore is an interface, not a class. There is no
+      // exported constructor or factory that takes a Database handle.
+      // Verify by attempting to import — if SqliteEventStoreImpl were
+      // exported, this would succeed.
+      const mod = require("./index.ts");
+      expect(mod.SqliteEventStoreImpl).toBeUndefined();
+      expect(mod.SqliteEventStore).toBeUndefined();
+      expect(typeof mod.openLockedWorkspaceStore).toBe("function");
+    });
   });
 });
