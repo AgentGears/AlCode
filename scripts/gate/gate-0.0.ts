@@ -94,19 +94,25 @@ async function main(): Promise<void> {
 
   // --- packages/events tests pass ---
   {
-    const result = run(
-      "npx",
-      ["vitest", "run", "--root", "packages/events/src"],
-      { cwd: ROOT, throwOnError: false },
-    );
-    // vitest exits 0 on all-pass, 1 on any failure.
+    // Run from the package directory using its local vitest.config.ts, whose
+    // `include` is relative to the package root. Running with `--root` from
+    // the repo root would re-evaluate the repo config's include pattern
+    // relative to the package and match nothing.
+    const result = run("npx", ["vitest", "run"], {
+      cwd: join(ROOT, "packages/events"),
+      throwOnError: false,
+    });
     const passed = result.exitCode === 0;
-    // Extract the test count summary line if present.
     const summaryMatch = result.stdout.match(/Tests\s+(\d+ passed|\d+ failed)/);
+    const failureOutput = `${result.stdout}\n${result.stderr}`.trim();
     checks.push({
       id: "events.tests",
       status: passed ? "passed" : "failed",
-      evidence: summaryMatch ? summaryMatch[0] : (passed ? "vitest pass" : `${result.stderr.slice(0, 200)}`),
+      evidence: summaryMatch
+        ? summaryMatch[0]
+        : passed
+          ? "vitest pass"
+          : failureOutput.slice(0, 200),
     });
   }
 
@@ -117,26 +123,32 @@ async function main(): Promise<void> {
       ["tsc", "--noEmit", "-p", "packages/test-provider/tsconfig.json"],
       { cwd: ROOT, throwOnError: false },
     );
+    // TypeScript diagnostics may be written to stdout or stderr; capture both.
+    const failureOutput = `${result.stdout}\n${result.stderr}`.trim();
     checks.push({
       id: "test-provider.typecheck",
       status: result.exitCode === 0 ? "passed" : "failed",
-      evidence: result.exitCode === 0 ? "tsc clean" : `${result.stderr.slice(0, 200)}`,
+      evidence: result.exitCode === 0 ? "tsc clean" : failureOutput.slice(0, 200),
     });
   }
 
   // --- packages/test-provider tests pass ---
   {
-    const result = run(
-      "npx",
-      ["vitest", "run", "--root", "packages/test-provider/src"],
-      { cwd: ROOT, throwOnError: false },
-    );
+    const result = run("npx", ["vitest", "run"], {
+      cwd: join(ROOT, "packages/test-provider"),
+      throwOnError: false,
+    });
     const passed = result.exitCode === 0;
     const summaryMatch = result.stdout.match(/Tests\s+(\d+ passed|\d+ failed)/);
+    const failureOutput = `${result.stdout}\n${result.stderr}`.trim();
     checks.push({
       id: "test-provider.tests",
       status: passed ? "passed" : "failed",
-      evidence: summaryMatch ? summaryMatch[0] : (passed ? "vitest pass" : `${result.stderr.slice(0, 200)}`),
+      evidence: summaryMatch
+        ? summaryMatch[0]
+        : passed
+          ? "vitest pass"
+          : failureOutput.slice(0, 200),
     });
   }
 

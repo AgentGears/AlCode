@@ -3,7 +3,6 @@
   "compilerOptions": {
     "rootDir": "./src",
     "outDir": "./dist",
-    "lib": ["ES2023", "DOM"], // DOM for TextEncoder / crypto.subtle / globalThis indexing
     "composite": true
   },
   "include": ["src/**/*.ts"],
