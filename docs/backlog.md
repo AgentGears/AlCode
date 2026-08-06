@@ -97,6 +97,22 @@ These three were deferred in an earlier draft and are now required before the
 - Promote pi's `examples/extensions/subagent/` (1,016 LOC, single/parallel/chain)
   to first-class when subagent dispatch is needed. Not on Phase 0 critical path.
 
+## Dynamic extension loading (deferred from 0.1A)
+
+- **pi's dynamic extension loader/runner** (`packages/coding-agent/src/core/
+  extensions/{loader,runner,wrapper}.ts` from `v0.81.1`) — runtime TypeScript
+  loading via `jiti`, the 30+ event taxonomy, the `_bundledPi*` provider/TUI
+  bundle, and the marketplace/packaging machinery. Excluded from 0.1A under
+  the failure/rollback rule because it resists ownership conversion (couples
+  to `jiti`, `pi-tui`, `pi-ai` provider bundle). 0.1A ships an owned
+  `StaticExtensionHost` instead (contracts only: `AgentExtension`,
+  `ExtensionContext`).
+- **Reactivation trigger:** when Phase 0.5 needs runtime-loaded cognition
+  extensions, OR when user-installed extensions become a product requirement.
+  At that point, port the loader/runner deliberately (not as a side-effect of
+  another phase), replacing `jiti` with an owned loader and the `pi-tui`/provider
+  bundle with the ALCODE-owned equivalents that exist by then.
+
 ## Process / scope
 
 - Any pi module excluded from 0.1 ownership conversion due to upstream coupling.

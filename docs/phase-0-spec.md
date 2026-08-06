@@ -173,43 +173,93 @@ the constitution itself is wrong, amend via a documented constitutional change.
 
 ## Phase 0.1A — Minimal agent loop with offline provider
 
-**Objective:** a runnable owned agent (vendored pi loop) with one controlled
-tool, driven by the offline `test-provider`, persisting nothing yet. Proves
-acquisition and ownership conversion on a thin slice.
+**Objective:** a runnable owned agent (vendored pi loop semantics) with one
+controlled tool, driven by the offline `test-provider`, persisting nothing yet.
+Proves acquisition and ownership conversion on a thin slice — *without*
+inheriting pi's TUI, provider, or dynamic-extension-loading infrastructure,
+which the constitution has chosen not to retain.
 
-**Inputs:** `C:/AlCode/ref/pi-main` (MIT); the events scaffold; the test-provider.
+**Inputs:** pi `v0.81.1` (commit `20be4b18d4c57487f8993d2762bace129f0cf7c6`,
+2026-07-21, MIT); the events scaffold; the test-provider.
+
+**Path:** Path A — import the coherent agent-loop semantic slice; implement
+an owned static extension host; define owned provider and tool contracts;
+write a fresh headless `bash`. The full pi extension loader/runner and
+upstream `bash` are *excluded* under the failure/rollback rule because they
+resist ownership conversion (jiti, pi-tui, pi-ai provider bundle coupling).
 
 **Implementation scope:**
-1. **Import commit** (minimal semantic edits): copy `packages/agent` →
-   `packages/agent-core`; copy the extension system
-   (`packages/coding-agent/src/core/extensions/{types,loader,runner,wrapper,index}.ts`);
-   copy ONE tool (`bash`) + its support files. Record provenance in
+1. **Import commit** (mechanical, quarantined, faithful): copy the agent-loop
+   slice from pi `v0.81.1` — `agent-loop.ts`, `agent.ts`, `types.ts`,
+   `stream-fn.ts`, `index.ts`, plus any small utility those files directly
+   require that is not provider/TUI/persistence/extension-loading
+   infrastructure. Upstream headers intact; not yet exported as
+   `@alcode/agent-core`; not yet in the workspace build (the 0.0 gate stays
+   green). Record exact source paths and SHA-256 checksums in
    `docs/provenance/pi.md`.
-2. **Ownership-conversion commit** (separate): rename `@earendil-works/*` →
-   `@alcode/*`; remove pi branding; replace config conventions; define
-   ALCODE-owned APIs.
-3. CLI skeleton: `alcode -p "hello"` against the **test-provider** (offline,
-   deterministic). Live providers are 0.1B.
-4. Run the one tool (`bash`) against a scratch repo.
+2. **Ownership-conversion commit** (separate, authored):
+   - rename to `@alcode/agent-core`; remove pi branding;
+   - identify the exact provider operations the loop calls and define the
+     smallest ALCODE-owned interface (`ModelProvider`, `ModelRequest`,
+     `ModelStream`, `ModelEvent`) — do NOT copy broad `pi-ai` type
+     definitions (that would reproduce provider coupling under a new
+     namespace); keep compatibility types in a temporary conversion adapter
+     only where the imported code requires them;
+   - adapt `TestProvider` to the `ModelProvider` interface;
+   - define an owned `AgentTool<TInput, TResult>` interface with
+     `execute(input, context)`;
+   - implement a minimal owned **`StaticExtensionHost`** (NOT pi's dynamic
+     loader): `AgentExtension { name; register(ctx) }` and
+     `ExtensionContext { registerTool; onBeforeModelRequest?;
+     onAfterModelResponse? }`. The host mounts extensions statically (no
+     `jiti`, no runtime TS loading, no marketplace). This proves the seam
+     where the cognition spine will mount in 0.5;
+   - write a fresh headless `bash` tool against the owned `AgentTool`
+     interface (no pi-tui): explicit working directory, scratch-repo
+     containment, captured stdout/stderr, exit code, timeout, abort
+     handling, output-size bound, no detached process, clear result for
+     failed/cancelled/timed-out. The result retains enough raw facts
+     (stdout, stderr, exitCode, durationMs) for the 0.2 outcome/effect-
+     certainty state machine, but that integration is 0.2;
+   - CLI skeleton: `alcode -p "hello"` against the test-provider (offline,
+     deterministic). Live providers are 0.1B.
 
-**Explicit exclusions:** the other 6 tools (0.1B); live provider integrations
-(0.1B); pi `tui`/`server`/`storage`; deterministic import automation (0.1B);
-tri-platform CI (0.1B).
+**Explicit exclusions:** pi `tui`/`server`/`storage`; pi-ai provider
+implementations, OAuth, compat bundles; `jiti` and the dynamic extension
+loader/runner; upstream `bash.ts` (depends on pi-tui); the other 6 tools
+(0.1B); live provider integrations (0.1B); deterministic import automation
+(0.1B); tri-platform CI (0.1B).
 
-**Deliverables:** runnable `alcode` with loop + extensions + `bash` + offline
-provider; ownership-conversion diff; provenance record.
+**Deliverables:** runnable `alcode` with owned loop + `StaticExtensionHost`
++ fresh `bash` + offline provider; import and ownership-conversion commits
+as separate reviewable units; provenance record with checksums.
 
-**Required tests:** imported baseline for vendored agent-core + extensions +
-bash; offline `alcode -p "hello"` integration test.
+**Required tests:** imported-slice semantics preserved (loop runs a
+single-turn + single-tool-call against the test provider); offline
+`alcode -p "hello"` integration test; a static test extension mounts and
+either registers a tool or observes a lifecycle hook; `bash` executes a
+controlled command in a disposable repository and the process exits cleanly
+with no surviving child.
 
-**Exit gate:** `pnpm gate:0.1A` emits `status: "passed"` (offline, no network).
+**Exit gate:** `pnpm gate:0.1A` emits `status: "passed"`. Proves:
+(1) provenance points to exact tag/commit; (2) imported-file checksums
+recorded; (3) agent-core typechecks and tests pass; (4) `alcode -p "hello"`
+returns the deterministic offline response; (5) no network access or
+provider credential required; (6) a static test extension mounts
+successfully; (7) the extension registers the bash tool or observes one
+lifecycle hook; (8) bash executes a controlled command in a disposable
+repository; (9) the process exits cleanly with no surviving child;
+(10) Phase 0.0 remains green; (11) Linux CI passes.
 
-**Failure/rollback rule:** if a pi module resists ownership conversion, exclude
-it and log to backlog — do not fork-patch pi internals in 0.1A.
+**Failure/rollback rule:** if a pi module resists ownership conversion
+(loader, runner, upstream bash all meet this condition — they drag in
+jiti/pi-tui/pi-ai provider bundle), exclude it and log to backlog — do not
+fork-patch pi internals in 0.1A. This rule is *invoked* by this phase for
+the listed modules.
 
 **Dependencies:** 0.0.
 
-**Estimated range:** 2–4 days.
+**Estimated range:** 3–5 days.
 
 ---
 
