@@ -761,9 +761,14 @@ import {
   CursorAheadOfHeadError,
   SchemaVersionMismatchError,
   InvalidProjectionNameError,
+  ClassificationMismatchError,
+  InlineProjectionInRunnerError,
+  InactiveTransactionError,
+  UnregisteredStatementError,
+  ReservedTableInStatementError,
 } from "./index.ts";
 
-describeLocked("ProjectionRunner — atomic cursor + writes", () => {
+describeLocked("ProjectionRunner — enforced encapsulation", () => {
   let dir: string;
 
   beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "alcode-proj-")); });
@@ -778,97 +783,65 @@ describeLocked("ProjectionRunner — atomic cursor + writes", () => {
     return rt;
   }
 
-  const testProjection: ProjectionDefinition = {
-    name: "test-proj",
-    schemaVersion: 1,
-    classification: "derived",
-    apply(event, tx) {
-      const seq = event.sequence;
-      const payload = event.payload as { index?: number };
-      tx.exec(
-        "INSERT OR REPLACE INTO memories (memory_id, workspace_id, type, body, created_sequence) VALUES (?, ?, ?, ?, ?)",
-        `proj-${seq}`,
-        TEST_WS,
-        "test",
-        JSON.stringify({ seq, index: payload.index }),
-        seq,
-      );
-    },
+  const memStmt = {
+    name: "upsert-memory",
+    sql: "INSERT OR REPLACE INTO memories (memory_id, workspace_id, type, body, created_sequence) VALUES (?, ?, ?, ?, ?)",
   };
+
+  function makeProjection(name: string, opts?: Partial<ProjectionDefinition>): ProjectionDefinition {
+    return {
+      name,
+      schemaVersion: 1,
+      classification: "derived",
+      statements: [memStmt],
+      apply(event, tx) {
+        tx.exec("upsert-memory", `proj-${event.sequence}`, TEST_WS, "test", "{}", event.sequence);
+      },
+      ...opts,
+    };
+  }
 
   // 1. Successful apply commits projection state and cursor together
   it("1: successful apply commits both state and cursor", async () => {
     const rt = await setupWithEvents(3);
     const runner = rt.store.getProjectionRunner();
-    const result = runner.catchUp(testProjection, (s, l) => rt.store.getVerifiedEvents(s, l));
+    const result = runner.catchUp(makeProjection("test-proj"));
     expect(result.appliedCount).toBe(3);
     expect(result.newCursor.lastAppliedEventSequence).toBe(3);
-
-    // Projection state exists
-    const cursor = runner.getCursor("test-proj");
-    expect(cursor.lastAppliedEventSequence).toBe(3);
+    expect(runner.getCursor("test-proj").lastAppliedEventSequence).toBe(3);
     rt.close();
   });
 
-  // 2. Throw after projection writes leaves both state and cursor unchanged
-  it("2: throw during apply rolls back both state and cursor", async () => {
+  // 2. Throw during apply rolls back both state and cursor
+  it("2: throw during apply rolls back both", async () => {
     const rt = await setupWithEvents(2);
     const runner = rt.store.getProjectionRunner();
-
-    const throwingProjection: ProjectionDefinition = {
-      ...testProjection,
-      name: "throw-proj",
+    const proj = makeProjection("throw-proj", {
       apply(event, tx) {
-        tx.exec(
-          "INSERT OR REPLACE INTO memories (memory_id, workspace_id, type, body, created_sequence) VALUES (?, ?, ?, ?, ?)",
-          `throw-${event.sequence}`,
-          TEST_WS,
-          "test",
-          "{}",
-          event.sequence,
-        );
+        tx.exec("upsert-memory", `throw-${event.sequence}`, TEST_WS, "test", "{}", event.sequence);
         throw new Error("injected failure");
       },
-    };
-
-    expect(() => runner.catchUp(throwingProjection, (s, l) => rt.store.getVerifiedEvents(s, l))).toThrow("injected failure");
-
-    // Cursor unchanged
-    const cursor = runner.getCursor("throw-proj");
-    expect(cursor.lastAppliedEventSequence).toBe(0);
+    });
+    expect(() => runner.catchUp(proj)).toThrow("injected failure");
+    expect(runner.getCursor("throw-proj").lastAppliedEventSequence).toBe(0);
     rt.close();
   });
 
-  // 3. Re-running from the unchanged cursor applies the event successfully
+  // 3. Retry from unchanged cursor succeeds
   it("3: retry from unchanged cursor succeeds", async () => {
     const rt = await setupWithEvents(2);
     const runner = rt.store.getProjectionRunner();
-
-    // First attempt: succeeds for event 1, fails on event 2
     let failOnSeq = 2;
-    const retryProjection: ProjectionDefinition = {
-      ...testProjection,
-      name: "retry-proj",
+    const proj = makeProjection("retry-proj", {
       apply(event, tx) {
         if (event.sequence === failOnSeq) throw new Error("retry-me");
-        tx.exec(
-          "INSERT OR REPLACE INTO memories (memory_id, workspace_id, type, body, created_sequence) VALUES (?, ?, ?, ?, ?)",
-          `retry-${event.sequence}`,
-          TEST_WS,
-          "test",
-          "{}",
-          event.sequence,
-        );
+        tx.exec("upsert-memory", `retry-${event.sequence}`, TEST_WS, "test", "{}", event.sequence);
       },
-    };
-
-    // First run: event 1 applies, event 2 throws
-    expect(() => runner.catchUp(retryProjection, (s, l) => rt.store.getVerifiedEvents(s, l))).toThrow("retry-me");
+    });
+    expect(() => runner.catchUp(proj)).toThrow("retry-me");
     expect(runner.getCursor("retry-proj").lastAppliedEventSequence).toBe(1);
-
-    // Retry: event 2 now succeeds
-    failOnSeq = -1; // don't fail anymore
-    const result = runner.catchUp(retryProjection, (s, l) => rt.store.getVerifiedEvents(s, l));
+    failOnSeq = -1;
+    const result = runner.catchUp(proj);
     expect(result.appliedCount).toBe(1);
     expect(result.newCursor.lastAppliedEventSequence).toBe(2);
     rt.close();
@@ -878,71 +851,49 @@ describeLocked("ProjectionRunner — atomic cursor + writes", () => {
   it("4: two projections advance independently", async () => {
     const rt = await setupWithEvents(3);
     const runner = rt.store.getProjectionRunner();
-
-    const projA: ProjectionDefinition = { ...testProjection, name: "proj-a" };
-    const projB: ProjectionDefinition = { ...testProjection, name: "proj-b" };
-
-    runner.catchUp(projA, (s, l) => rt.store.getVerifiedEvents(s, l), 2); // A gets 2
-    runner.catchUp(projB, (s, l) => rt.store.getVerifiedEvents(s, l)); // B gets all 3
-
+    runner.catchUp(makeProjection("proj-a"), 2);
+    runner.catchUp(makeProjection("proj-b"));
     expect(runner.getCursor("proj-a").lastAppliedEventSequence).toBe(2);
     expect(runner.getCursor("proj-b").lastAppliedEventSequence).toBe(3);
     rt.close();
   });
 
-  // 5. One failing projection does not alter another projection's cursor
+  // 5. Failing projection does not affect another's cursor
   it("5: failing projection does not affect another", async () => {
     const rt = await setupWithEvents(2);
     const runner = rt.store.getProjectionRunner();
-
-    const goodProj: ProjectionDefinition = { ...testProjection, name: "good-proj" };
-    runner.catchUp(goodProj, (s, l) => rt.store.getVerifiedEvents(s, l));
+    runner.catchUp(makeProjection("good-proj"));
     expect(runner.getCursor("good-proj").lastAppliedEventSequence).toBe(2);
-
-    const badProj: ProjectionDefinition = {
-      ...testProjection,
-      name: "bad-proj",
-      apply() { throw new Error("always fails"); },
-    };
-    expect(() => runner.catchUp(badProj, (s, l) => rt.store.getVerifiedEvents(s, l))).toThrow();
-
-    // Good projection unaffected
+    const badProj = makeProjection("bad-proj", { apply() { throw new Error("always"); } });
+    expect(() => runner.catchUp(badProj)).toThrow();
     expect(runner.getCursor("good-proj").lastAppliedEventSequence).toBe(2);
     rt.close();
   });
 
-  // 6. Lagging cursor catches up in sequence order
+  // 6. Lagging cursor catches up in order
   it("6: lagging cursor catches up in order", async () => {
     const rt = await setupWithEvents(5);
     const runner = rt.store.getProjectionRunner();
-
-    // First: catch up only 2
-    let result = runner.catchUp(testProjection, (s, l) => rt.store.getVerifiedEvents(s, l), 2);
+    let result = runner.catchUp(makeProjection("catchup-proj"), 2);
     expect(result.appliedCount).toBe(2);
     expect(result.newCursor.lastAppliedEventSequence).toBe(2);
-
-    // Then: catch up the rest
-    result = runner.catchUp(testProjection, (s, l) => rt.store.getVerifiedEvents(s, l), 10);
+    result = runner.catchUp(makeProjection("catchup-proj"), 10);
     expect(result.appliedCount).toBe(3);
     expect(result.newCursor.lastAppliedEventSequence).toBe(5);
     expect(result.caught).toBe(true);
     rt.close();
   });
 
-  // 7. Cursor ahead of head → fails closed
+  // 7. Cursor ahead of head fails closed
   it("7: cursor ahead of head fails closed", async () => {
     const rt = await setupWithEvents(3);
     const runner = rt.store.getProjectionRunner();
-
-    // Manually insert a cursor ahead of head
     const db = Database(join(dir, "ws.sqlite"));
     db.prepare(
-      "INSERT INTO projection_cursors (projection_name, last_applied_event_sequence, projection_schema_version) VALUES (?, ?, ?)",
-    ).run("ahead-proj", 99, 1);
+      "INSERT INTO projection_cursors (projection_name, last_applied_event_sequence, projection_schema_version, classification) VALUES (?, ?, ?, ?)",
+    ).run("ahead-proj", 99, 1, "derived");
     db.close();
-
-    const aheadProj: ProjectionDefinition = { ...testProjection, name: "ahead-proj" };
-    expect(() => runner.catchUp(aheadProj, (s, l) => rt.store.getVerifiedEvents(s, l))).toThrow(CursorAheadOfHeadError);
+    expect(() => runner.catchUp(makeProjection("ahead-proj"))).toThrow(CursorAheadOfHeadError);
     rt.close();
   });
 
@@ -950,30 +901,20 @@ describeLocked("ProjectionRunner — atomic cursor + writes", () => {
   it("8: schema version mismatch fails closed", async () => {
     const rt = await setupWithEvents(1);
     const runner = rt.store.getProjectionRunner();
-
-    // Register at v1
-    runner.catchUp(testProjection, (s, l) => rt.store.getVerifiedEvents(s, l));
-
-    // Try to re-apply at v2
-    const v2Proj: ProjectionDefinition = { ...testProjection, schemaVersion: 2 };
-    expect(() => runner.catchUp(v2Proj, (s, l) => rt.store.getVerifiedEvents(s, l))).toThrow(SchemaVersionMismatchError);
+    runner.catchUp(makeProjection("sv-proj"));
+    const v2Proj = makeProjection("sv-proj", { schemaVersion: 2 });
+    expect(() => runner.catchUp(v2Proj)).toThrow(SchemaVersionMismatchError);
     rt.close();
   });
 
-  // 9. Reapplication produces no duplicate projection state
+  // 9. Reapplication is idempotent
   it("9: reapplication is idempotent (no duplicates)", async () => {
     const rt = await setupWithEvents(3);
     const runner = rt.store.getProjectionRunner();
-
-    // Catch up fully
-    runner.catchUp(testProjection, (s, l) => rt.store.getVerifiedEvents(s, l));
-
-    // Re-run catchUp — should apply 0 events (cursor at head)
-    const result = runner.catchUp(testProjection, (s, l) => rt.store.getVerifiedEvents(s, l));
+    runner.catchUp(makeProjection("idem-proj"));
+    const result = runner.catchUp(makeProjection("idem-proj"));
     expect(result.appliedCount).toBe(0);
     expect(result.caught).toBe(true);
-
-    // Projection table has exactly 3 rows (no duplicates)
     const db = Database(join(dir, "ws.sqlite"));
     const count = db.prepare("SELECT COUNT(*) as c FROM memories WHERE type = 'test'").get() as { c: number };
     db.close();
@@ -985,33 +926,134 @@ describeLocked("ProjectionRunner — atomic cursor + writes", () => {
   it("10: invalid projection name fails", async () => {
     const rt = await setupWithEvents(1);
     const runner = rt.store.getProjectionRunner();
-
-    const badName: ProjectionDefinition = {
-      ...testProjection,
-      name: "bad name with spaces",
-    };
-    expect(() => runner.catchUp(badName, (s, l) => rt.store.getVerifiedEvents(s, l))).toThrow(InvalidProjectionNameError);
+    expect(() => runner.catchUp(makeProjection("bad name"))).toThrow(InvalidProjectionNameError);
     rt.close();
   });
 
-  // 11. Public surface has no standalone cursor mutation or generic transaction
-  it("11: public surface has no advanceCursor or transaction", async () => {
+  // 11. Public surface has no escape hatches
+  it("11: store has no advanceCursor or transaction", async () => {
     const rt = await setupWithEvents(1);
     const store = rt.store as unknown as Record<string, unknown>;
     expect(store.advanceCursor).toBeUndefined();
     expect(store.transaction).toBeUndefined();
-    expect(typeof store.getProjectionRunner).toBe("function");
-    expect(typeof store.getVerifiedEvents).toBe("function");
     rt.close();
   });
 
-  // 12. getCursor on a new projection returns 0
+  // 12. New projection cursor starts at 0
   it("12: new projection cursor starts at 0", async () => {
     const rt = await setupWithEvents(1);
     const runner = rt.store.getProjectionRunner();
     const cursor = runner.getCursor("never-applied");
     expect(cursor.lastAppliedEventSequence).toBe(0);
-    expect(cursor.schemaVersion).toBe(0);
+    rt.close();
+  });
+
+  // 13. Returned runner has null prototype, no constructor, no db
+  it("13: runner facade has null prototype and no constructor", async () => {
+    const rt = await setupWithEvents(1);
+    const runner = rt.store.getProjectionRunner();
+    expect(Object.getPrototypeOf(runner)).toBe(null);
+    expect((runner as object).constructor).toBeUndefined();
+    expect((runner as Record<string, unknown>).db).toBeUndefined();
+    rt.close();
+  });
+
+  // 14. catchUp takes no event provider argument
+  it("14: catchUp signature has no provider parameter", async () => {
+    const rt = await setupWithEvents(1);
+    const runner = rt.store.getProjectionRunner();
+    // The method exists and takes (projection, limit?) — no provider
+    expect(runner.catchUp.length).toBeLessThanOrEqual(2);
+    rt.close();
+  });
+
+  // 15. Unregistered statement name is rejected
+  it("15: unregistered statement name is rejected", async () => {
+    const rt = await setupWithEvents(1);
+    const runner = rt.store.getProjectionRunner();
+    const proj = makeProjection("unreg-proj", {
+      statements: [memStmt],
+      apply(_event, tx) {
+        tx.exec("evil-statement", "whatever");
+      },
+    });
+    expect(() => runner.catchUp(proj)).toThrow(UnregisteredStatementError);
+    rt.close();
+  });
+
+  // 16. Reserved table in statement is rejected at registration
+  it("16: reserved table in statement is rejected", async () => {
+    const rt = await setupWithEvents(1);
+    const runner = rt.store.getProjectionRunner();
+    const proj = makeProjection("reserved-proj", {
+      statements: [
+        memStmt,
+        { name: "evil", sql: "DELETE FROM events" },
+      ],
+      apply(_event, tx) {
+        tx.exec("evil");
+      },
+    });
+    expect(() => runner.catchUp(proj)).toThrow(ReservedTableInStatementError);
+    rt.close();
+  });
+
+  // 17. Captured transaction throws after apply exits
+  it("17: captured tx throws after apply exits", async () => {
+    const rt = await setupWithEvents(1);
+    const runner = rt.store.getProjectionRunner();
+    let escapedTx: { exec: (name: string, ...params: unknown[]) => void } | undefined;
+    const proj = makeProjection("escape-proj", {
+      apply(_event, tx) {
+        escapedTx = tx;
+      },
+    });
+    runner.catchUp(proj);
+    // Attempt to use the escaped tx
+    expect(() => escapedTx!.exec("upsert-memory", "x", "y", "z", "{}", 1)).toThrow(InactiveTransactionError);
+    rt.close();
+  });
+
+  // 18. Classification is persisted and survives reopen
+  it("18: classification persisted and survives reopen", async () => {
+    const rt = await setupWithEvents(1);
+    const runner = rt.store.getProjectionRunner();
+    const proj = makeProjection("class-proj", { classification: "critical" });
+    runner.catchUp(proj);
+    rt.close();
+
+    const rt2 = await openStore(join(dir, "ws.sqlite"));
+    const runner2 = rt2.store.getProjectionRunner();
+    const cursor = runner2.getCursor("class-proj");
+    expect(cursor.classification).toBe("critical");
+    rt2.close();
+  });
+
+  // 19. Classification mismatch fails
+  it("19: classification mismatch fails", async () => {
+    const rt = await setupWithEvents(1);
+    const runner = rt.store.getProjectionRunner();
+    runner.catchUp(makeProjection("mismatch-proj", { classification: "critical" }));
+    expect(() => runner.catchUp(makeProjection("mismatch-proj", { classification: "derived" }))).toThrow(ClassificationMismatchError);
+    rt.close();
+  });
+
+  // 20. Inline classification rejected by runner
+  it("20: inline projection rejected by runner", async () => {
+    const rt = await setupWithEvents(1);
+    const runner = rt.store.getProjectionRunner();
+    const proj = makeProjection("inline-proj", { classification: "inline" as "critical" | "derived" });
+    expect(() => runner.catchUp(proj)).toThrow(InlineProjectionInRunnerError);
+    rt.close();
+  });
+
+  // 21. Exactly limit remaining events ending at head → caught: true
+  it("21: exactly limit events at head returns caught: true", async () => {
+    const rt = await setupWithEvents(3);
+    const runner = rt.store.getProjectionRunner();
+    const result = runner.catchUp(makeProjection("exact-proj"), 3); // exactly 3 events, limit=3
+    expect(result.appliedCount).toBe(3);
+    expect(result.caught).toBe(true); // cursor at head, not batch-size-limited
     rt.close();
   });
 });

@@ -17,7 +17,7 @@ import {
 } from "./schema.ts";
 import type { AcquiredLock } from "@alcode/workspace";
 import { SecretAdmissionGate, type SecretAdmissionConfig } from "@alcode/secrets";
-import { ProjectionRunner } from "./projection.ts";
+import { createProjectionRunner, type ProjectionRunner as ProjectionRunnerType } from "./projection.ts";
 
 const require = createRequire(import.meta.url);
 
@@ -234,7 +234,7 @@ export interface WorkspaceEventStore {
   /** Get verified events after a sequence number (for projection catch-up). */
   getVerifiedEvents(fromSeq: number, limit: number): PersistedDomainEvent<string, unknown>[];
   /** Obtain the projection runner for atomic projection updates. */
-  getProjectionRunner(): ProjectionRunner;
+  getProjectionRunner(): ProjectionRunnerType;
 }
 
 /**
@@ -393,8 +393,8 @@ class SqliteEventStoreImpl implements WorkspaceEventStore {
   }
 
   /** Obtain the projection runner for atomic projection updates. */
-  getProjectionRunner(): ProjectionRunner {
-    return new ProjectionRunner(this.db, this.workspaceId);
+  getProjectionRunner(): ProjectionRunnerType {
+    return createProjectionRunner(this.db, this.workspaceId, this.getVerifiedEvents.bind(this));
   }
 
   /** Module-internal: closes the database handle. Only callable from openLockedWorkspaceStore's close(). */

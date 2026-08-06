@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { canonicalStringify } from "@alcode/events";
 
 /** Current schema version. */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /** DDL for fresh databases (all tables at current version). */
 const WORKSPACE_SCHEMA: string[] = [
@@ -41,7 +41,8 @@ const WORKSPACE_SCHEMA: string[] = [
   `CREATE TABLE IF NOT EXISTS projection_cursors (
     projection_name            TEXT PRIMARY KEY,
     last_applied_event_sequence INTEGER NOT NULL DEFAULT 0,
-    projection_schema_version  INTEGER NOT NULL DEFAULT 1
+    projection_schema_version  INTEGER NOT NULL DEFAULT 1,
+    classification             TEXT NOT NULL DEFAULT 'derived'
   )`,
   `CREATE TABLE IF NOT EXISTS sessions (
     session_id    TEXT PRIMARY KEY,
@@ -136,6 +137,9 @@ export function initWorkspaceDb(db: Database.Database): void {
   const currentVersion = getSchemaVersion(db);
   if (currentVersion < 2) {
     migrateV1toV2(db);
+  }
+  if (getSchemaVersion(db) < 3) {
+    migrateV2toV3(db);
   }
 }
 
@@ -265,6 +269,39 @@ function migrateV1toV2(db: Database.Database): void {
 
     // Step 7: Record migration
     db.prepare("INSERT OR REPLACE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(2, new Date().toISOString());
+  });
+
+  migrationTxn();
+}
+
+/**
+ * Migration from schema v2 to v3.
+ * Adds the `classification` column to `projection_cursors`.
+ * Existing projections default to 'derived'.
+ */
+function migrateV2toV3(db: Database.Database): void {
+  const migrationTxn = db.transaction(() => {
+    // Check if the column already exists
+    const hasColumn = db.prepare(
+      "SELECT COUNT(*) as c FROM pragma_table_info('projection_cursors') WHERE name = 'classification'",
+    ).get() as { c: number };
+
+    if (hasColumn.c === 0) {
+      // Rebuild projection_cursors with the new column
+      db.exec("ALTER TABLE projection_cursors RENAME TO projection_cursors_v2_old");
+      db.exec(`CREATE TABLE projection_cursors (
+        projection_name            TEXT PRIMARY KEY,
+        last_applied_event_sequence INTEGER NOT NULL DEFAULT 0,
+        projection_schema_version  INTEGER NOT NULL DEFAULT 1,
+        classification             TEXT NOT NULL DEFAULT 'derived'
+      )`);
+      db.exec(`INSERT INTO projection_cursors (projection_name, last_applied_event_sequence, projection_schema_version, classification)
+               SELECT projection_name, last_applied_event_sequence, projection_schema_version, 'derived'
+               FROM projection_cursors_v2_old`);
+      db.exec("DROP TABLE projection_cursors_v2_old");
+    }
+
+    db.prepare("INSERT OR REPLACE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(3, new Date().toISOString());
   });
 
   migrationTxn();

@@ -21,14 +21,20 @@ export {
 export {
   type ProjectionDefinition,
   type ProjectionTransaction,
-  type ProjectionRunner as ProjectionRunnerType,
+  type ProjectionRunner,
   type ProjectionCursor,
   type ProjectionCatchUpResult,
   type ProjectionClassification,
+  type StatementDefinition,
   ProjectionError,
   CursorAheadOfHeadError,
   SchemaVersionMismatchError,
+  ClassificationMismatchError,
+  InlineProjectionInRunnerError,
   InvalidProjectionNameError,
+  UnregisteredStatementError,
+  InactiveTransactionError,
+  ReservedTableInStatementError,
 } from "./projection.ts";
 
 // Secrets (re-exported for convenience):
