@@ -108,17 +108,9 @@ describeLocked("SqliteEventStore — basic operations", () => {
     expect((found!.payload as { hello: string }).hello).toBe("world");
   });
 
-  it("cursor starts at 0 and advances", async () => {
-    expect(store.getCursor("p")).toBe(0);
-    await store.append([makeDraft(), makeDraft(), makeDraft()]);
-    store.transaction(() => store.advanceCursor("p", 3));
-    expect(store.getCursor("p")).toBe(3);
-  });
-
-  it("getUnappliedEvents returns verified PersistedDomainEvents", async () => {
+  it("getVerifiedEvents returns verified events after a sequence", async () => {
     await store.append([makeDraft(), makeDraft(), makeDraft(), makeDraft()]);
-    store.transaction(() => store.advanceCursor("p", 2));
-    const events = store.getUnappliedEvents("p");
+    const events = store.getVerifiedEvents(2, 10);
     expect(events.length).toBe(2);
     expect(events[0]).toHaveProperty("sequence");
     expect(events[0]).toHaveProperty("eventDigest");
@@ -756,5 +748,270 @@ describeLocked("SqliteEventStore — secret admission in append()", () => {
       expect(bytes.includes(Buffer.from("AKIA", "utf8"))).toBe(false);
       expect(bytes.includes(Buffer.from("secretref:", "utf8"))).toBe(true);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Step 6: Projection transaction model tests
+// ---------------------------------------------------------------------------
+
+import {
+  type ProjectionDefinition,
+  type ProjectionCursor,
+  CursorAheadOfHeadError,
+  SchemaVersionMismatchError,
+  InvalidProjectionNameError,
+} from "./index.ts";
+
+describeLocked("ProjectionRunner — atomic cursor + writes", () => {
+  let dir: string;
+
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "alcode-proj-")); });
+
+  async function setupWithEvents(count: number) {
+    const rt = await openStore(join(dir, "ws.sqlite"));
+    const drafts = [];
+    for (let i = 0; i < count; i++) {
+      drafts.push(makeDraft({ payload: { index: i } }));
+    }
+    await rt.store.append(drafts);
+    return rt;
+  }
+
+  const testProjection: ProjectionDefinition = {
+    name: "test-proj",
+    schemaVersion: 1,
+    classification: "derived",
+    apply(event, tx) {
+      const seq = event.sequence;
+      const payload = event.payload as { index?: number };
+      tx.exec(
+        "INSERT OR REPLACE INTO memories (memory_id, workspace_id, type, body, created_sequence) VALUES (?, ?, ?, ?, ?)",
+        `proj-${seq}`,
+        TEST_WS,
+        "test",
+        JSON.stringify({ seq, index: payload.index }),
+        seq,
+      );
+    },
+  };
+
+  // 1. Successful apply commits projection state and cursor together
+  it("1: successful apply commits both state and cursor", async () => {
+    const rt = await setupWithEvents(3);
+    const runner = rt.store.getProjectionRunner();
+    const result = runner.catchUp(testProjection, (s, l) => rt.store.getVerifiedEvents(s, l));
+    expect(result.appliedCount).toBe(3);
+    expect(result.newCursor.lastAppliedEventSequence).toBe(3);
+
+    // Projection state exists
+    const cursor = runner.getCursor("test-proj");
+    expect(cursor.lastAppliedEventSequence).toBe(3);
+    rt.close();
+  });
+
+  // 2. Throw after projection writes leaves both state and cursor unchanged
+  it("2: throw during apply rolls back both state and cursor", async () => {
+    const rt = await setupWithEvents(2);
+    const runner = rt.store.getProjectionRunner();
+
+    const throwingProjection: ProjectionDefinition = {
+      ...testProjection,
+      name: "throw-proj",
+      apply(event, tx) {
+        tx.exec(
+          "INSERT OR REPLACE INTO memories (memory_id, workspace_id, type, body, created_sequence) VALUES (?, ?, ?, ?, ?)",
+          `throw-${event.sequence}`,
+          TEST_WS,
+          "test",
+          "{}",
+          event.sequence,
+        );
+        throw new Error("injected failure");
+      },
+    };
+
+    expect(() => runner.catchUp(throwingProjection, (s, l) => rt.store.getVerifiedEvents(s, l))).toThrow("injected failure");
+
+    // Cursor unchanged
+    const cursor = runner.getCursor("throw-proj");
+    expect(cursor.lastAppliedEventSequence).toBe(0);
+    rt.close();
+  });
+
+  // 3. Re-running from the unchanged cursor applies the event successfully
+  it("3: retry from unchanged cursor succeeds", async () => {
+    const rt = await setupWithEvents(2);
+    const runner = rt.store.getProjectionRunner();
+
+    // First attempt: succeeds for event 1, fails on event 2
+    let failOnSeq = 2;
+    const retryProjection: ProjectionDefinition = {
+      ...testProjection,
+      name: "retry-proj",
+      apply(event, tx) {
+        if (event.sequence === failOnSeq) throw new Error("retry-me");
+        tx.exec(
+          "INSERT OR REPLACE INTO memories (memory_id, workspace_id, type, body, created_sequence) VALUES (?, ?, ?, ?, ?)",
+          `retry-${event.sequence}`,
+          TEST_WS,
+          "test",
+          "{}",
+          event.sequence,
+        );
+      },
+    };
+
+    // First run: event 1 applies, event 2 throws
+    expect(() => runner.catchUp(retryProjection, (s, l) => rt.store.getVerifiedEvents(s, l))).toThrow("retry-me");
+    expect(runner.getCursor("retry-proj").lastAppliedEventSequence).toBe(1);
+
+    // Retry: event 2 now succeeds
+    failOnSeq = -1; // don't fail anymore
+    const result = runner.catchUp(retryProjection, (s, l) => rt.store.getVerifiedEvents(s, l));
+    expect(result.appliedCount).toBe(1);
+    expect(result.newCursor.lastAppliedEventSequence).toBe(2);
+    rt.close();
+  });
+
+  // 4. Two projections advance independently
+  it("4: two projections advance independently", async () => {
+    const rt = await setupWithEvents(3);
+    const runner = rt.store.getProjectionRunner();
+
+    const projA: ProjectionDefinition = { ...testProjection, name: "proj-a" };
+    const projB: ProjectionDefinition = { ...testProjection, name: "proj-b" };
+
+    runner.catchUp(projA, (s, l) => rt.store.getVerifiedEvents(s, l), 2); // A gets 2
+    runner.catchUp(projB, (s, l) => rt.store.getVerifiedEvents(s, l)); // B gets all 3
+
+    expect(runner.getCursor("proj-a").lastAppliedEventSequence).toBe(2);
+    expect(runner.getCursor("proj-b").lastAppliedEventSequence).toBe(3);
+    rt.close();
+  });
+
+  // 5. One failing projection does not alter another projection's cursor
+  it("5: failing projection does not affect another", async () => {
+    const rt = await setupWithEvents(2);
+    const runner = rt.store.getProjectionRunner();
+
+    const goodProj: ProjectionDefinition = { ...testProjection, name: "good-proj" };
+    runner.catchUp(goodProj, (s, l) => rt.store.getVerifiedEvents(s, l));
+    expect(runner.getCursor("good-proj").lastAppliedEventSequence).toBe(2);
+
+    const badProj: ProjectionDefinition = {
+      ...testProjection,
+      name: "bad-proj",
+      apply() { throw new Error("always fails"); },
+    };
+    expect(() => runner.catchUp(badProj, (s, l) => rt.store.getVerifiedEvents(s, l))).toThrow();
+
+    // Good projection unaffected
+    expect(runner.getCursor("good-proj").lastAppliedEventSequence).toBe(2);
+    rt.close();
+  });
+
+  // 6. Lagging cursor catches up in sequence order
+  it("6: lagging cursor catches up in order", async () => {
+    const rt = await setupWithEvents(5);
+    const runner = rt.store.getProjectionRunner();
+
+    // First: catch up only 2
+    let result = runner.catchUp(testProjection, (s, l) => rt.store.getVerifiedEvents(s, l), 2);
+    expect(result.appliedCount).toBe(2);
+    expect(result.newCursor.lastAppliedEventSequence).toBe(2);
+
+    // Then: catch up the rest
+    result = runner.catchUp(testProjection, (s, l) => rt.store.getVerifiedEvents(s, l), 10);
+    expect(result.appliedCount).toBe(3);
+    expect(result.newCursor.lastAppliedEventSequence).toBe(5);
+    expect(result.caught).toBe(true);
+    rt.close();
+  });
+
+  // 7. Cursor ahead of head → fails closed
+  it("7: cursor ahead of head fails closed", async () => {
+    const rt = await setupWithEvents(3);
+    const runner = rt.store.getProjectionRunner();
+
+    // Manually insert a cursor ahead of head
+    const db = Database(join(dir, "ws.sqlite"));
+    db.prepare(
+      "INSERT INTO projection_cursors (projection_name, last_applied_event_sequence, projection_schema_version) VALUES (?, ?, ?)",
+    ).run("ahead-proj", 99, 1);
+    db.close();
+
+    const aheadProj: ProjectionDefinition = { ...testProjection, name: "ahead-proj" };
+    expect(() => runner.catchUp(aheadProj, (s, l) => rt.store.getVerifiedEvents(s, l))).toThrow(CursorAheadOfHeadError);
+    rt.close();
+  });
+
+  // 8. Schema version mismatch fails closed
+  it("8: schema version mismatch fails closed", async () => {
+    const rt = await setupWithEvents(1);
+    const runner = rt.store.getProjectionRunner();
+
+    // Register at v1
+    runner.catchUp(testProjection, (s, l) => rt.store.getVerifiedEvents(s, l));
+
+    // Try to re-apply at v2
+    const v2Proj: ProjectionDefinition = { ...testProjection, schemaVersion: 2 };
+    expect(() => runner.catchUp(v2Proj, (s, l) => rt.store.getVerifiedEvents(s, l))).toThrow(SchemaVersionMismatchError);
+    rt.close();
+  });
+
+  // 9. Reapplication produces no duplicate projection state
+  it("9: reapplication is idempotent (no duplicates)", async () => {
+    const rt = await setupWithEvents(3);
+    const runner = rt.store.getProjectionRunner();
+
+    // Catch up fully
+    runner.catchUp(testProjection, (s, l) => rt.store.getVerifiedEvents(s, l));
+
+    // Re-run catchUp — should apply 0 events (cursor at head)
+    const result = runner.catchUp(testProjection, (s, l) => rt.store.getVerifiedEvents(s, l));
+    expect(result.appliedCount).toBe(0);
+    expect(result.caught).toBe(true);
+
+    // Projection table has exactly 3 rows (no duplicates)
+    const db = Database(join(dir, "ws.sqlite"));
+    const count = db.prepare("SELECT COUNT(*) as c FROM memories WHERE type = 'test'").get() as { c: number };
+    db.close();
+    expect(count.c).toBe(3);
+    rt.close();
+  });
+
+  // 10. Invalid projection name fails
+  it("10: invalid projection name fails", async () => {
+    const rt = await setupWithEvents(1);
+    const runner = rt.store.getProjectionRunner();
+
+    const badName: ProjectionDefinition = {
+      ...testProjection,
+      name: "bad name with spaces",
+    };
+    expect(() => runner.catchUp(badName, (s, l) => rt.store.getVerifiedEvents(s, l))).toThrow(InvalidProjectionNameError);
+    rt.close();
+  });
+
+  // 11. Public surface has no standalone cursor mutation or generic transaction
+  it("11: public surface has no advanceCursor or transaction", async () => {
+    const rt = await setupWithEvents(1);
+    const store = rt.store as unknown as Record<string, unknown>;
+    expect(store.advanceCursor).toBeUndefined();
+    expect(store.transaction).toBeUndefined();
+    expect(typeof store.getProjectionRunner).toBe("function");
+    expect(typeof store.getVerifiedEvents).toBe("function");
+    rt.close();
+  });
+
+  // 12. getCursor on a new projection returns 0
+  it("12: new projection cursor starts at 0", async () => {
+    const rt = await setupWithEvents(1);
+    const runner = rt.store.getProjectionRunner();
+    const cursor = runner.getCursor("never-applied");
+    expect(cursor.lastAppliedEventSequence).toBe(0);
+    expect(cursor.schemaVersion).toBe(0);
+    rt.close();
   });
 });

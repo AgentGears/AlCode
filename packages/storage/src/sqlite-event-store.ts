@@ -17,6 +17,7 @@ import {
 } from "./schema.ts";
 import type { AcquiredLock } from "@alcode/workspace";
 import { SecretAdmissionGate, type SecretAdmissionConfig } from "@alcode/secrets";
+import { ProjectionRunner } from "./projection.ts";
 
 const require = createRequire(import.meta.url);
 
@@ -219,6 +220,10 @@ function verifyEventRow(row: EventRow, expectedWorkspaceId: string): PersistedDo
  * The operational surface of a workspace event store. Callers receive this
  * interface; they cannot construct it, access the database handle, or close
  * the database independently. Use openLockedWorkspaceStore() to obtain one.
+ *
+ * Projection cursor mutation and generic transactions are NOT exposed.
+ * Use getProjectionRunner() to obtain a constrained ProjectionRunner that
+ * enforces atomic cursor+writes.
  */
 export interface WorkspaceEventStore {
   readonly workspaceId: string;
@@ -226,10 +231,10 @@ export interface WorkspaceEventStore {
   replay(fromSequence?: number, toSequence?: number): AsyncIterable<PersistedDomainEvent<string, unknown>>;
   get(eventId: string): Promise<PersistedDomainEvent<string, unknown> | undefined>;
   headSequence(): Promise<number>;
-  getCursor(name: string): number;
-  advanceCursor(name: string, seq: number, sv?: number): void;
-  getUnappliedEvents(name: string): PersistedDomainEvent<string, unknown>[];
-  transaction<T>(fn: () => T): T;
+  /** Get verified events after a sequence number (for projection catch-up). */
+  getVerifiedEvents(fromSeq: number, limit: number): PersistedDomainEvent<string, unknown>[];
+  /** Obtain the projection runner for atomic projection updates. */
+  getProjectionRunner(): ProjectionRunner;
 }
 
 /**
@@ -379,22 +384,18 @@ class SqliteEventStoreImpl implements WorkspaceEventStore {
     return row ? verifyEventRow(row, this.workspaceId) : undefined;
   }
 
-  // --- Projection cursor helpers ---
-  getCursor(name: string): number {
-    const row = this.db.prepare("SELECT last_applied_event_sequence FROM projection_cursors WHERE projection_name = ?").get(name) as { last_applied_event_sequence: number } | undefined;
-    return row?.last_applied_event_sequence ?? 0;
-  }
-  advanceCursor(name: string, seq: number, sv = 1): void {
-    this.db.prepare(
-      `INSERT INTO projection_cursors (projection_name, last_applied_event_sequence, projection_schema_version) VALUES (?, ?, ?)
-       ON CONFLICT(projection_name) DO UPDATE SET last_applied_event_sequence = excluded.last_applied_event_sequence, projection_schema_version = excluded.projection_schema_version`,
-    ).run(name, seq, sv);
-  }
-  getUnappliedEvents(name: string): PersistedDomainEvent<string, unknown>[] {
-    const rows = this.db.prepare("SELECT * FROM events WHERE sequence > ? ORDER BY sequence").all(this.getCursor(name)) as EventRow[];
+  /** Get verified events after a sequence number (for projection catch-up). */
+  getVerifiedEvents(fromSeq: number, limit: number): PersistedDomainEvent<string, unknown>[] {
+    const rows = this.db.prepare(
+      "SELECT * FROM events WHERE sequence > ? ORDER BY sequence LIMIT ?",
+    ).all(fromSeq, limit) as EventRow[];
     return rows.map((row) => verifyEventRow(row, this.workspaceId));
   }
-  transaction<T>(fn: () => T): T { return this.db.transaction(fn)(); }
+
+  /** Obtain the projection runner for atomic projection updates. */
+  getProjectionRunner(): ProjectionRunner {
+    return new ProjectionRunner(this.db, this.workspaceId);
+  }
 
   /** Module-internal: closes the database handle. Only callable from openLockedWorkspaceStore's close(). */
   closeDatabase(): void { this.db.close(); }
@@ -504,10 +505,8 @@ export async function openLockedWorkspaceStore(
       replay: impl.replay.bind(impl),
       get: impl.get.bind(impl),
       headSequence: impl.headSequence.bind(impl),
-      getCursor: impl.getCursor.bind(impl),
-      advanceCursor: impl.advanceCursor.bind(impl),
-      getUnappliedEvents: impl.getUnappliedEvents.bind(impl),
-      transaction: impl.transaction.bind(impl),
+      getVerifiedEvents: impl.getVerifiedEvents.bind(impl),
+      getProjectionRunner: impl.getProjectionRunner.bind(impl),
     });
     Object.freeze(store);
 

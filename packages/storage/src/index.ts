@@ -1,24 +1,10 @@
 // @alcode/storage — SQLite-backed workspace database and event store.
-//
-// Public surface (what callers can import):
-//   - WorkspaceEventStore (interface — no constructor, no DB handle)
-//   - openLockedWorkspaceStore (the single safe entry point)
-//   - LockedWorkspaceStore (handle with .store + .close())
-//   - Error types + computeRequestFingerprint (read-only utilities)
-//
-// NOT exported:
-//   - initWorkspaceDb, bindWorkspace (lifecycle mutations — only callable
-//     internally by openLockedWorkspaceStore)
-//   - SqliteEventStoreImpl (the implementation class)
-//   - schema internals
-//
-// Tests inside this package import schema.ts and sqlite-event-store.ts
-// relatively (not from the public barrel).
+// See docs/adr/0001-event-and-projection-commit-semantics.md.
 
-// Read-only diagnostics (safe to expose):
+// Read-only diagnostics:
 export { getSchemaVersion, SCHEMA_VERSION } from "./schema.ts";
 
-// Error types:
+// Store surface:
 export {
   type WorkspaceEventStore,
   EventIdentityConflictError,
@@ -30,3 +16,20 @@ export {
   type OpenLockedWorkspaceStoreOptions,
   type LockedWorkspaceStore,
 } from "./sqlite-event-store.ts";
+
+// Projection model:
+export {
+  type ProjectionDefinition,
+  type ProjectionTransaction,
+  type ProjectionRunner as ProjectionRunnerType,
+  type ProjectionCursor,
+  type ProjectionCatchUpResult,
+  type ProjectionClassification,
+  ProjectionError,
+  CursorAheadOfHeadError,
+  SchemaVersionMismatchError,
+  InvalidProjectionNameError,
+} from "./projection.ts";
+
+// Secrets (re-exported for convenience):
+export { SecretAdmissionError } from "@alcode/secrets";
