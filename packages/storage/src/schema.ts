@@ -281,7 +281,73 @@ function migrateV1toV2(db: Database.Database): void {
  */
 function migrateV2toV3(db: Database.Database): void {
   const migrationTxn = db.transaction(() => {
-    // Check if the column already exists
+    // Ensure all v2 tables exist (in case a v1 DB went through v1→v2 migration
+    // that only altered events but didn't create other tables)
+    db.exec(`CREATE TABLE IF NOT EXISTS projection_cursors (
+      projection_name            TEXT PRIMARY KEY,
+      last_applied_event_sequence INTEGER NOT NULL DEFAULT 0,
+      projection_schema_version  INTEGER NOT NULL DEFAULT 1
+    )`);
+    // Create any other missing v2 tables
+    db.exec(`CREATE TABLE IF NOT EXISTS sessions (
+      session_id    TEXT PRIMARY KEY,
+      workspace_id  TEXT NOT NULL,
+      started_at    TEXT NOT NULL,
+      stopped_at    TEXT
+    )`);
+    db.exec(`CREATE TABLE IF NOT EXISTS operations (
+      operation_id          TEXT PRIMARY KEY,
+      workspace_id          TEXT NOT NULL,
+      session_id            TEXT NOT NULL,
+      tool_name             TEXT NOT NULL,
+      args                  TEXT,
+      execution_outcome     TEXT,
+      effect_status         TEXT DEFAULT 'indeterminate',
+      reconciliation_status TEXT DEFAULT 'not_required',
+      started_at            TEXT,
+      completed_at          TEXT
+    )`);
+    db.exec(`CREATE TABLE IF NOT EXISTS reasoning_nodes (
+      node_id      TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      kind         TEXT NOT NULL,
+      label        TEXT NOT NULL,
+      data         TEXT,
+      confidence   REAL,
+      created_sequence INTEGER NOT NULL
+    )`);
+    db.exec(`CREATE TABLE IF NOT EXISTS memories (
+      memory_id    TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      type         TEXT NOT NULL,
+      body         TEXT NOT NULL,
+      created_sequence INTEGER NOT NULL
+    )`);
+    db.exec(`CREATE TABLE IF NOT EXISTS artifacts (
+      digest       TEXT PRIMARY KEY,
+      path         TEXT NOT NULL,
+      size         INTEGER NOT NULL,
+      created_at   TEXT NOT NULL
+    )`);
+    db.exec(`CREATE TABLE IF NOT EXISTS projection_receipts (
+      receipt_id          TEXT PRIMARY KEY,
+      projection_mode     TEXT NOT NULL,
+      compiler_version    TEXT NOT NULL,
+      source_event_sequence INTEGER NOT NULL,
+      token_budget        INTEGER,
+      estimated_tokens    INTEGER,
+      fallback_used       INTEGER NOT NULL DEFAULT 0,
+      created_at          TEXT NOT NULL
+    )`);
+    db.exec(`CREATE TABLE IF NOT EXISTS event_redactions (
+      event_id     TEXT NOT NULL,
+      json_pointer TEXT NOT NULL,
+      replacement  TEXT NOT NULL,
+      applied_at   TEXT NOT NULL,
+      PRIMARY KEY (event_id, json_pointer)
+    )`);
+
+    // Check if projection_cursors has the classification column
     const hasColumn = db.prepare(
       "SELECT COUNT(*) as c FROM pragma_table_info('projection_cursors') WHERE name = 'classification'",
     ).get() as { c: number };
