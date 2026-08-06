@@ -3,9 +3,14 @@
 //
 // Contract (docs/event-contract.md):
 //   - append assigns sequence + recordedAt + eventDigest in one transaction.
-//   - Idempotent on eventId (re-append returns existing row).
-//   - Idempotent on idempotencyKey (independently indexed).
+//   - Idempotent on eventId: same eventId + equivalent draft → return existing.
+//                        same eventId + different draft → throw EventIdentityConflictError.
+//   - Idempotent on idempotencyKey: same key + equivalent intent → return existing.
+//                                 same key + different intent → throw IdempotencyConflictError.
 //   - replay yields events in ascending sequence.
+//
+// The database is bound to exactly one workspaceId. Every draft must match.
+// The store rejects drafts whose workspaceId differs from the bound identity.
 //
 // Transaction model (ADR 0001):
 //   - Events are appended in one BEGIN IMMEDIATE transaction.
@@ -13,14 +18,15 @@
 //   - Each projection maintains its own cursor.
 
 import type Database from "better-sqlite3";
+import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
 import {
   type EventDraft,
   type PersistedDomainEvent,
 } from "@alcode/events";
-import {
-  assertCanonical,
-  canonicalStringify,
-} from "@alcode/events";
+import { assertCanonical, canonicalStringify } from "@alcode/events";
+
+const require = createRequire(import.meta.url);
 
 /** Row shape in the events table. */
 interface EventRow {
@@ -39,6 +45,73 @@ interface EventRow {
   occurred_at: string;
   recorded_at: string;
   event_digest: string;
+  request_fingerprint: string;
+}
+
+/** Error: eventId reused with different immutable content. */
+export class EventIdentityConflictError extends Error {
+  constructor(
+    public readonly eventId: string,
+    public readonly existingFingerprint: string,
+    public readonly newFingerprint: string,
+  ) {
+    super(
+      `Event identity conflict: eventId ${eventId} exists with a different request fingerprint. ` +
+      "The same eventId cannot be reused for different content.",
+    );
+    this.name = "EventIdentityConflictError";
+  }
+}
+
+/** Error: idempotencyKey reused with different operation intent. */
+export class IdempotencyConflictError extends Error {
+  constructor(
+    public readonly idempotencyKey: string,
+    public readonly existingFingerprint: string,
+    public readonly newFingerprint: string,
+  ) {
+    super(
+      `Idempotency conflict: key ${idempotencyKey} exists with a different request fingerprint. ` +
+      "The same key cannot be reused for a different operation intent.",
+    );
+    this.name = "IdempotencyConflictError";
+  }
+}
+
+/** Error: draft workspaceId doesn't match the bound workspace. */
+export class WorkspaceIdMismatchError extends Error {
+  constructor(expected: string, actual: string) {
+    super(
+      `Draft workspaceId ${actual} does not match store workspaceId ${expected}. ` +
+      "Events can only be appended to their owning workspace.",
+    );
+    this.name = "WorkspaceIdMismatchError";
+  }
+}
+
+/**
+ * Compute a canonical request fingerprint for a draft. This is the immutable
+ * content of the event — everything the caller controls, excluding append-
+ * assigned fields (sequence, recordedAt, eventDigest).
+ *
+ * Used for conflict detection: if the same eventId or idempotencyKey is reused
+ * but the fingerprint differs, that's a conflict, not an idempotent retry.
+ */
+export function computeRequestFingerprint(draft: EventDraft<string, unknown>): string {
+  const fingerprintInput = {
+    workspaceId: draft.workspaceId,
+    sessionId: draft.sessionId,
+    operationId: draft.operationId ?? null,
+    type: draft.type,
+    payload: draft.payload,
+    payloadSchemaVersion: draft.payloadSchemaVersion,
+    producer: draft.producer,
+    causationEventId: draft.causationEventId ?? null,
+    correlationId: draft.correlationId ?? null,
+    occurredAt: draft.occurredAt,
+  };
+  const canonical = canonicalStringify(fingerprintInput);
+  return createHash("sha256").update(canonical).digest("hex");
 }
 
 /** Convert a DB row to a PersistedDomainEvent. */
@@ -63,63 +136,73 @@ function rowToEvent(row: EventRow): PersistedDomainEvent<string, unknown> {
   return event as unknown as PersistedDomainEvent<string, unknown>;
 }
 
-/** Canonical form without the digest field (for digest computation). */
-function serializeForDigest(draft: EventDraft, sequence: number, recordedAt: string): string {
-  const withoutDigest: Record<string, unknown> = {
-    eventId: draft.eventId,
-    workspaceId: draft.workspaceId,
-    sessionId: draft.sessionId,
-    occurredAt: draft.occurredAt,
-    type: draft.type,
-    payload: draft.payload,
-    payloadSchemaVersion: draft.payloadSchemaVersion,
-    producer: draft.producer,
-    sequence,
-    recordedAt,
-  };
-  if (draft.idempotencyKey !== undefined) withoutDigest.idempotencyKey = draft.idempotencyKey;
-  if (draft.operationId !== undefined) withoutDigest.operationId = draft.operationId;
-  if (draft.causationEventId !== undefined) withoutDigest.causationEventId = draft.causationEventId;
-  if (draft.correlationId !== undefined) withoutDigest.correlationId = draft.correlationId;
-  return canonicalStringify(withoutDigest);
-}
-
 /**
  * SQLite-backed EventStore for a single workspace.
  *
- * One instance per workspace DB. The caller is responsible for lifecycle
- * (open/close). The store is NOT thread-safe — it relies on the single-writer
- * workspace lock (ADR 0002).
+ * One instance per workspace DB. The database is bound to exactly one
+ * workspaceId. The caller is responsible for lifecycle (open/close).
+ * The store relies on the single-writer workspace lock (ADR 0002).
  */
 export class SqliteEventStore {
   private readonly db: Database.Database;
+  private readonly workspaceId: string;
 
-  constructor(db: Database.Database) {
+  /**
+   * @param db               An open better-sqlite3 Database handle.
+   * @param expectedWorkspaceId The workspaceId this store is bound to.
+   *                             Must match the workspace_metadata row.
+   */
+  constructor(db: Database.Database, expectedWorkspaceId: string) {
     this.db = db;
+    this.workspaceId = expectedWorkspaceId;
   }
 
   /**
    * Append drafts atomically. Returns persisted events with sequence,
    * recordedAt, and eventDigest assigned.
    *
-   * Idempotent on eventId and idempotencyKey (independently indexed).
+   * Conflict semantics:
+   *   - Same eventId, same fingerprint → return existing (idempotent).
+   *   - Same eventId, different fingerprint → throw EventIdentityConflictError.
+   *   - Same idempotencyKey, same fingerprint → return existing (idempotent).
+   *   - Same idempotencyKey, different fingerprint → throw IdempotencyConflictError.
+   *
+   * @throws WorkspaceIdMismatchError if any draft's workspaceId differs.
+   * @throws EventIdentityConflictError on conflicting eventId reuse.
+   * @throws IdempotencyConflictError on conflicting idempotencyKey reuse.
    */
   async append(
     drafts: readonly EventDraft<string, unknown>[],
   ): Promise<PersistedDomainEvent<string, unknown>[]> {
+    // Pre-validate workspaceId and canonical safety before the transaction.
+    for (const draft of drafts) {
+      const draftWsId = typeof draft.workspaceId === "string" ? draft.workspaceId : String(draft.workspaceId);
+      if (draftWsId !== this.workspaceId) {
+        throw new WorkspaceIdMismatchError(this.workspaceId, draftWsId);
+      }
+      assertCanonical(draft.payload);
+      assertCanonical(draft.producer);
+    }
+
     const results: PersistedDomainEvent<string, unknown>[] = [];
 
     const txn = this.db.transaction(() => {
       for (const draft of drafts) {
-        // Validate canonical-JSON-safety
-        assertCanonical(draft.payload);
-        assertCanonical(draft.producer);
+        const fingerprint = computeRequestFingerprint(draft);
 
         // Check eventId idempotency
         const existingById = this.db.prepare(
           "SELECT * FROM events WHERE event_id = ?",
         ).get(draft.eventId) as EventRow | undefined;
+
         if (existingById) {
+          if (existingById.request_fingerprint !== fingerprint) {
+            throw new EventIdentityConflictError(
+              draft.eventId,
+              existingById.request_fingerprint,
+              fingerprint,
+            );
+          }
           results.push(rowToEvent(existingById));
           continue;
         }
@@ -129,7 +212,15 @@ export class SqliteEventStore {
           const existingByKey = this.db.prepare(
             "SELECT * FROM events WHERE idempotency_key = ?",
           ).get(draft.idempotencyKey) as EventRow | undefined;
+
           if (existingByKey) {
+            if (existingByKey.request_fingerprint !== fingerprint) {
+              throw new IdempotencyConflictError(
+                draft.idempotencyKey,
+                existingByKey.request_fingerprint,
+                fingerprint,
+              );
+            }
             results.push(rowToEvent(existingByKey));
             continue;
           }
@@ -142,13 +233,11 @@ export class SqliteEventStore {
         const sequence = (maxSeqRow?.max_seq ?? 0) + 1;
         const recordedAt = new Date().toISOString();
 
-        // Compute digest
+        // Compute eventDigest over the canonical form without the digest field.
         const canonicalWithoutDigest = serializeForDigest(draft, sequence, recordedAt);
-        // Synchronous digest: use the canonical text directly with sha256
-        const { createHash } = require("node:crypto") as { createHash: typeof import("node:crypto").createHash };
         const eventDigest = createHash("sha256").update(canonicalWithoutDigest).digest("hex");
 
-        // Serialize producer for storage
+        // Serialize for storage
         const producerJson = canonicalStringify(draft.producer);
 
         // Insert
@@ -156,8 +245,9 @@ export class SqliteEventStore {
           `INSERT INTO events (
             event_id, idempotency_key, sequence, workspace_id, session_id,
             operation_id, type, payload, payload_schema_version, producer,
-            causation_event_id, correlation_id, occurred_at, recorded_at, event_digest
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            causation_event_id, correlation_id, occurred_at, recorded_at, event_digest,
+            request_fingerprint
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           draft.eventId,
           draft.idempotencyKey ?? null,
@@ -174,6 +264,7 @@ export class SqliteEventStore {
           draft.occurredAt,
           recordedAt,
           eventDigest,
+          fingerprint,
         );
 
         // Read back to construct the persisted event
@@ -222,7 +313,6 @@ export class SqliteEventStore {
 
   // --- Projection cursor helpers (ADR 0001) ---
 
-  /** Get a projection's cursor (last applied event sequence). 0 if never applied. */
   getCursor(projectionName: string): number {
     const row = this.db.prepare(
       "SELECT last_applied_event_sequence FROM projection_cursors WHERE projection_name = ?",
@@ -230,7 +320,6 @@ export class SqliteEventStore {
     return row?.last_applied_event_sequence ?? 0;
   }
 
-  /** Advance a projection's cursor. Call within the same txn as projection writes. */
   advanceCursor(projectionName: string, sequence: number, schemaVersion = 1): void {
     this.db.prepare(
       `INSERT INTO projection_cursors (projection_name, last_applied_event_sequence, projection_schema_version)
@@ -241,7 +330,6 @@ export class SqliteEventStore {
     ).run(projectionName, sequence, schemaVersion);
   }
 
-  /** Get events that a projection hasn't applied yet (sequence > cursor). */
   getUnappliedEvents(projectionName: string): EventRow[] {
     const cursor = this.getCursor(projectionName);
     return this.db.prepare(
@@ -249,13 +337,32 @@ export class SqliteEventStore {
     ).all(cursor) as EventRow[];
   }
 
-  /** Execute a function within a transaction. */
   transaction<T>(fn: () => T): T {
     return this.db.transaction(fn)();
   }
 
-  /** Close the underlying DB connection. */
   close(): void {
     this.db.close();
   }
+}
+
+/** Canonical form without the digest field (for digest computation). */
+function serializeForDigest(draft: EventDraft<string, unknown>, sequence: number, recordedAt: string): string {
+  const withoutDigest: Record<string, unknown> = {
+    eventId: draft.eventId,
+    workspaceId: draft.workspaceId,
+    sessionId: draft.sessionId,
+    occurredAt: draft.occurredAt,
+    type: draft.type,
+    payload: draft.payload,
+    payloadSchemaVersion: draft.payloadSchemaVersion,
+    producer: draft.producer,
+    sequence,
+    recordedAt,
+  };
+  if (draft.idempotencyKey !== undefined) withoutDigest.idempotencyKey = draft.idempotencyKey;
+  if (draft.operationId !== undefined) withoutDigest.operationId = draft.operationId;
+  if (draft.causationEventId !== undefined) withoutDigest.causationEventId = draft.causationEventId;
+  if (draft.correlationId !== undefined) withoutDigest.correlationId = draft.correlationId;
+  return canonicalStringify(withoutDigest);
 }

@@ -11,12 +11,15 @@
 import { join, resolve, isAbsolute } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
+import { createRequire } from "node:module";
 import {
   type WorkspaceId,
   asWorkspaceId,
   mkWorkspaceId,
   uuidv7,
 } from "@alcode/events";
+
+const require = createRequire(import.meta.url);
 import type {
   RepositoryEntry,
   PathAlias,

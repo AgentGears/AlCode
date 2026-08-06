@@ -3,7 +3,8 @@
 //
 // One SQLite database per workspace. WAL mode. Foreign keys on.
 // BEGIN IMMEDIATE transactions. Immutable event IDs. Monotonic per-workspace
-// event sequence.
+// event sequence. The database is bound to exactly one workspaceId via a
+// singleton metadata row.
 
 import type Database from "better-sqlite3";
 
@@ -12,6 +13,14 @@ export const SCHEMA_VERSION = 1;
 
 /** DDL statements for the workspace database. */
 const WORKSPACE_SCHEMA: string[] = [
+  // --- Workspace metadata (singleton — binds the DB to one workspaceId) ---
+  `CREATE TABLE IF NOT EXISTS workspace_metadata (
+    singleton     INTEGER PRIMARY KEY CHECK (singleton = 1),
+    workspace_id  TEXT NOT NULL,
+    repository_id TEXT NOT NULL,
+    created_at    TEXT NOT NULL
+  )`,
+
   // --- Events (the append-only event log — historical truth) ---
   `CREATE TABLE IF NOT EXISTS events (
     event_id              TEXT PRIMARY KEY,
@@ -28,7 +37,8 @@ const WORKSPACE_SCHEMA: string[] = [
     correlation_id        TEXT,
     occurred_at           TEXT NOT NULL,
     recorded_at           TEXT NOT NULL,
-    event_digest          TEXT NOT NULL
+    event_digest          TEXT NOT NULL,
+    request_fingerprint   TEXT NOT NULL
   )`,
   `CREATE INDEX IF NOT EXISTS idx_events_sequence ON events(sequence)`,
   `CREATE INDEX IF NOT EXISTS idx_events_type ON events(type)`,
@@ -142,4 +152,46 @@ export function initWorkspaceDb(db: Database.Database): void {
 export function getSchemaVersion(db: Database.Database): number {
   const row = db.prepare("SELECT MAX(version) as v FROM schema_migrations").get() as { v: number | null } | undefined;
   return row?.v ?? 0;
+}
+
+/**
+ * Bind the database to a workspaceId. For a new database, inserts the
+ * singleton metadata row. For an existing database, verifies the expected
+ * workspaceId matches. Throws WorkspaceMismatchError on mismatch.
+ */
+export function bindWorkspace(
+  db: Database.Database,
+  workspaceId: string,
+  repositoryId: string,
+): void {
+  const existing = db.prepare(
+    "SELECT workspace_id FROM workspace_metadata WHERE singleton = 1",
+  ).get() as { workspace_id: string } | undefined;
+
+  if (existing) {
+    if (existing.workspace_id !== workspaceId) {
+      throw new WorkspaceMismatchError(workspaceId, existing.workspace_id);
+    }
+    // Match — already bound.
+    return;
+  }
+
+  // New database — insert the metadata row.
+  db.prepare(
+    "INSERT INTO workspace_metadata (singleton, workspace_id, repository_id, created_at) VALUES (1, ?, ?, ?)",
+  ).run(workspaceId, repositoryId, new Date().toISOString());
+}
+
+/** Error thrown when a workspaceId mismatch is detected. */
+export class WorkspaceMismatchError extends Error {
+  constructor(
+    public readonly expected: string,
+    public readonly actual: string,
+  ) {
+    super(
+      `Workspace mismatch: expected workspaceId ${expected}, but database is bound to ${actual}. ` +
+      "A workspace database can only contain events for one workspace.",
+    );
+    this.name = "WorkspaceMismatchError";
+  }
 }
