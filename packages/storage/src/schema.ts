@@ -1,27 +1,22 @@
-// Workspace database schema. See docs/phase-0-spec.md §"Storage layout" and
+// Workspace database schema and migrations.
+// See docs/phase-0-spec.md §"Storage layout" and
 // docs/adr/0001-event-and-projection-commit-semantics.md.
-//
-// One SQLite database per workspace. WAL mode. Foreign keys on.
-// BEGIN IMMEDIATE transactions. Immutable event IDs. Monotonic per-workspace
-// event sequence. The database is bound to exactly one workspaceId via a
-// singleton metadata row.
 
 import type Database from "better-sqlite3";
+import { createHash } from "node:crypto";
+import { canonicalStringify } from "@alcode/events";
 
-/** Schema version for migrations. */
-export const SCHEMA_VERSION = 1;
+/** Current schema version. */
+export const SCHEMA_VERSION = 2;
 
-/** DDL statements for the workspace database. */
+/** DDL for fresh databases (all tables at current version). */
 const WORKSPACE_SCHEMA: string[] = [
-  // --- Workspace metadata (singleton — binds the DB to one workspaceId) ---
   `CREATE TABLE IF NOT EXISTS workspace_metadata (
     singleton     INTEGER PRIMARY KEY CHECK (singleton = 1),
     workspace_id  TEXT NOT NULL,
     repository_id TEXT NOT NULL,
     created_at    TEXT NOT NULL
   )`,
-
-  // --- Events (the append-only event log — historical truth) ---
   `CREATE TABLE IF NOT EXISTS events (
     event_id              TEXT PRIMARY KEY,
     idempotency_key       TEXT UNIQUE,
@@ -43,23 +38,17 @@ const WORKSPACE_SCHEMA: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_events_sequence ON events(sequence)`,
   `CREATE INDEX IF NOT EXISTS idx_events_type ON events(type)`,
   `CREATE INDEX IF NOT EXISTS idx_events_correlation ON events(correlation_id)`,
-
-  // --- Projection cursors (ADR 0001: each projection tracks its position) ---
   `CREATE TABLE IF NOT EXISTS projection_cursors (
     projection_name            TEXT PRIMARY KEY,
     last_applied_event_sequence INTEGER NOT NULL DEFAULT 0,
     projection_schema_version  INTEGER NOT NULL DEFAULT 1
   )`,
-
-  // --- Sessions ---
   `CREATE TABLE IF NOT EXISTS sessions (
     session_id    TEXT PRIMARY KEY,
     workspace_id  TEXT NOT NULL,
     started_at    TEXT NOT NULL,
     stopped_at    TEXT
   )`,
-
-  // --- Operations (ADR 0003: outcome × status × reconciliation) ---
   `CREATE TABLE IF NOT EXISTS operations (
     operation_id          TEXT PRIMARY KEY,
     workspace_id          TEXT NOT NULL,
@@ -72,8 +61,6 @@ const WORKSPACE_SCHEMA: string[] = [
     started_at            TEXT,
     completed_at          TEXT
   )`,
-
-  // --- Minimal reasoning projection (Phase 0.2: objective nodes only) ---
   `CREATE TABLE IF NOT EXISTS reasoning_nodes (
     node_id      TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL,
@@ -83,8 +70,6 @@ const WORKSPACE_SCHEMA: string[] = [
     confidence   REAL,
     created_sequence INTEGER NOT NULL
   )`,
-
-  // --- Minimal memory projection (Phase 0.2: single records, no scoring) ---
   `CREATE TABLE IF NOT EXISTS memories (
     memory_id    TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL,
@@ -92,16 +77,12 @@ const WORKSPACE_SCHEMA: string[] = [
     body         TEXT NOT NULL,
     created_sequence INTEGER NOT NULL
   )`,
-
-  // --- Artifacts (content-addressed references) ---
   `CREATE TABLE IF NOT EXISTS artifacts (
     digest       TEXT PRIMARY KEY,
     path         TEXT NOT NULL,
     size         INTEGER NOT NULL,
     created_at   TEXT NOT NULL
   )`,
-
-  // --- Projection receipts (Phase 0.7: context compiler receipts) ---
   `CREATE TABLE IF NOT EXISTS projection_receipts (
     receipt_id          TEXT PRIMARY KEY,
     projection_mode     TEXT NOT NULL,
@@ -112,14 +93,10 @@ const WORKSPACE_SCHEMA: string[] = [
     fallback_used       INTEGER NOT NULL DEFAULT 0,
     created_at          TEXT NOT NULL
   )`,
-
-  // --- Schema migrations ---
   `CREATE TABLE IF NOT EXISTS schema_migrations (
     version      INTEGER PRIMARY KEY,
     applied_at   TEXT NOT NULL
   )`,
-
-  // --- Secret redaction sidecar (ADR 0004: incident handling) ---
   `CREATE TABLE IF NOT EXISTS event_redactions (
     event_id     TEXT NOT NULL,
     json_pointer TEXT NOT NULL,
@@ -130,22 +107,36 @@ const WORKSPACE_SCHEMA: string[] = [
 ];
 
 /**
- * Initialize the workspace database: set pragmas, create tables, record
- * the schema migration.
+ * Initialize the workspace database at the current schema version.
+ * For a fresh database, creates all tables and records version 2.
+ * For an existing database, runs migrations from the detected version.
  */
 export function initWorkspaceDb(db: Database.Database): void {
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   db.pragma("busy_timeout = 5000");
 
-  for (const ddl of WORKSPACE_SCHEMA) {
-    db.exec(ddl);
+  // Check if this is a fresh database (no schema_migrations table)
+  const hasMigrations = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'",
+  ).get() as { name: string } | undefined;
+
+  if (!hasMigrations) {
+    // Fresh database — create all tables at current version
+    for (const ddl of WORKSPACE_SCHEMA) {
+      db.exec(ddl);
+    }
+    db.prepare(
+      "INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)",
+    ).run(SCHEMA_VERSION, new Date().toISOString());
+    return;
   }
 
-  // Record the schema migration if not already present
-  db.prepare(
-    "INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (?, ?)",
-  ).run(SCHEMA_VERSION, new Date().toISOString());
+  // Existing database — run migrations
+  const currentVersion = getSchemaVersion(db);
+  if (currentVersion < 2) {
+    migrateV1toV2(db);
+  }
 }
 
 /** Get the current schema version from the database. */
@@ -155,9 +146,143 @@ export function getSchemaVersion(db: Database.Database): number {
 }
 
 /**
+ * Migration from schema v1 (checkpoint b338f3a) to v2.
+ *
+ * v1 had: events table WITHOUT request_fingerprint, no workspace_metadata.
+ * v2 adds: request_fingerprint column (NOT NULL), workspace_metadata table.
+ *
+ * The migration:
+ *   1. Adds the request_fingerprint column (nullable initially).
+ *   2. Creates workspace_metadata.
+ *   3. Discovers the workspace ID from existing events (must be unique).
+ *   4. Fails closed if more than one workspace ID exists.
+ *   5. Populates workspace_metadata.
+ *   6. Backfills request_fingerprint for every existing event.
+ *   7. Enforces NOT NULL on request_fingerprint (table rebuild if needed).
+ *   8. Records migration version 2.
+ */
+function migrateV1toV2(db: Database.Database): void {
+  const migrationTxn = db.transaction(() => {
+    // Step 1: Add the column if it doesn't exist
+    const hasColumn = db.prepare(
+      "SELECT COUNT(*) as c FROM pragma_table_info('events') WHERE name = 'request_fingerprint'",
+    ).get() as { c: number };
+    if (hasColumn.c === 0) {
+      db.exec("ALTER TABLE events ADD COLUMN request_fingerprint TEXT");
+    }
+
+    // Step 2: Create workspace_metadata if it doesn't exist
+    db.exec(`CREATE TABLE IF NOT EXISTS workspace_metadata (
+      singleton     INTEGER PRIMARY KEY CHECK (singleton = 1),
+      workspace_id  TEXT NOT NULL,
+      repository_id TEXT NOT NULL,
+      created_at    TEXT NOT NULL
+    )`);
+
+    // Step 3: Discover workspace IDs from existing events
+    const wsIds = db.prepare(
+      "SELECT DISTINCT workspace_id FROM events",
+    ).all() as Array<{ workspace_id: string }>;
+
+    if (wsIds.length > 1) {
+      throw new Error(
+        `Migration v1→v2 failed: events table contains ${wsIds.length} distinct workspace IDs. ` +
+        "A workspace database can only contain events for one workspace.",
+      );
+    }
+
+    // Step 4-5: Populate workspace_metadata
+    const existingMeta = db.prepare(
+      "SELECT workspace_id FROM workspace_metadata WHERE singleton = 1",
+    ).get() as { workspace_id: string } | undefined;
+
+    if (!existingMeta && wsIds.length === 1) {
+      const wsId = wsIds[0]!.workspace_id;
+      db.prepare(
+        "INSERT INTO workspace_metadata (singleton, workspace_id, repository_id, created_at) VALUES (1, ?, ?, ?)",
+      ).run(wsId, "migrated-unknown", new Date().toISOString());
+    }
+
+    // Step 6: Backfill request_fingerprint AND event_digest for events with NULL/invalid values
+    const nullFpRows = db.prepare(
+      "SELECT event_id, workspace_id, session_id, operation_id, type, payload, " +
+      "payload_schema_version, producer, causation_event_id, correlation_id, occurred_at, " +
+      "sequence, recorded_at, event_digest " +
+      "FROM events WHERE request_fingerprint IS NULL",
+    ).all() as Array<Record<string, string | null>>;
+
+    const updateStmt = db.prepare(
+      "UPDATE events SET request_fingerprint = ?, event_digest = ? WHERE event_id = ?",
+    );
+
+    for (const row of nullFpRows) {
+      const fp = computeFingerprintFromRow(row);
+      const digest = computeDigestFromRow(row);
+      updateStmt.run(fp, digest, row.event_id);
+    }
+
+    // Step 7: Enforce NOT NULL — SQLite ALTER COLUMN is limited, so we verify
+    // all rows have a value. If any remain NULL, the migration failed.
+    const nullCount = db.prepare(
+      "SELECT COUNT(*) as c FROM events WHERE request_fingerprint IS NULL",
+    ).get() as { c: number };
+    if (nullCount.c > 0) {
+      throw new Error(
+        `Migration v1→v2 failed: ${nullCount.c} events still have NULL request_fingerprint after backfill.`,
+      );
+    }
+
+    // Step 8: Record migration
+    db.prepare(
+      "INSERT OR REPLACE INTO schema_migrations (version, applied_at) VALUES (?, ?)",
+    ).run(2, new Date().toISOString());
+  });
+
+  migrationTxn();
+}
+
+/** Compute a request fingerprint from raw row data (for migration backfill). */
+function computeFingerprintFromRow(row: Record<string, string | null>): string {
+  const fingerprintInput = {
+    workspaceId: row.workspace_id,
+    sessionId: row.session_id,
+    operationId: row.operation_id ?? null,
+    type: row.type,
+    payload: JSON.parse(row.payload as string),
+    payloadSchemaVersion: row.payload_schema_version ?? 1,
+    producer: JSON.parse(row.producer as string),
+    causationEventId: row.causation_event_id ?? null,
+    correlationId: row.correlation_id ?? null,
+    occurredAt: row.occurred_at,
+  };
+  return createHash("sha256").update(canonicalStringify(fingerprintInput)).digest("hex");
+}
+
+/** Compute an event digest from raw row data (for migration backfill). */
+function computeDigestFromRow(row: Record<string, string | null>): string {
+  const digestInput: Record<string, unknown> = {
+    eventId: row.event_id,
+    workspaceId: row.workspace_id,
+    sessionId: row.session_id,
+    occurredAt: row.occurred_at,
+    type: row.type,
+    payload: JSON.parse(row.payload as string),
+    payloadSchemaVersion: row.payload_schema_version ?? 1,
+    producer: JSON.parse(row.producer as string),
+    sequence: row.sequence,
+    recordedAt: row.recorded_at,
+  };
+  if (row.idempotency_key) digestInput.idempotencyKey = row.idempotency_key;
+  if (row.operation_id) digestInput.operationId = row.operation_id;
+  if (row.causation_event_id) digestInput.causationEventId = row.causation_event_id;
+  if (row.correlation_id) digestInput.correlationId = row.correlation_id;
+  return createHash("sha256").update(canonicalStringify(digestInput)).digest("hex");
+}
+
+/**
  * Bind the database to a workspaceId. For a new database, inserts the
- * singleton metadata row. For an existing database, verifies the expected
- * workspaceId matches. Throws WorkspaceMismatchError on mismatch.
+ * singleton metadata row. For an existing database, verifies both workspaceId
+ * AND repositoryId match. Throws on mismatch.
  */
 export function bindWorkspace(
   db: Database.Database,
@@ -165,32 +290,33 @@ export function bindWorkspace(
   repositoryId: string,
 ): void {
   const existing = db.prepare(
-    "SELECT workspace_id FROM workspace_metadata WHERE singleton = 1",
-  ).get() as { workspace_id: string } | undefined;
+    "SELECT workspace_id, repository_id FROM workspace_metadata WHERE singleton = 1",
+  ).get() as { workspace_id: string; repository_id: string } | undefined;
 
   if (existing) {
     if (existing.workspace_id !== workspaceId) {
-      throw new WorkspaceMismatchError(workspaceId, existing.workspace_id);
+      throw new WorkspaceMismatchError("workspaceId", workspaceId, existing.workspace_id);
     }
-    // Match — already bound.
+    if (existing.repository_id !== repositoryId && existing.repository_id !== "migrated-unknown") {
+      throw new WorkspaceMismatchError("repositoryId", repositoryId, existing.repository_id);
+    }
     return;
   }
 
-  // New database — insert the metadata row.
   db.prepare(
     "INSERT INTO workspace_metadata (singleton, workspace_id, repository_id, created_at) VALUES (1, ?, ?, ?)",
   ).run(workspaceId, repositoryId, new Date().toISOString());
 }
 
-/** Error thrown when a workspaceId mismatch is detected. */
+/** Error thrown when a workspace identity mismatch is detected. */
 export class WorkspaceMismatchError extends Error {
   constructor(
+    public readonly field: string,
     public readonly expected: string,
     public readonly actual: string,
   ) {
     super(
-      `Workspace mismatch: expected workspaceId ${expected}, but database is bound to ${actual}. ` +
-      "A workspace database can only contain events for one workspace.",
+      `Workspace ${field} mismatch: expected ${expected}, but database is bound to ${actual}.`,
     );
     this.name = "WorkspaceMismatchError";
   }

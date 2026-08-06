@@ -6,5 +6,8 @@ export {
   EventIdentityConflictError,
   IdempotencyConflictError,
   WorkspaceIdMismatchError,
+  EventIntegrityError,
   computeRequestFingerprint,
+  openWorkspaceStore,
+  type OpenWorkspaceStoreOptions,
 } from "./sqlite-event-store.ts";
