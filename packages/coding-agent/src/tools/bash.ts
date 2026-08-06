@@ -24,8 +24,9 @@ const TRUNCATION_MSG = "\n[output truncated]";
  * Kill a child process and its entire process tree. On Windows, `child.kill()`
  * only terminates the immediate child (e.g. `cmd.exe`), leaving grandchild
  * processes (e.g. `powershell.exe`) running. Use `taskkill /T /F` to kill
- * the tree. On POSIX, `child.kill("SIGKILL")` suffices (children inherit
- * the process group).
+ * the tree. On POSIX, kill the negative process group (the child was spawned
+ * with detached: true so it gets its own process group; killing -pid sends
+ * the signal to the entire group).
  */
 function killChild(child: ChildProcess): void {
   if (process.platform === "win32" && child.pid) {
@@ -34,6 +35,15 @@ function killChild(child: ChildProcess): void {
       return;
     } catch {
       // Fall through to child.kill.
+    }
+  }
+  // POSIX: kill the process group if the child was detached.
+  if (child.pid) {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+      return;
+    } catch {
+      // Group kill failed (may not be detached); fall through.
     }
   }
   child.kill("SIGKILL");
@@ -91,6 +101,10 @@ export function createBashTool(opts: {
           cwd,
           stdio: ["ignore", "pipe", "pipe"],
           windowsHide: true,
+          // On POSIX, detach so the child gets its own process group. This
+          // lets us tree-kill via process.kill(-pid, SIGKILL) on timeout/abort.
+          // On Windows, detached is not needed (we use taskkill /T /F).
+          detached: !isWin,
         });
 
         let stdoutBuf = Buffer.alloc(0);
