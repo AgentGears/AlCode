@@ -444,14 +444,39 @@ export async function openLockedWorkspaceStore(
     // 4. Bind + verify identity
     bindWorkspace(db, opts.workspaceId, opts.repositoryId);
 
-    // 5. Construct store (internal class — not exported)
-    const store = new SqliteEventStoreImpl(db, opts.workspaceId);
+    // 5. Construct implementation + closure-backed facade
+    const impl = new SqliteEventStoreImpl(db, opts.workspaceId);
+
+    // Build a frozen facade with null prototype so the implementation class
+    // constructor cannot be recovered via rt.store.constructor.
+    const store: WorkspaceEventStore = Object.assign(Object.create(null), {
+      workspaceId: impl.workspaceId,
+      append: impl.append.bind(impl),
+      replay: impl.replay.bind(impl),
+      get: impl.get.bind(impl),
+      headSequence: impl.headSequence.bind(impl),
+      getCursor: impl.getCursor.bind(impl),
+      advanceCursor: impl.advanceCursor.bind(impl),
+      getUnappliedEvents: impl.getUnappliedEvents.bind(impl),
+      transaction: impl.transaction.bind(impl),
+    });
+    Object.freeze(store);
+
+    // 6. Lifecycle handle with ordered close (DB before lock)
+    let state: "open" | "database-closed" | "closed" = "open";
 
     return {
       store,
       close() {
-        try { store.closeDatabase(); } catch { /* already closed */ }
+        if (state === "closed") return; // idempotent
+
+        if (state === "open") {
+          impl.closeDatabase(); // failure propagates; lock NOT released
+          state = "database-closed";
+        }
+
         lock.release();
+        state = "closed";
       },
     };
   } catch (e) {

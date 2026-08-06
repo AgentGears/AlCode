@@ -14,8 +14,6 @@ import {
   canonicalStringify,
 } from "@alcode/events";
 import {
-  initWorkspaceDb,
-  bindWorkspace,
   type WorkspaceEventStore,
   EventIdentityConflictError,
   IdempotencyConflictError,
@@ -26,6 +24,8 @@ import {
   openLockedWorkspaceStore,
   type LockedWorkspaceStore,
 } from "./index.ts";
+// Internal imports (not from public barrel): used only by migration tests
+import { initWorkspaceDb, bindWorkspace } from "./schema.ts";
 
 const require = createRequire(import.meta.url);
 const Database = require("better-sqlite3") as typeof import("better-sqlite3");
@@ -456,6 +456,59 @@ describe("openLockedWorkspaceStore — enforced lifecycle", () => {
       expect((mod as Record<string, unknown>).SqliteEventStoreImpl).toBeUndefined();
       expect((mod as Record<string, unknown>).SqliteEventStore).toBeUndefined();
       expect(typeof mod.openLockedWorkspaceStore).toBe("function");
+    });
+
+    it("store facade does not expose the implementation constructor", async () => {
+      const rt = await openLockedWorkspaceStore({
+        databasePath: join(dir, "ws.sqlite"), lockPath: join(dir, "ws.lock"),
+        workspaceId: TEST_WS, repositoryId: TEST_REPO,
+      });
+      // With Object.create(null), there is no .constructor on the facade
+      expect((rt.store as object).constructor).toBeUndefined();
+      rt.close();
+    });
+
+    it("initWorkspaceDb and bindWorkspace are NOT exported from the public barrel", async () => {
+      const mod = await import("./index.ts");
+      expect((mod as Record<string, unknown>).initWorkspaceDb).toBeUndefined();
+      expect((mod as Record<string, unknown>).bindWorkspace).toBeUndefined();
+    });
+  });
+
+  describeLocked2("close() state machine — DB failure does not release lock", () => {
+    let dir: string;
+
+    beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "alcode-close-")); });
+
+    it("DB close failure propagates and lock is NOT released", async () => {
+      const rt = await openLockedWorkspaceStore({
+        databasePath: join(dir, "ws.sqlite"), lockPath: join(dir, "ws.lock"),
+        workspaceId: TEST_WS, repositoryId: TEST_REPO,
+      });
+
+      // Tamper with the DB handle so closeDatabase throws.
+      // We do this by closing the underlying DB directly (double-close throws).
+      const db = Database(join(dir, "ws.sqlite"));
+      db.close(); // Now the store's handle is stale
+
+      // close() should throw because closeDatabase fails
+      expect(() => rt.close()).toThrow();
+
+      // A second writer should still be blocked (lock not released)
+      await expect(openLockedWorkspaceStore({
+        databasePath: join(dir, "ws2.sqlite"), lockPath: join(dir, "ws.lock"),
+        workspaceId: TEST_WS, repositoryId: TEST_REPO,
+      })).rejects.toThrow(/lock/);
+    });
+
+    it("normal close is idempotent", async () => {
+      const rt = await openLockedWorkspaceStore({
+        databasePath: join(dir, "ws.sqlite"), lockPath: join(dir, "ws.lock"),
+        workspaceId: TEST_WS, repositoryId: TEST_REPO,
+      });
+      rt.close();
+      // Second close is a no-op
+      expect(() => rt.close()).not.toThrow();
     });
   });
 });
