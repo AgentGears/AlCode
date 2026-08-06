@@ -627,12 +627,13 @@ describeLocked("SqliteEventStore — secret admission in append()", () => {
   it("raw DB + WAL bytes contain no secret after append (while open)", async () => {
     const dbPath = join(dir, "ws5.sqlite");
     const lockPath = join(dir, "ws5.lock");
+    const configuredVal = "my-configured-secret-12345678";
     const rt = await openLockedWorkspaceStore({
       databasePath: dbPath, lockPath, workspaceId: TEST_WS, repositoryId: TEST_REPO,
+      secretConfig: { configuredSecrets: [{ name: "TEST", value: configuredVal }] },
     });
 
     // Append multiple secrets (structured + embedded configured)
-    const configuredVal = "my-configured-secret-12345678";
     await rt.store.append([
       makeDraft({ payload: { token: FAKE_GITHUB_TOKEN, key: FAKE_AWS_KEY, text: `Bearer ${configuredVal}` } }),
     ]);
@@ -661,7 +662,7 @@ describeLocked("SqliteEventStore — secret admission in append()", () => {
     }
   });
 
-  it("adversarial mixed-batch: safe draft + multi-bypass draft → zero persisted", async () => {
+  it("adversarial batch: payload secrets admitted (redacted) + safe content persisted", async () => {
     const dbPath = join(dir, "ws6.sqlite");
     const lockPath = join(dir, "ws6.lock");
     const configuredVal = "another-configured-secret-abcdefgh";
@@ -671,18 +672,37 @@ describeLocked("SqliteEventStore — secret admission in append()", () => {
     });
 
     const safeDraft = makeDraft({ payload: { value: "safe" } });
-    // Bypass case: embedded configured secret in payload + multiple tokens in one string
-    const bypassDraft = makeDraft({
+    const secretPayloadDraft = makeDraft({
       payload: { text: `${FAKE_GITHUB_TOKEN} and ${FAKE_AWS_KEY} Bearer ${configuredVal}` },
     });
 
-    await expect(rt.store.append([safeDraft, bypassDraft])).rejects.toThrow();
+    // Payload secrets are admitted (redacted), not rejected — both drafts persist
+    const results = await rt.store.append([safeDraft, secretPayloadDraft]);
+    expect(results.length).toBe(2);
+    expect(await rt.store.headSequence()).toBe(2);
 
-    // Actually this should be admitted (redacted), not rejected — the secrets
-    // are in payload content, not identifier fields. Let me verify they ARE
-    // redacted and persisted, not rejected.
-    // Re-do: the batch should succeed (payload secrets are redacted, not rejected).
+    // Verify the safe draft is unchanged
+    const safeFound = await rt.store.get(safeDraft.eventId as string);
+    expect((safeFound!.payload as { value: string }).value).toBe("safe");
+
+    // Verify the secret payload draft is redacted
+    const secretFound = await rt.store.get(secretPayloadDraft.eventId as string);
+    const secretPayload = secretFound!.payload as { text: string };
+    expect(secretPayload.text).not.toContain(FAKE_GITHUB_TOKEN);
+    expect(secretPayload.text).not.toContain(FAKE_AWS_KEY);
+    expect(secretPayload.text).not.toContain(configuredVal);
+    expect(secretPayload.text).toContain("secretref:");
+
     rt.close();
+
+    // Byte-scan the closed DB
+    const { readFileSync, existsSync } = await import("node:fs");
+    if (existsSync(dbPath)) {
+      const bytes = readFileSync(dbPath);
+      const text = bytes.toString("utf8");
+      expect(text).not.toContain(FAKE_GITHUB_TOKEN);
+      expect(text).not.toContain(configuredVal);
+    }
   });
 
   it("adversarial: batch with secret in identifier → zero persisted", async () => {
