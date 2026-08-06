@@ -23,6 +23,15 @@ importers:
 
   packages/agent-core: {}
 
+  packages/coding-agent:
+    dependencies:
+      '@alcode/agent-core':
+        specifier: workspace:*
+        version: link:../agent-core
+      '@alcode/test-provider':
+        specifier: workspace:*
+        version: link:../test-provider
+
   packages/events: {}
 
   packages/test-provider: {}

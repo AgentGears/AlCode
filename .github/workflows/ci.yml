@@ -44,3 +44,8 @@ jobs:
         env:
           ALCODE_HOME: ${{ runner.temp }}/alcode-home
         run: pnpm gate:0.0
+
+      - name: Run Phase 0.1A gate
+        env:
+          ALCODE_HOME: ${{ runner.temp }}/alcode-home
+        run: pnpm gate:0.1A
