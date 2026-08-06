@@ -37,8 +37,8 @@ jobs:
 
       # esbuild (vitest's dep) needs its postinstall to run; CI installs are
       # trusted, so allow it.
-      - name: Rebuild esbuild
-        run: pnpm rebuild esbuild
+      - name: Rebuild native modules
+        run: pnpm rebuild esbuild fs-ext better-sqlite3
 
       - name: Run Phase 0.0 gate
         env:
