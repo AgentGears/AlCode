@@ -7,12 +7,27 @@ ref/
 # Node
 node_modules/
 dist/
-*.log
+*.tsbuildinfo
+
+# Test / coverage
+coverage/
+.vitest-cache/
 
 # OS
 .DS_Store
 Thumbs.db
 
+# Editor
+.vscode/
+.idea/
+*.swp
+
 # Environment
 .env
 .env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
