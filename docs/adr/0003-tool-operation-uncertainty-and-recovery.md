@@ -29,20 +29,27 @@ type ExecutionOutcome =
   | "cancelled"      // the execution was cancelled
   | "timed_out";     // the execution exceeded its timeout
 
-type EffectCertainty =
-  | "confirmed"      // evidence the effect occurred (or for failed, did not)
-  | "absent"         // evidence the effect did not occur
-  | "indeterminate"; // cannot prove whether the effect occurred
+type EffectStatus =
+  | "confirmed"        // evidence the effect occurred
+  | "absent"           // evidence the effect did not occur
+  | "indeterminate"    // cannot prove whether the effect occurred
+  | "not_applicable";  // the operation has no external effect (read-only tools)
 ```
+
+`unresolved` is a *reconciliation* status, not an effect status — see below.
 
 Default mapping (tool-specific reconciliation can override):
 
-| ExecutionOutcome | Default EffectCertainty | Reason |
+| ExecutionOutcome | Default EffectStatus | Reason |
 |---|---|---|
-| `succeeded` | `confirmed` | the tool reported success and returned a result |
-| `failed` | `confirmed` (absent) | the tool reported failure before completing the effect |
+| `succeeded` | tool-declared (usually `confirmed`) | the tool reported success and returned a result |
+| `failed` | `indeterminate` | a shell command can modify several files and then exit non-zero; failure can still leave partial effects |
 | `cancelled` | `indeterminate` | a cancelled process may have produced partial effects |
 | `timed_out` | `indeterminate` | a timed-out process may have produced partial effects |
+
+Read-only tools (e.g. `read`, `grep`, `ls`, `find`) declare `not_applicable`,
+which avoids pretending every operation mutates external state. `failed` is no
+longer defaulted to `absent` — failure does not prove the effect did not occur.
 
 On startup, any surviving `requested` or `started` operation from a prior
 session is treated as `indeterminate` (the runtime cannot know whether the
@@ -53,19 +60,33 @@ keep `indeterminate` unless reconciliation proves otherwise.
   auto-retried**. Auto-retry risks duplicating an effect that already happened.
 - `indeterminate` is a real, persistent state, not a transient one.
 
-## Decision — reconciliation
+## Decision — reconciliation (separate from effect status)
+
+`EffectStatus` describes the effect; `ReconciliationStatus` describes whether
+the operation needed reconciliation and where that process stands. These are
+separate because a `confirmed` or `absent` effect needs no reconciliation,
+while an `indeterminate` one does.
+
+```ts
+type ReconciliationStatus =
+  | "not_required"   // effect status is confirmed/absent/not_applicable
+  | "pending"        // indeterminate; reconciliation not yet run
+  | "resolved"       // reconciliation produced evidence (effect status updated)
+  | "unresolved";    // reconciliation ran but evidence was insufficient
+```
 
 An `indeterminate` operation does **not** transition to `confirmed` merely
-because the process restarted. It resolves only via a reconciliation operation
-that produces evidence and then moves `EffectCertainty` to a terminal value:
+because the process restarted. Reconciliation produces evidence and then:
 
-- `confirmed` (via `reconciled_succeeded`) — evidence the effect occurred correctly.
-- `absent` (via `reconciled_failed`) — evidence the effect did not occur or failed.
-- `unresolved` — preserved indefinitely when evidence is insufficient.
+- on success → `ReconciliationStatus: "resolved"` and `EffectStatus` updated
+  to `confirmed` (effect occurred) or `absent` (effect did not occur);
+- on insufficient evidence → `ReconciliationStatus: "unresolved"` and
+  `EffectStatus` stays `indeterminate`, surfacing to the user for a decision.
 
 Reconciliation is tool-specific. The `bash` tool may inspect repository state
 (git status, file mtimes, presence of expected output); other tools define
-their own reconciliation checks. If no tool-specific check exists, the
+their own reconciliation checks. Read-only tools have no reconciliation path
+(their effect is `not_applicable`). If no tool-specific check exists, the
 operation requires a user decision.
 
 ## Decision — the honest guarantee

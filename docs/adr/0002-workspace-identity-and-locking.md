@@ -78,8 +78,16 @@ identity (what is its primary key?).
   acquired-at) **for diagnostics only**. Never sufficient evidence to forcibly
   break a lock — PID reuse makes this unsafe.
 - **Forced break:** a human may break a lock explicitly via
-  `alcode workspace break-lock <id>` after confirming the owner is gone. The
-  system never auto-breaks on PID metadata.
+  `alcode workspace break-lock <id>`, but this **cannot forcibly release an OS
+  lock held by another live process**. The command attempts to acquire the
+  lock normally; only after successful acquisition may it clear stale
+  diagnostic metadata in `registry.sqlite`. Deleting or replacing the lock
+  file is **not** presented as breaking an active `flock`/`LockFileEx` lock —
+  on POSIX, replacing the file does not release a lock held on the original
+  inode, and on Windows the lock is on a byte range of the file. The command
+  is therefore for recovering from *stale* diagnostic state after a crashed
+  owner, not for preempting a live one. The system never auto-breaks on PID
+  metadata.
 - **Networked or unsupported filesystems:** fail closed. If the OS primitive
   is unreliable (NFS, FAT, etc.), refuse to start rather than pretend to hold
   a lock that is not real.

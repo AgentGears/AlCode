@@ -77,24 +77,25 @@ locking, uncertainty, and secret rules live here.
 
 ## Tool operations and uncertainty
 
-- **Operations have a state machine pairing ExecutionOutcome with
-  EffectCertainty** (see ADR 0003):
+- **Operations have a state machine across three dimensions** (see ADR 0003):
   - **ExecutionOutcome:** `succeeded` | `failed` | `cancelled` | `timed_out`
-  - **EffectCertainty:** `confirmed` | `absent` | `indeterminate`
+  - **EffectStatus:** `confirmed` | `absent` | `indeterminate` | `not_applicable`
+  - **ReconciliationStatus:** `not_required` | `pending` | `resolved` | `unresolved`
 
-  An operation whose `EffectCertainty` is `indeterminate` is **never
+  An operation whose `EffectStatus` is `indeterminate` is **never
   auto-retried**. A crash can occur after a shell command mutated the
   repository but before `tool.completed` persisted; on restart the runtime
-  cannot know whether the command ran, failed, or partially ran. A cancelled
-  or timed-out process may already have produced partial effects, so
-  `cancelled`/`timed_out` default to `indeterminate` unless reconciliation
-  proves otherwise.
+  cannot know whether the command ran, failed, or partially ran. `failed`,
+  `cancelled`, and `timed_out` default to `indeterminate` — failure does not
+  prove the effect did not occur (a shell can modify files then exit non-zero).
+  Read-only tools declare `not_applicable`.
 
 - **`indeterminate` resolves only via reconciliation.** It does not transition
-  to `confirmed` merely because the process restarted. A reconciliation
-  operation must produce evidence and then resolve to a terminal state
-  (`reconciled_succeeded`/`confirmed` or `reconciled_failed`/`absent`), or
-  remain `unresolved`. See `docs/operation-recovery.md`.
+  to `confirmed` merely because the process restarted. Reconciliation produces
+  evidence → `ReconciliationStatus: "resolved"` and `EffectStatus` updated to
+  `confirmed`/`absent`; or `ReconciliationStatus: "unresolved"` with
+  `EffectStatus` staying `indeterminate`, surfacing to the user. See
+  `docs/operation-recovery.md`.
 
 - **The honest guarantee is "effectively once where supported, otherwise detect
   and preserve uncertainty."** Restrict "exactly once" to operations with

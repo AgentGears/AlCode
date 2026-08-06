@@ -19,33 +19,36 @@ On opening a workspace:
 
 ## Operation state transitions
 
-An operation's terminal state is a *pair* (see ADR 0003):
+An operation's terminal state is described by three values (see ADR 0003):
 
 - **ExecutionOutcome**: `succeeded` | `failed` | `cancelled` | `timed_out`
-- **EffectCertainty**: `confirmed` | `absent` | `indeterminate`
+- **EffectStatus**: `confirmed` | `absent` | `indeterminate` | `not_applicable`
+- **ReconciliationStatus**: `not_required` | `pending` | `resolved` | `unresolved`
 
-Default certainty mapping: `succeeded` → `confirmed`; `failed` → `absent`/`confirmed`;
-`cancelled` and `timed_out` → `indeterminate` (a cancelled or timed-out process
-may have produced partial effects).
+Default mapping: `succeeded` → tool-declared (usually `confirmed`); `failed`,
+`cancelled`, `timed_out` → `indeterminate` (failure/cancellation/timeout can
+still leave partial effects). Read-only tools declare `not_applicable`.
 
 On startup, any surviving `requested` or `started` operation from a prior
-session is treated as `EffectCertainty: "indeterminate"` (the runtime cannot
-know whether the tool actually ran). `cancelled`/`timed_out` operations from a
-prior session keep `indeterminate` unless reconciliation proves otherwise. None
-of these are auto-retried.
+session is treated as `EffectStatus: "indeterminate"`,
+`ReconciliationStatus: "pending"` (the runtime cannot know whether the tool
+actually ran). `cancelled`/`timed_out` operations from a prior session keep
+`indeterminate` unless reconciliation proves otherwise. None of these are
+auto-retried.
 
 ## Indeterminate resolution
 
 An `indeterminate` operation resolves only via reconciliation that produces
 evidence:
 
-- `confirmed` (`reconciled_succeeded`) — evidence the effect occurred correctly.
-- `absent` (`reconciled_failed`) — evidence the effect did not occur or failed.
-- `unresolved` — preserved indefinitely when evidence is insufficient;
-  surfaces to the user for a decision.
+- on success → `ReconciliationStatus: "resolved"` and `EffectStatus` updated
+  to `confirmed` (effect occurred) or `absent` (effect did not occur);
+- on insufficient evidence → `ReconciliationStatus: "unresolved"`,
+  `EffectStatus` stays `indeterminate`, surfaces to the user for a decision.
 
 Reconciliation is **tool-specific**. Tool authors declare whether their tool
-supports automatic reconciliation and provide the check. A tool with no
+supports automatic reconciliation and provide the check. Read-only tools have
+no reconciliation path (effect is `not_applicable`). A tool with no
 reconciliation check leaves operations `unresolved` until a user decides.
 
 ## Crash test matrix (enforced by Phase 0.2 tests)

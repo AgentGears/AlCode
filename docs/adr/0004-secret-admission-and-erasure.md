@@ -66,6 +66,14 @@ are preserved by recording what was removed; physical storage is rewritten.
    the affected event payload (replacing it with `secretref:<digest>` in the
    row itself, not only in a sidecar). WAL checkpoints and temporary files are
    addressed by the rewrite.
+   - Because `eventDigest` is defined as a hash of the persisted event
+     (`docs/event-contract.md`), a rewrite **invalidates the original digest**.
+     The redaction transaction must therefore: (a) record the original event
+     id and old digest in the `security.redaction_applied` audit event;
+     (b) replace the secret with the redaction marker; (c) recompute
+     `eventDigest` over the rewritten canonical event; (d) record the new
+     digest; (e) verify all indexes and projection rebuilds against the
+     rewritten event (digest, payload, and any derived artifacts).
 5. **Rebuild all projections and downstream artifacts** from the rewritten
    store so derived state converges to "no secret present."
 6. **Verify the raw value is absent** from the database, WAL, artifacts,
