@@ -24,6 +24,7 @@ import {
   openLockedWorkspaceStore,
   type LockedWorkspaceStore,
 } from "./index.ts";
+import { createOrderedClose } from "./sqlite-event-store.ts";
 // Internal imports (not from public barrel): used only by migration tests
 import { initWorkspaceDb, bindWorkspace } from "./schema.ts";
 
@@ -475,47 +476,72 @@ describe("openLockedWorkspaceStore — enforced lifecycle", () => {
     });
   });
 
-  describeLocked2("close() state machine — DB failure does not release lock", () => {
+  describeLocked2("normal close is idempotent", () => {
     let dir: string;
-
     beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "alcode-close-")); });
 
-    it("DB close failure propagates and lock is NOT released", async () => {
-      const dbPath = join(dir, "ws.sqlite");
-      const rt = await openLockedWorkspaceStore({
-        databasePath: dbPath, lockPath: join(dir, "ws.lock"),
-        workspaceId: TEST_WS, repositoryId: TEST_REPO,
-      });
-
-      // Corrupt the DB file so closeDatabase fails when SQLite tries to
-      // flush WAL/checkpoint. Write garbage to the file.
-      const { writeFileSync } = await import("node:fs");
-      // The store holds an open handle; overwriting the underlying file
-      // makes the SQLite close operation fail on some platforms. A more
-      // reliable approach: use PRAGMA to force an error.
-      //
-      // Actually the most reliable cross-platform way to test this is to
-      // verify the state-machine contract directly: if closeDatabase throws,
-      // the lock is not released. Since better-sqlite3's close() is robust
-      // (idempotent, doesn't throw on stale handles), we verify the
-      // state machine by checking that close is idempotent and that the
-      // lock IS released on normal close (tested elsewhere).
-      //
-      // Skip this specific injection test on platforms where close doesn't throw.
-      // The contract is proven by the state-machine implementation + the
-      // idempotent test below.
-      rt.close(); // Normal close works
-      expect(true).toBe(true); // Contract verified via code review + idempotent test
-    });
-
-    it("normal close is idempotent", async () => {
+    it("repeated close() calls are no-ops after the first", async () => {
       const rt = await openLockedWorkspaceStore({
         databasePath: join(dir, "ws.sqlite"), lockPath: join(dir, "ws.lock"),
         workspaceId: TEST_WS, repositoryId: TEST_REPO,
       });
       rt.close();
-      // Second close is a no-op
+      expect(() => rt.close()).not.toThrow();
       expect(() => rt.close()).not.toThrow();
     });
+  });
+});
+
+describe("createOrderedClose — injected failure contract", () => {
+  // These tests are platform-independent (no locks, no SQLite).
+  // They prove the state-machine ordering: DB close must succeed
+  // before the lock releases.
+
+  it("DB close failure propagates and lock is NOT released", () => {
+    let failClose = true;
+    let releaseCount = 0;
+
+    const close = createOrderedClose(
+      () => { if (failClose) throw new Error("injected close failure"); },
+      () => { releaseCount++; },
+    );
+
+    expect(close).toThrow("injected close failure");
+    expect(releaseCount).toBe(0);
+  });
+
+  it("retry after failure: success releases lock", () => {
+    let failClose = true;
+    let releaseCount = 0;
+
+    const close = createOrderedClose(
+      () => { if (failClose) throw new Error("injected close failure"); },
+      () => { releaseCount++; },
+    );
+
+    // First attempt fails
+    expect(close).toThrow("injected close failure");
+    expect(releaseCount).toBe(0);
+
+    // Retry: close now succeeds
+    failClose = false;
+    expect(close).not.toThrow();
+    expect(releaseCount).toBe(1);
+  });
+
+  it("idempotent: repeated close after success is a no-op", () => {
+    let releaseCount = 0;
+
+    const close = createOrderedClose(
+      () => {},
+      () => { releaseCount++; },
+    );
+
+    close();
+    expect(releaseCount).toBe(1);
+
+    close();
+    close();
+    expect(releaseCount).toBe(1); // no additional releases
   });
 });

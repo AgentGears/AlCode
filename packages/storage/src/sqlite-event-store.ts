@@ -387,6 +387,38 @@ class SqliteEventStoreImpl implements WorkspaceEventStore {
 }
 
 // ---------------------------------------------------------------------------
+// Ordered close helper (module-internal — tested via injection)
+// ---------------------------------------------------------------------------
+
+/**
+ * Create a close function that enforces ordering: closeDatabase() must
+ * succeed before releaseLock() is called. If closeDatabase throws, the
+ * lock is NOT released. Subsequent calls are idempotent once both steps
+ * complete. If closeDatabase threw on a prior call, the close function
+ * can be retried.
+ *
+ * State machine: "open" → "database-closed" → "closed".
+ */
+export function createOrderedClose(
+  closeDatabase: () => void,
+  releaseLock: () => void,
+): () => void {
+  let state: "open" | "database-closed" | "closed" = "open";
+
+  return () => {
+    if (state === "closed") return;
+
+    if (state === "open") {
+      closeDatabase(); // failure propagates; state stays "open", lock NOT released
+      state = "database-closed";
+    }
+
+    releaseLock();
+    state = "closed";
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Safe entry point: openLockedWorkspaceStore
 // ---------------------------------------------------------------------------
 
@@ -463,21 +495,14 @@ export async function openLockedWorkspaceStore(
     Object.freeze(store);
 
     // 6. Lifecycle handle with ordered close (DB before lock)
-    let state: "open" | "database-closed" | "closed" = "open";
+    const close = createOrderedClose(
+      () => impl.closeDatabase(),
+      () => lock.release(),
+    );
 
     return {
       store,
-      close() {
-        if (state === "closed") return; // idempotent
-
-        if (state === "open") {
-          impl.closeDatabase(); // failure propagates; lock NOT released
-          state = "database-closed";
-        }
-
-        lock.release();
-        state = "closed";
-      },
+      close,
     };
   } catch (e) {
     // Cleanup on failure: close DB if opened, release lock, rethrow
