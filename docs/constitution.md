@@ -21,8 +21,10 @@ governed by one codebase.
    projections of the event log. Any projection can be deleted and rebuilt.
 
 3. **One supervised runtime owns each writable state root.**
-   No accidental distribution. One writer per workspace; multi-instance conflict
-   fails clearly rather than corrupting state.
+   No accidental distribution. One writer per workspace, enforced by a
+   process-held OS lock (not a database row alone — PID reuse and abrupt
+   termination leave stale ownership ambiguous). Multi-instance conflict fails
+   clearly rather than corrupting state.
 
 4. **Background work is bounded, observable, and supervised.**
    No detached, unowned production workers. Every child process is recorded,
@@ -43,8 +45,12 @@ governed by one codebase.
    default until it measurably wins on objective evaluation.
 
 8. **Mutable state never lives inside source repositories.**
-   All mutable runtime state lives under `~/.alcode/`. Repositories are observed,
-   not written into, for runtime state. Paths are attributes, not identities.
+   All mutable runtime state lives under `~/.alcode/` (or `$ALCODE_HOME`).
+   Repositories are observed, not written into, for runtime state. Paths are
+   attributes, not identities — a stable `repository_id` independent of path is
+   required so a moved repository retains its memory and reasoning history.
+   Secrets are redacted **before event persistence**, not at projection time:
+   once a raw credential hits an append-only log, tombstones do not remove it.
 
 9. **Imported pi source becomes independently owned ALCODE infrastructure.**
    pi (MIT) is acquired as licensed source with recorded provenance, converted
@@ -55,8 +61,16 @@ governed by one codebase.
 
 10. **Architecture work is gate-driven and timeboxed.**
     Phases begin when their dependencies' exit gates pass and end when their
-    own exit gate passes. No phase is compressed by calendar pressure. Phase 0.0
-    is hard-timeboxed to 1–2 working days.
+    own exit gate passes. A phase gate is an **executable command**
+    (`pnpm gate:X.Y`) that emits a machine-readable `GateReceipt`, not a
+    document-reading exercise. No phase is compressed by calendar pressure.
+
+## Status
+
+Phase 0.0 is **reopened** — documentation was complete but the executable
+scaffold (workspace, `events` package, gate runner, ADRs, threat model,
+recovery model, licensing, minimal CI) was not. See `docs/phase-0-spec.md` §0.0
+for the corrected, executable scope.
 
 ## Relationship to the prior work
 

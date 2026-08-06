@@ -9,8 +9,9 @@ Frozen now: `workspace_id`, `session_id`, `event_id`, `operation_id`, `memory_id
 `reasoning_node_id`, `event_sequence`, `schema_version`.
 
 - `installation_id` — when multi-machine sync or licensing matters.
-- `repository_id` — when a workspace spans multiple repos or a repo is moved
-  (must not lose memory/history). Likely arrives early.
+- `repository_id` — **PROMOTED to required-before-0.2** (see "Workspace
+  identity" below). A path cannot be "only an attribute" and simultaneously
+  the sole durable identity used to recognize moves.
 - `worktree_id` — when subagent isolation uses git worktrees.
 - `task_id` — when a unit of work spans sessions (long-horizon tasks).
 - `turn_id` — when turn-level attribution is needed for receipts/analytics.
@@ -18,6 +19,35 @@ Frozen now: `workspace_id`, `session_id`, `event_id`, `operation_id`, `memory_id
 - `tool_call_id` — when tool-call correlation across events needs a stable id
   (currently `operation_id` covers the single-tool case).
 - `artifact_id` — if content-addressed digests are insufficient as handles.
+
+## Required before Phase 0.2 (promoted from deferred)
+
+These three were deferred in an earlier draft and are now required before the
+0.2 vertical slice, because the 0.2 gate cannot prove its invariants without them.
+
+### Workspace identity and resolution protocol
+
+- Stable `repository_id` independent of path. A path cannot be "only an
+  attribute" and the sole durable identity.
+- How a path is initially assigned to a `workspace_id`.
+- How the same repository is recognized after a move (content fingerprint,
+  not path).
+- Whether worktrees share or separate workspace state.
+- How path aliases are updated.
+- How cloned repositories are distinguished from moved repositories.
+- See ADR 0002 for the locking protocol; this section covers identity.
+
+### Secret detection and pre-persistence redaction
+
+- Environment-variable filtering (known secret sources).
+- Pattern and entropy-based detection (common token formats, structured tool fields).
+- Redacted payloads use `secretref:` references, never raw values.
+- Tests proving known secret sources are caught before persistence.
+- The enforceable guarantee (not absolute exclusion — see `docs/rules.md`):
+  known secret sources and detected secret patterns are redacted or rejected
+  before persistence; raw secret values must never be intentionally persisted.
+- Incident handling for a secret that evades detection (see `docs/threat-model.md`).
+- See ADR 0004.
 
 ## Memory (deferred from 0.3)
 
