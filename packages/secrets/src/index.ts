@@ -9,6 +9,7 @@ export {
   type SecretDetection,
   type SecretAdmissionConfig,
   type ConfiguredSecret,
+  type PreparedConfiguredSecret,
   type ScanResult,
 } from "./detection.ts";
 

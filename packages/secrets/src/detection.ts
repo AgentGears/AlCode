@@ -177,46 +177,95 @@ export interface SecretAdmissionConfig {
   configuredSecrets?: ConfiguredSecret[];
 }
 
+/** A configured secret prepared for matching. Markers use value-only digests. */
+export interface PreparedConfiguredSecret {
+  value: string;
+  valueDigest: string; // sha256(value)
+  marker: string; // secretref:configured:<valueDigest> — no caller-controlled name
+}
+
 /**
  * Build a sorted list of configured secrets (descending by length for
  * deterministic overlap handling). Ignores empty/short values.
+ *
+ * Markers contain NO caller-controlled names — only the SHA-256 digest of
+ * the secret value. This prevents self-reintroduction when the value itself
+ * is "secretref" or when the name contains the value.
  */
-export function buildConfiguredSecrets(config: SecretAdmissionConfig): Array<{ name: string; value: string; marker: string }> {
-  const list: Array<{ name: string; value: string; marker: string }> = [];
+export function buildConfiguredSecrets(config: SecretAdmissionConfig): PreparedConfiguredSecret[] {
+  const list: PreparedConfiguredSecret[] = [];
   for (const cs of config.configuredSecrets ?? []) {
     if (cs.value.length < 8) continue;
-    const { marker } = makeMarker(`configured-env:${cs.name}`, cs.value);
-    list.push({ name: cs.name, value: cs.value, marker });
+    const valueDigest = createHash("sha256").update(cs.value).digest("hex");
+    list.push({
+      value: cs.value,
+      valueDigest,
+      marker: `secretref:configured:${valueDigest}`,
+    });
   }
-  // Sort by descending value length so longer secrets are matched first
   list.sort((a, b) => b.value.length - a.value.length);
   return list;
 }
 
 /**
  * Replace ALL occurrences of ALL configured secrets within a string.
- * Returns the redacted string and detections.
+ *
+ * Builds output from untouched spans of the ORIGINAL string + markers,
+ * never rescanning previously generated marker text. This prevents
+ * self-reintroduction when a configured value appears inside a marker.
  */
 export function redactConfigured(
   value: string,
-  configured: Array<{ name: string; value: string; marker: string }>,
+  configured: PreparedConfiguredSecret[],
 ): { redacted: string; detections: SecretDetection[] } {
   if (isValidMarker(value)) {
     return { redacted: value, detections: [] };
   }
 
-  let current = value;
-  const detections: SecretDetection[] = [];
-
+  // Find all match positions in the original string
+  const matches: Array<{ start: number; end: number; cs: PreparedConfiguredSecret }> = [];
   for (const cs of configured) {
-    if (!current.includes(cs.value)) continue;
-    current = current.split(cs.value).join(cs.marker);
-    detections.push({
-      detectorId: `configured-env:${cs.name}`,
-      valueDigest: createHash("sha256").update(cs.value).digest("hex"),
-      marker: cs.marker,
-    });
+    let searchFrom = 0;
+    while (true) {
+      const idx = value.indexOf(cs.value, searchFrom);
+      if (idx === -1) break;
+      matches.push({ start: idx, end: idx + cs.value.length, cs });
+      searchFrom = idx + cs.value.length;
+    }
   }
 
-  return { redacted: current, detections };
+  if (matches.length === 0) {
+    return { redacted: value, detections: [] };
+  }
+
+  // Sort matches by start position; resolve overlaps (longer first due to
+  // the sort in buildConfiguredSecrets, but position sort is primary)
+  matches.sort((a, b) => a.start - b.start);
+
+  // Build output from non-overlapping spans + markers
+  const detections: SecretDetection[] = [];
+  const parts: string[] = [];
+  let cursor = 0;
+  let lastEnd = -1;
+
+  for (const m of matches) {
+    if (m.start < lastEnd) continue; // overlap with a prior match; skip
+    if (m.start > cursor) {
+      parts.push(value.slice(cursor, m.start));
+    }
+    parts.push(m.cs.marker);
+    detections.push({
+      detectorId: "configured",
+      valueDigest: m.cs.valueDigest,
+      marker: m.cs.marker,
+    });
+    cursor = m.end;
+    lastEnd = m.end;
+  }
+
+  if (cursor < value.length) {
+    parts.push(value.slice(cursor));
+  }
+
+  return { redacted: parts.join(""), detections };
 }

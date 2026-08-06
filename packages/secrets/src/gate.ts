@@ -19,6 +19,7 @@ import {
   isValidMarker,
   type SecretDetection,
   type SecretAdmissionConfig,
+  type PreparedConfiguredSecret,
 } from "./detection.ts";
 
 const MAX_SCAN_STRING = 1_000_000;
@@ -52,7 +53,7 @@ const IDENTITY_FIELDS = new Set([
 ]);
 
 export class SecretAdmissionGate {
-  private readonly configured: Array<{ name: string; value: string; marker: string }>;
+  private readonly configured: PreparedConfiguredSecret[];
 
   constructor(config: SecretAdmissionConfig = {}) {
     this.configured = buildConfiguredSecrets(config);
@@ -170,7 +171,7 @@ export class SecretAdmissionGate {
     for (const cs of this.configured) {
       if (value.includes(cs.value)) {
         throw new SecretAdmissionError(
-          `configured-env:${cs.name}`,
+          `configured`,
           path,
           `secret detected in identifier field ${fieldName}; substitution would change semantics`,
         );
@@ -225,7 +226,7 @@ export class SecretAdmissionGate {
     for (const cs of this.configured) {
       if (key.includes(cs.value)) {
         throw new SecretAdmissionError(
-          `configured-env:${cs.name}`,
+          `configured`,
           path,
           "secret detected in object key; substitution would change structure",
         );
