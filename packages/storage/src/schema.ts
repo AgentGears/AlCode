@@ -152,18 +152,18 @@ export function getSchemaVersion(db: Database.Database): number {
  * v2 adds: request_fingerprint column (NOT NULL), workspace_metadata table.
  *
  * The migration:
- *   1. Adds the request_fingerprint column (nullable initially).
+ *   1. Adds request_fingerprint as a nullable column.
  *   2. Creates workspace_metadata.
  *   3. Discovers the workspace ID from existing events (must be unique).
- *   4. Fails closed if more than one workspace ID exists.
- *   5. Populates workspace_metadata.
- *   6. Backfills request_fingerprint for every existing event.
- *   7. Enforces NOT NULL on request_fingerprint (table rebuild if needed).
- *   8. Records migration version 2.
+ *   4. Verifies every existing event's stored event_digest matches a
+ *      recomputed digest. FAILS CLOSED on mismatch (does not rewrite).
+ *   5. Backfills request_fingerprint (computed, not digest).
+ *   6. Rebuilds the events table to enforce NOT NULL on request_fingerprint.
+ *   7. Records migration version 2.
  */
 function migrateV1toV2(db: Database.Database): void {
   const migrationTxn = db.transaction(() => {
-    // Step 1: Add the column if it doesn't exist
+    // Step 1: Add request_fingerprint as nullable
     const hasColumn = db.prepare(
       "SELECT COUNT(*) as c FROM pragma_table_info('events') WHERE name = 'request_fingerprint'",
     ).get() as { c: number };
@@ -171,7 +171,7 @@ function migrateV1toV2(db: Database.Database): void {
       db.exec("ALTER TABLE events ADD COLUMN request_fingerprint TEXT");
     }
 
-    // Step 2: Create workspace_metadata if it doesn't exist
+    // Step 2: Create workspace_metadata
     db.exec(`CREATE TABLE IF NOT EXISTS workspace_metadata (
       singleton     INTEGER PRIMARY KEY CHECK (singleton = 1),
       workspace_id  TEXT NOT NULL,
@@ -179,63 +179,92 @@ function migrateV1toV2(db: Database.Database): void {
       created_at    TEXT NOT NULL
     )`);
 
-    // Step 3: Discover workspace IDs from existing events
-    const wsIds = db.prepare(
-      "SELECT DISTINCT workspace_id FROM events",
-    ).all() as Array<{ workspace_id: string }>;
-
+    // Step 3: Discover workspace IDs
+    const wsIds = db.prepare("SELECT DISTINCT workspace_id FROM events").all() as Array<{ workspace_id: string }>;
     if (wsIds.length > 1) {
       throw new Error(
-        `Migration v1→v2 failed: events table contains ${wsIds.length} distinct workspace IDs. ` +
-        "A workspace database can only contain events for one workspace.",
+        `Migration v1→v2 failed: events table contains ${wsIds.length} distinct workspace IDs.`,
       );
     }
-
-    // Step 4-5: Populate workspace_metadata
-    const existingMeta = db.prepare(
-      "SELECT workspace_id FROM workspace_metadata WHERE singleton = 1",
-    ).get() as { workspace_id: string } | undefined;
-
-    if (!existingMeta && wsIds.length === 1) {
+    if (wsIds.length === 1) {
       const wsId = wsIds[0]!.workspace_id;
-      db.prepare(
-        "INSERT INTO workspace_metadata (singleton, workspace_id, repository_id, created_at) VALUES (1, ?, ?, ?)",
-      ).run(wsId, "migrated-unknown", new Date().toISOString());
+      const existingMeta = db.prepare(
+        "SELECT workspace_id FROM workspace_metadata WHERE singleton = 1",
+      ).get() as { workspace_id: string } | undefined;
+      if (!existingMeta) {
+        db.prepare(
+          "INSERT INTO workspace_metadata (singleton, workspace_id, repository_id, created_at) VALUES (1, ?, ?, ?)",
+        ).run(wsId, "__migrating__", new Date().toISOString());
+      }
     }
 
-    // Step 6: Backfill request_fingerprint AND event_digest for events with NULL/invalid values
-    const nullFpRows = db.prepare(
+    // Step 4: VERIFY (not rewrite) each event's digest
+    const rows = db.prepare(
       "SELECT event_id, workspace_id, session_id, operation_id, type, payload, " +
       "payload_schema_version, producer, causation_event_id, correlation_id, occurred_at, " +
       "sequence, recorded_at, event_digest " +
       "FROM events WHERE request_fingerprint IS NULL",
     ).all() as Array<Record<string, string | null>>;
 
-    const updateStmt = db.prepare(
-      "UPDATE events SET request_fingerprint = ?, event_digest = ? WHERE event_id = ?",
+    const updateFpStmt = db.prepare(
+      "UPDATE events SET request_fingerprint = ? WHERE event_id = ?",
     );
 
-    for (const row of nullFpRows) {
+    for (const row of rows) {
+      // Verify the stored digest matches a recomputed digest
+      const recomputedDigest = computeDigestFromRow(row);
+      if (recomputedDigest !== row.event_digest) {
+        throw new Error(
+          `Migration v1→v2 failed: event ${row.event_id} has a stored digest that does not match ` +
+          `its content. This indicates pre-existing corruption. The migration does not rewrite digests.`,
+        );
+      }
+      // Backfill only request_fingerprint (the digest is already valid)
       const fp = computeFingerprintFromRow(row);
-      const digest = computeDigestFromRow(row);
-      updateStmt.run(fp, digest, row.event_id);
+      updateFpStmt.run(fp, row.event_id);
     }
 
-    // Step 7: Enforce NOT NULL — SQLite ALTER COLUMN is limited, so we verify
-    // all rows have a value. If any remain NULL, the migration failed.
+    // Step 5: Verify no NULLs remain
     const nullCount = db.prepare(
       "SELECT COUNT(*) as c FROM events WHERE request_fingerprint IS NULL",
     ).get() as { c: number };
     if (nullCount.c > 0) {
-      throw new Error(
-        `Migration v1→v2 failed: ${nullCount.c} events still have NULL request_fingerprint after backfill.`,
-      );
+      throw new Error(`Migration v1→v2 failed: ${nullCount.c} events still have NULL request_fingerprint.`);
     }
 
-    // Step 8: Record migration
-    db.prepare(
-      "INSERT OR REPLACE INTO schema_migrations (version, applied_at) VALUES (?, ?)",
-    ).run(2, new Date().toISOString());
+    // Step 6: Rebuild events table to enforce NOT NULL on request_fingerprint
+    // SQLite cannot ALTER COLUMN; must use the table-rebuild pattern.
+    db.exec("ALTER TABLE events RENAME TO events_v1_old");
+    db.exec(`CREATE TABLE events (
+      event_id              TEXT PRIMARY KEY,
+      idempotency_key       TEXT UNIQUE,
+      sequence              INTEGER NOT NULL UNIQUE,
+      workspace_id          TEXT NOT NULL,
+      session_id            TEXT NOT NULL,
+      operation_id          TEXT,
+      type                  TEXT NOT NULL,
+      payload               TEXT NOT NULL,
+      payload_schema_version INTEGER NOT NULL DEFAULT 1,
+      producer              TEXT NOT NULL,
+      causation_event_id    TEXT,
+      correlation_id        TEXT,
+      occurred_at           TEXT NOT NULL,
+      recorded_at           TEXT NOT NULL,
+      event_digest          TEXT NOT NULL,
+      request_fingerprint   TEXT NOT NULL
+    )`);
+    db.exec(`INSERT INTO events SELECT
+      event_id, idempotency_key, sequence, workspace_id, session_id,
+      operation_id, type, payload, payload_schema_version, producer,
+      causation_event_id, correlation_id, occurred_at, recorded_at, event_digest,
+      request_fingerprint FROM events_v1_old`);
+    db.exec("DROP TABLE events_v1_old");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_events_sequence ON events(sequence)");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_events_type ON events(type)");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_events_correlation ON events(correlation_id)");
+
+    // Step 7: Record migration
+    db.prepare("INSERT OR REPLACE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(2, new Date().toISOString());
   });
 
   migrationTxn();
@@ -258,7 +287,7 @@ function computeFingerprintFromRow(row: Record<string, string | null>): string {
   return createHash("sha256").update(canonicalStringify(fingerprintInput)).digest("hex");
 }
 
-/** Compute an event digest from raw row data (for migration backfill). */
+/** Compute an event digest from raw row data (for migration verification). */
 function computeDigestFromRow(row: Record<string, string | null>): string {
   const digestInput: Record<string, unknown> = {
     eventId: row.event_id,
@@ -280,9 +309,13 @@ function computeDigestFromRow(row: Record<string, string | null>): string {
 }
 
 /**
- * Bind the database to a workspaceId. For a new database, inserts the
- * singleton metadata row. For an existing database, verifies both workspaceId
- * AND repositoryId match. Throws on mismatch.
+ * Bind the database to a workspaceId + repositoryId.
+ * - New database: inserts the singleton row.
+ * - Existing database: verifies workspaceId matches. For repositoryId:
+ *   - If stored value is "__migrating__": permanently replaces it with the
+ *     supplied repositoryId. This happens exactly once on the first safe open
+ *     after migration. Every subsequent open must match exactly.
+ *   - Otherwise: verifies exact match.
  */
 export function bindWorkspace(
   db: Database.Database,
@@ -297,7 +330,14 @@ export function bindWorkspace(
     if (existing.workspace_id !== workspaceId) {
       throw new WorkspaceMismatchError("workspaceId", workspaceId, existing.workspace_id);
     }
-    if (existing.repository_id !== repositoryId && existing.repository_id !== "migrated-unknown") {
+    if (existing.repository_id === "__migrating__") {
+      // First safe open after migration — permanently bind the repository ID
+      db.prepare(
+        "UPDATE workspace_metadata SET repository_id = ? WHERE singleton = 1",
+      ).run(repositoryId);
+      return;
+    }
+    if (existing.repository_id !== repositoryId) {
       throw new WorkspaceMismatchError("repositoryId", repositoryId, existing.repository_id);
     }
     return;

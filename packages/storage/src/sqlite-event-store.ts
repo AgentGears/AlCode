@@ -15,6 +15,7 @@ import {
   bindWorkspace,
   WorkspaceMismatchError,
 } from "./schema.ts";
+import type { AcquiredLock } from "@alcode/workspace";
 
 const require = createRequire(import.meta.url);
 
@@ -137,15 +138,25 @@ function verifyEventRow(row: EventRow, expectedWorkspaceId: string): PersistedDo
     throw new EventIntegrityError(row.event_id, "workspaceId", expectedWorkspaceId, row.workspace_id);
   }
 
+  // Parse stored JSON fields, wrapping malformed JSON as EventIntegrityError
+  let payloadParsed: unknown;
+  let producerParsed: unknown;
+  try {
+    payloadParsed = JSON.parse(row.payload);
+    producerParsed = JSON.parse(row.producer);
+  } catch {
+    throw new EventIntegrityError(row.event_id, "payloadOrProducer", "valid JSON", "malformed JSON");
+  }
+
   // Reconstruct the fingerprint input from the stored fields
   const fpInput = {
     workspaceId: row.workspace_id,
     sessionId: row.session_id,
     operationId: row.operation_id ?? null,
     type: row.type,
-    payload: JSON.parse(row.payload),
+    payload: payloadParsed,
     payloadSchemaVersion: row.payload_schema_version,
-    producer: JSON.parse(row.producer),
+    producer: producerParsed,
     causationEventId: row.causation_event_id ?? null,
     correlationId: row.correlation_id ?? null,
     occurredAt: row.occurred_at,
@@ -207,9 +218,15 @@ export class SqliteEventStore {
   readonly workspaceId: string;
   private readonly db: Database.Database;
 
-  constructor(db: Database.Database, workspaceId: string) {
+  /** Module-internal constructor. Use openLockedWorkspaceStore() instead. */
+  private constructor(db: Database.Database, workspaceId: string) {
     this.db = db;
     this.workspaceId = workspaceId;
+  }
+
+  /** Internal factory — only callable from openLockedWorkspaceStore. */
+  static _create(db: Database.Database, workspaceId: string): SqliteEventStore {
+    return new SqliteEventStore(db, workspaceId);
   }
 
   async append(
@@ -238,6 +255,17 @@ export class SqliteEventStore {
         if (existingById) {
           if (existingById.request_fingerprint !== fingerprint) {
             throw new EventIdentityConflictError(draft.eventId, existingById.request_fingerprint, fingerprint);
+          }
+          // Also verify idempotencyKey matches — same eventId with a different
+          // idempotencyKey is a conflict even if the fingerprint is the same.
+          const existingKey = existingById.idempotency_key;
+          const draftKey = draft.idempotencyKey ?? null;
+          if (existingKey !== draftKey) {
+            throw new EventIdentityConflictError(
+              draft.eventId,
+              existingKey ?? "null",
+              draftKey ?? "null",
+            );
           }
           results.push(verifyEventRow(existingById, this.workspaceId));
           continue;
@@ -332,19 +360,28 @@ export class SqliteEventStore {
        ON CONFLICT(projection_name) DO UPDATE SET last_applied_event_sequence = excluded.last_applied_event_sequence, projection_schema_version = excluded.projection_schema_version`,
     ).run(name, seq, sv);
   }
-  getUnappliedEvents(name: string): EventRow[] {
-    return this.db.prepare("SELECT * FROM events WHERE sequence > ? ORDER BY sequence").all(this.getCursor(name)) as EventRow[];
+  getUnappliedEvents(name: string): PersistedDomainEvent<string, unknown>[] {
+    const rows = this.db.prepare("SELECT * FROM events WHERE sequence > ? ORDER BY sequence").all(this.getCursor(name)) as EventRow[];
+    return rows.map((row) => verifyEventRow(row, this.workspaceId));
   }
   transaction<T>(fn: () => T): T { return this.db.transaction(fn)(); }
   close(): void { this.db.close(); }
 }
 
 // ---------------------------------------------------------------------------
-// Safe entry point: openWorkspaceStore
+// Safe entry point: openLockedWorkspaceStore
 // ---------------------------------------------------------------------------
 
-export interface OpenWorkspaceStoreOptions {
+/** A runtime handle that owns the lock + DB + store as one lifecycle. */
+export interface LockedWorkspaceStore {
+  readonly store: SqliteEventStore;
+  /** Close the database, then release the OS lock. Call on shutdown. */
+  close(): void;
+}
+
+export interface OpenLockedWorkspaceStoreOptions {
   databasePath: string;
+  lockPath: string;
   workspaceId: string;
   repositoryId: string;
 }
@@ -352,20 +389,59 @@ export interface OpenWorkspaceStoreOptions {
 /**
  * The single safe way to open a writable EventStore.
  *
- * 1. Opens the SQLite database (WAL, foreign keys, busy_timeout).
- * 2. Runs migrations (initWorkspaceDb).
- * 3. Binds and verifies workspace + repository identity (bindWorkspace).
- * 4. Constructs and returns the store.
+ * Lifecycle (enforced ordering):
+ *   1. Acquire the OS workspace lock (flock on POSIX, fail-closed on Windows).
+ *   2. Open SQLite (WAL, foreign keys, busy_timeout).
+ *   3. Run migrations (initWorkspaceDb).
+ *   4. Bind and verify workspace + repository identity (bindWorkspace).
+ *   5. Construct the store (private constructor — only callable here).
  *
- * It is impossible to construct a writable store before these checks.
- * The caller is responsible for acquiring the workspace lock separately
- * (the store does not manage the lock — the lock is process-scoped and
- * outlives any single store instance).
+ * On any failure: close the DB if opened, release the lock, rethrow.
+ * The returned handle closes the DB before releasing the lock on shutdown.
+ *
+ * It is impossible to construct a writable store without first proving
+ * single-writer ownership and passing identity verification.
  */
-export function openWorkspaceStore(opts: OpenWorkspaceStoreOptions): SqliteEventStore {
-  const Database = require("better-sqlite3") as typeof import("better-sqlite3");
-  const db = new Database(opts.databasePath);
-  initWorkspaceDb(db);
-  bindWorkspace(db, opts.workspaceId, opts.repositoryId);
-  return new SqliteEventStore(db, opts.workspaceId);
+export async function openLockedWorkspaceStore(
+  opts: OpenLockedWorkspaceStoreOptions,
+): Promise<LockedWorkspaceStore> {
+  // 1. Acquire lock
+  const { acquireWorkspaceLock } = await import("@alcode/workspace");
+  let lock: AcquiredLock;
+  try {
+    lock = acquireWorkspaceLock(opts.lockPath);
+  } catch (e) {
+    throw e; // Lock failure — nothing to clean up
+  }
+
+  // 2. Open SQLite
+  let db: Database.Database | undefined;
+  try {
+    const Database = require("better-sqlite3") as typeof import("better-sqlite3");
+    db = new Database(opts.databasePath);
+
+    // 3. Migrate
+    initWorkspaceDb(db);
+
+    // 4. Bind + verify identity
+    bindWorkspace(db, opts.workspaceId, opts.repositoryId);
+
+    // 5. Construct store (private constructor via internal factory)
+    const store = SqliteEventStore._create(db, opts.workspaceId);
+
+    return {
+      store,
+      close() {
+        try { store.close(); } catch { /* already closed */ }
+        lock.release();
+      },
+    };
+  } catch (e) {
+    // Cleanup on failure: close DB if opened, release lock, rethrow
+    if (db) {
+      try { db.close(); } catch { /* already closed */ }
+    }
+    lock.release();
+    throw e;
+  }
 }

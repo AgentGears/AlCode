@@ -8,6 +8,7 @@ export {
   WorkspaceIdMismatchError,
   EventIntegrityError,
   computeRequestFingerprint,
-  openWorkspaceStore,
-  type OpenWorkspaceStoreOptions,
+  openLockedWorkspaceStore,
+  type OpenLockedWorkspaceStoreOptions,
+  type LockedWorkspaceStore,
 } from "./sqlite-event-store.ts";
