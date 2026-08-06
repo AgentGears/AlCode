@@ -1,0 +1,18 @@
+# Reference codebases studied during planning — not part of ALCODE
+ref/
+
+# Local agent session state
+.ouroboros/
+
+# Node
+node_modules/
+dist/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
