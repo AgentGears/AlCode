@@ -3,11 +3,13 @@
 
 export {
   scanString,
-  checkConfigured,
+  redactConfigured,
   buildConfiguredSecrets,
+  isValidMarker,
   type SecretDetection,
   type SecretAdmissionConfig,
   type ConfiguredSecret,
+  type ScanResult,
 } from "./detection.ts";
 
 export { SecretAdmissionGate, SecretAdmissionError, type AdmissionResult } from "./gate.ts";

@@ -4,29 +4,25 @@
 // It is structurally unavoidable: append() must call admit() first.
 //
 // Behavior:
-//   - Recursively traverses payload objects/arrays, redacting detected secrets.
+//   - Recursively traverses ALL caller-controlled string fields, redacting
+//     detected secrets in payloads, rejecting secrets in identity fields.
 //   - Does NOT mutate the caller's draft (returns a new object).
-//   - Preserves existing secretref: markers (idempotent).
-//   - Rejects secrets detected in object keys or identifier-bearing fields
-//     (idempotencyKey, correlationId, type, producer labels) where
-//     substitution could change semantics.
-//   - Oversized/unscannable values are rejected (not truncated).
+//   - Preserves complete valid secretref: markers (idempotent).
+//   - Rejects secrets in object keys and ALL identifier fields.
+//   - Private-key headers cause the entire containing string to be rejected.
+//   - Errors contain detector ID and safe path, never the raw value or key.
 
 import {
   scanString,
-  checkConfigured,
+  redactConfigured,
   buildConfiguredSecrets,
+  isValidMarker,
   type SecretDetection,
   type SecretAdmissionConfig,
 } from "./detection.ts";
 
-/** Maximum string length that the scanner will fully examine. */
-const MAX_SCAN_STRING = 1_000_000; // 1MB per string
+const MAX_SCAN_STRING = 1_000_000;
 
-/**
- * Error thrown when a secret is detected in an identifier field or
- * when content cannot be safely scanned. Does NOT contain the matched value.
- */
 export class SecretAdmissionError extends Error {
   constructor(
     public readonly detectorId: string,
@@ -34,97 +30,82 @@ export class SecretAdmissionError extends Error {
     public readonly reason: string,
   ) {
     super(
-      `Secret admission rejected at ${jsonPointer}: ${reason} ` +
-      `(detector: ${detectorId}). The value was NOT persisted.`,
+      `Secret admission rejected at ${jsonPointer}: ${reason} (detector: ${detectorId}). The value was NOT persisted.`,
     );
     this.name = "SecretAdmissionError";
   }
 }
 
 export interface AdmissionResult<T> {
-  /** The admitted (potentially redacted) value. */
   value: T;
-  /** Detections that triggered redaction (for diagnostics — no raw values). */
   detections: SecretDetection[];
 }
 
-/**
- * The admission gate. Created once with configuration; called per-draft.
- *
- * Usage:
- *   const gate = new SecretAdmissionGate({ configuredSecrets: [...] });
- *   const result = gate.admitDraft(draft);
- *   // result.value is safe to fingerprint and persist
- */
+/** Fields that are content-bearing (secrets are redacted, not rejected). */
+const CONTENT_FIELDS = new Set(["payload"]);
+
+/** ALL other string fields on EventDraft that are persisted. */
+const IDENTITY_FIELDS = new Set([
+  "eventId", "workspaceId", "sessionId", "operationId",
+  "idempotencyKey", "correlationId", "type", "causationEventId",
+  "occurredAt", "producer",
+]);
+
 export class SecretAdmissionGate {
-  private readonly configured: Map<string, { name: string; marker: string }>;
+  private readonly configured: Array<{ name: string; value: string; marker: string }>;
 
   constructor(config: SecretAdmissionConfig = {}) {
     this.configured = buildConfiguredSecrets(config);
   }
 
-  /**
-   * Admit a draft: scan all caller-controlled string fields, redact
-   * payload secrets, reject secrets in identifier fields.
-   *
-   * Returns a new object (does NOT mutate the input).
-   */
   admitDraft<T extends Record<string, unknown>>(draft: T): AdmissionResult<T> {
     const detections: SecretDetection[] = [];
     const result: Record<string, unknown> = {};
 
     for (const key of Object.keys(draft)) {
       const value = draft[key];
-      if (key === "payload") {
+
+      if (CONTENT_FIELDS.has(key)) {
         // Payload: recursive redaction
-        const { value: redacted, detections: d } = this.admitValue(value, "/payload");
+        const { value: redacted, detections: d } = this.admitValue(value, "/payload", undefined);
         result[key] = redacted;
         detections.push(...d);
-      } else if (key === "producer") {
-        // Producer: recursive redaction (it's an object with component/provider names)
-        const { value: redacted, detections: d } = this.admitValue(value, "/producer");
-        result[key] = redacted;
-        detections.push(...d);
-      } else if (
-        key === "idempotencyKey" || key === "correlationId" ||
-        key === "type" || key === "eventId" || key === "causationEventId"
-      ) {
-        // Identifier/routing fields: reject if secret detected (no substitution)
+      } else if (IDENTITY_FIELDS.has(key)) {
+        // Identity/routing/producer fields: reject if secret detected (no substitution)
         if (typeof value === "string") {
           this.checkIdentifierField(value, key, `/${key}`);
+          result[key] = value;
+        } else if (typeof value === "object" && value !== null) {
+          // producer is an object — check all its string values as identifiers
+          const { value: checked } = this.checkIdentityObject(value, `/${key}`);
+          result[key] = checked;
+        } else {
+          result[key] = value;
         }
-        result[key] = value;
       } else {
-        // Other fields: copy as-is (future expansion)
-        result[key] = value;
+        // Unknown fields: treat as content (safer default — scan + redact)
+        const { value: redacted, detections: d } = this.admitValue(value, `/${key}`, undefined);
+        result[key] = redacted;
+        detections.push(...d);
       }
     }
 
     return { value: result as T, detections };
   }
 
-  /**
-   * Recursively admit a value. Redacts strings in payloads;
-   * rejects secrets in object keys.
-   */
-  private admitValue(value: unknown, path: string): AdmissionResult<unknown> {
-    if (value === null || value === undefined) {
-      return { value, detections: [] };
-    }
+  // --- Recursive value admission (for content) ---
 
-    if (typeof value === "string") {
-      return this.admitString(value, path);
-    }
-
-    if (typeof value === "number" || typeof value === "boolean") {
-      return { value, detections: [] };
-    }
+  private admitValue(value: unknown, path: string, fieldName?: string): AdmissionResult<unknown> {
+    if (value === null || value === undefined) return { value, detections: [] };
+    if (typeof value === "string") return this.admitString(value, path, fieldName);
+    if (typeof value === "number" || typeof value === "boolean") return { value, detections: [] };
 
     if (Array.isArray(value)) {
       const detections: SecretDetection[] = [];
       const result: unknown[] = [];
       for (let i = 0; i < value.length; i++) {
-        const { value: item, detections: d } = this.admitValue(value[i], `${path}/${i}`);
+        // Arrays inherit the parent field classification
+        const { value: item, detections: d } = this.admitValue(value[i], `${path}/${i}`, fieldName);
         result.push(item);
         detections.push(...d);
       }
@@ -136,102 +117,126 @@ export class SecretAdmissionGate {
       const result: Record<string, unknown> = {};
       for (const key of Object.keys(value as Record<string, unknown>)) {
         // Check key for secrets (keys are structural — reject, don't substitute)
-        if (typeof key === "string") {
-          this.checkKeyForSecrets(key, `${path}/${key}~key`);
-        }
+        if (typeof key === "string") this.checkKeyForSecrets(key, `${path}/<object-key>`);
         const childValue = (value as Record<string, unknown>)[key];
-        const { value: redacted, detections: d } = this.admitValue(childValue, `${path}/${key}`);
+        // Pass the key as fieldName so entropy detection works under sensitive names
+        const { value: redacted, detections: d } = this.admitValue(childValue, `${path}/${key}`, key);
         result[key] = redacted;
         detections.push(...d);
       }
       return { value: result, detections };
     }
 
-    // Unknown type — reject for safety
     throw new SecretAdmissionError("unknown-type", path, "value of unknown type cannot be scanned");
   }
 
-  /**
-   * Admit a string value. Checks configured secrets first, then patterns.
-   */
+  // --- String admission (configured + patterns, multi-pass) ---
+
   private admitString(value: string, path: string, fieldName?: string): AdmissionResult<unknown> {
-    // Reject oversized values that cannot be fully scanned
     if (value.length > MAX_SCAN_STRING) {
-      throw new SecretAdmissionError(
-        "oversized",
-        path,
-        `string of ${value.length} bytes exceeds scan limit of ${MAX_SCAN_STRING}`,
-      );
+      throw new SecretAdmissionError("oversized", path, `string of ${value.length} bytes exceeds scan limit`);
     }
 
     const detections: SecretDetection[] = [];
 
-    // Check configured secrets (exact match)
-    const configuredMarker = checkConfigured(value, this.configured);
-    if (configuredMarker) {
-      return { value: configuredMarker, detections: [{ detectorId: "configured-secret", valueDigest: "", marker: configuredMarker }] };
-    }
+    // 1. Configured secrets (as substrings, repeated, sorted by length)
+    const configuredResult = redactConfigured(value, this.configured);
+    let current = configuredResult.redacted;
+    detections.push(...configuredResult.detections);
 
-    // Check structured patterns + entropy
-    const scanResult = scanString(value, fieldName);
-    if (scanResult) {
-      detections.push(scanResult.detection);
-      // Recursively scan the redacted result in case multiple patterns overlap
-      // (rare but possible)
-      return { value: scanResult.redacted, detections };
+    // 2. Pattern scanning (loops until clean)
+    const scanResult = scanString(current, fieldName);
+    if (scanResult.rejectEntireString) {
+      throw new SecretAdmissionError(
+        "private-key-header",
+        path,
+        "private key material detected; the entire string is rejected",
+      );
     }
+    current = scanResult.redacted;
+    detections.push(...scanResult.detections);
 
-    return { value, detections };
+    return { value: current, detections };
   }
 
-  /**
-   * Check an identifier/routing field for secrets. Rejects (throws) if found.
-   * Does NOT substitute — these fields are semantically significant.
-   */
+  // --- Identifier field check (reject, don't substitute) ---
+
   private checkIdentifierField(value: string, fieldName: string, path: string): void {
     if (value.length > MAX_SCAN_STRING) {
-      throw new SecretAdmissionError("oversized", path, `identifier field too large to scan`);
+      throw new SecretAdmissionError("oversized", path, "identifier field too large to scan");
     }
 
-    const configuredMarker = checkConfigured(value, this.configured);
-    if (configuredMarker) {
-      throw new SecretAdmissionError(
-        "configured-secret-in-identifier",
-        path,
-        `secret detected in identifier field ${fieldName}; substitution would change semantics`,
-      );
+    // Check configured
+    for (const cs of this.configured) {
+      if (value.includes(cs.value)) {
+        throw new SecretAdmissionError(
+          `configured-env:${cs.name}`,
+          path,
+          `secret detected in identifier field ${fieldName}; substitution would change semantics`,
+        );
+      }
     }
 
+    // Check patterns
     const scanResult = scanString(value);
-    if (scanResult) {
+    if (scanResult.rejectEntireString || scanResult.detections.length > 0) {
       throw new SecretAdmissionError(
-        scanResult.detection.detectorId,
+        scanResult.detections[0]?.detectorId ?? "pattern",
         path,
         `secret detected in identifier field ${fieldName}; substitution would change semantics`,
       );
     }
   }
 
-  /**
-   * Check an object key for secrets. Rejects (throws) if found.
-   */
-  private checkKeyForSecrets(key: string, path: string): void {
-    if (key.startsWith("secretref:")) return; // already redacted
+  // --- Identity object check (for producer — reject secrets in any string) ---
 
-    const configuredMarker = checkConfigured(key, this.configured);
-    if (configuredMarker) {
-      throw new SecretAdmissionError(
-        "configured-secret-in-key",
-        path,
-        "secret detected in object key; substitution would change structure",
-      );
+  private checkIdentityObject(value: unknown, path: string): AdmissionResult<unknown> {
+    if (typeof value === "string") {
+      this.checkIdentifierField(value, "(producer-field)", path);
+      return { value, detections: [] };
+    }
+    if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+      const result: Record<string, unknown> = {};
+      for (const key of Object.keys(value as Record<string, unknown>)) {
+        if (typeof key === "string") this.checkKeyForSecrets(key, `${path}/<object-key>`);
+        const childValue = (value as Record<string, unknown>)[key];
+        const { value: checked } = this.checkIdentityObject(childValue, `${path}/${key}`);
+        result[key] = checked;
+      }
+      return { value: result, detections: [] };
+    }
+    if (Array.isArray(value)) {
+      const result: unknown[] = [];
+      for (let i = 0; i < value.length; i++) {
+        const { value: checked } = this.checkIdentityObject(value[i], `${path}/${i}`);
+        result.push(checked);
+      }
+      return { value: result, detections: [] };
+    }
+    return { value, detections: [] };
+  }
+
+  // --- Object key check (reject secrets in keys) ---
+
+  private checkKeyForSecrets(key: string, path: string): void {
+    if (isValidMarker(key)) return;
+
+    // Check configured
+    for (const cs of this.configured) {
+      if (key.includes(cs.value)) {
+        throw new SecretAdmissionError(
+          `configured-env:${cs.name}`,
+          path,
+          "secret detected in object key; substitution would change structure",
+        );
+      }
     }
 
-    // Check patterns in keys
+    // Check patterns
     const scanResult = scanString(key);
-    if (scanResult) {
+    if (scanResult.rejectEntireString || scanResult.detections.length > 0) {
       throw new SecretAdmissionError(
-        scanResult.detection.detectorId,
+        scanResult.detections[0]?.detectorId ?? "pattern",
         path,
         "secret detected in object key; substitution would change structure",
       );

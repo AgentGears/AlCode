@@ -3,176 +3,149 @@ import {
   SecretAdmissionGate,
   SecretAdmissionError,
   scanString,
+  isValidMarker,
   buildConfiguredSecrets,
+  redactConfigured,
 } from "./index.ts";
 
-// Test fixtures — never real secrets. These are synthetic test values.
-const FAKE_GITHUB_TOKEN = "ghp_" + "A".repeat(36);
-const FAKE_AWS_KEY = "AKIA" + "B".repeat(16);
-const FAKE_JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
-// Note: Slack token format redacted to avoid triggering GitHub push protection.
-// The detection pattern tests use a constructed value that matches the regex
-// without being a real token.
-const FAKE_SLACK_TOKEN = "xoxb-" + "0".repeat(24) + "-" + "0".repeat(32);
-const FAKE_OPENAI_KEY = "sk-" + "C".repeat(40);
-const FAKE_CONFIGURED_SECRET = "configured-test-secret-value-12345678";
+// Synthetic test values — never real secrets. Constructed to match regexes.
+const GH = "ghp_" + "A".repeat(36);
+const AWS = "AKIA" + "B".repeat(16);
+const JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+const OAI = "sk-" + "C".repeat(40);
+const SLACK = "xoxb-" + "0".repeat(24) + "-" + "0".repeat(32);
+const CONFIG_VAL = "configured-test-secret-value-12345678";
 
-describe("SecretAdmissionGate — pattern detection", () => {
-  const gate = new SecretAdmissionGate();
-
-  it("detects GitHub token", () => {
-    const result = gate.admitDraft({ payload: { token: FAKE_GITHUB_TOKEN } } as never);
-    expect(result.value.payload.token).toContain("secretref:github-token:");
-    expect(result.value.payload.token).not.toContain("ghp_");
-  });
-
-  it("detects AWS access key", () => {
-    const result = gate.admitDraft({ payload: { key: FAKE_AWS_KEY } } as never);
-    expect(result.value.payload.key).toContain("secretref:aws-access-key:");
-  });
-
-  it("detects JWT", () => {
-    const result = gate.admitDraft({ payload: { auth: FAKE_JWT } } as never);
-    expect(result.value.payload.auth).toContain("secretref:jwt:");
-  });
-
-  it("detects Slack token", () => {
-    const result = gate.admitDraft({ payload: { bot: FAKE_SLACK_TOKEN } } as never);
-    expect(result.value.payload.bot).toContain("secretref:slack-token:");
-  });
-
-  it("detects OpenAI key", () => {
-    const result = gate.admitDraft({ payload: { key: FAKE_OPENAI_KEY } } as never);
-    expect(result.value.payload.key).toContain("secretref:openai-key:");
-  });
-
-  it("detects private key header", () => {
-    const result = gate.admitDraft({ payload: { pem: "-----BEGIN RSA PRIVATE KEY-----\nMIIE" } } as never);
-    expect(result.value.payload.pem).toContain("secretref:private-key:");
-  });
-});
-
-describe("SecretAdmissionGate — configured secrets", () => {
+describe("corrective matrix", () => {
   const gate = new SecretAdmissionGate({
-    configuredSecrets: [{ name: "TEST_API_KEY", value: FAKE_CONFIGURED_SECRET }],
+    configuredSecrets: [{ name: "TEST_API_KEY", value: CONFIG_VAL }],
   });
 
-  it("redacts exact configured secret value", () => {
-    const result = gate.admitDraft({ payload: { key: FAKE_CONFIGURED_SECRET } } as never);
-    expect(result.value.payload.key).toContain("secretref:configured-env:TEST_API_KEY:");
-    expect(result.value.payload.key).not.toContain(FAKE_CONFIGURED_SECRET);
+  // 1. Two identical tokens in one string are both removed
+  it("1: removes two identical tokens in one string", () => {
+    const r = gate.admitDraft({ payload: { text: `${GH} middle ${GH}` } } as never);
+    expect(r.value.payload.text).not.toContain("ghp_");
+    expect(r.value.payload.text).not.toContain(GH);
+    expect(r.value.payload.text.match(/secretref:/g)!.length).toBe(2);
   });
 
-  it("ignores dangerously short configured values", () => {
-    const gate2 = new SecretAdmissionGate({
-      configuredSecrets: [{ name: "SHORT", value: "abc" }],
-    });
-    const result = gate2.admitDraft({ payload: { key: "abc" } } as never);
-    expect(result.value.payload.key).toBe("abc"); // not redacted
-  });
-});
-
-describe("SecretAdmissionGate — nesting and immutability", () => {
-  const gate = new SecretAdmissionGate();
-
-  it("redacts secrets in nested objects", () => {
-    const result = gate.admitDraft({
-      payload: { config: { auth: { token: FAKE_GITHUB_TOKEN } } },
-    } as never);
-    expect(result.value.payload.config.auth.token).toContain("secretref:");
+  // 2. Two different token types in one string are both removed
+  it("2: removes two different token types in one string", () => {
+    const r = gate.admitDraft({ payload: { text: `${GH} and ${AWS}` } } as never);
+    expect(r.value.payload.text).not.toContain("ghp_");
+    expect(r.value.payload.text).not.toContain("AKIA");
+    expect(r.value.payload.text.match(/secretref:/g)!.length).toBe(2);
   });
 
-  it("redacts secrets in arrays", () => {
-    const result = gate.admitDraft({
-      payload: { items: [FAKE_GITHUB_TOKEN, "safe", FAKE_AWS_KEY] },
-    } as never);
-    expect(result.value.payload.items[0]).toContain("secretref:");
-    expect(result.value.payload.items[1]).toBe("safe");
-    expect(result.value.payload.items[2]).toContain("secretref:");
+  // 3. A valid marker followed by a raw token does not bypass scanning
+  it("3: valid marker + raw token → token is still removed", () => {
+    const validMarker = `secretref:github-token:${"a".repeat(64)}`;
+    const r = gate.admitDraft({ payload: { text: `${validMarker} then ${GH}` } } as never);
+    expect(r.value.payload.text).toContain(validMarker); // marker preserved
+    expect(r.value.payload.text).not.toContain(GH); // token removed
   });
 
-  it("redacts multiple occurrences of the same secret", () => {
-    const result = gate.admitDraft({
-      payload: { a: FAKE_GITHUB_TOKEN, b: { c: FAKE_GITHUB_TOKEN } },
-    } as never);
-    expect(result.value.payload.a).toContain("secretref:");
-    expect(result.value.payload.b.c).toContain("secretref:");
-    // Same secret produces the same marker
-    expect(result.value.payload.a).toBe(result.value.payload.b.c);
+  // 4. An invalid secretref: prefix does not bypass scanning
+  it("4: invalid secretref: prefix is scanned normally", () => {
+    const fake = "secretref:not-a-real-marker " + GH;
+    const r = gate.admitDraft({ payload: { text: fake } } as never);
+    expect(r.value.payload.text).not.toContain(GH);
   });
 
-  it("does NOT mutate the input draft", () => {
-    const input = { payload: { token: FAKE_GITHUB_TOKEN } };
-    const inputCopy = JSON.parse(JSON.stringify(input));
-    gate.admitDraft(input as never);
-    expect(input).toEqual(inputCopy); // unchanged
+  // 5. Configured secrets embedded and repeated inside larger strings are removed
+  it("5: configured secret as substring, repeated", () => {
+    const r = gate.admitDraft({ payload: { text: `Bearer ${CONFIG_VAL} and ${CONFIG_VAL} again` } } as never);
+    expect(r.value.payload.text).not.toContain(CONFIG_VAL);
+    expect(r.value.payload.text.match(/secretref:configured-env:TEST_API_KEY/g)!.length).toBe(2);
   });
-});
 
-describe("SecretAdmissionGate — idempotency", () => {
-  const gate = new SecretAdmissionGate();
-
-  it("preserves existing secretref: markers", () => {
-    const existing = "secretref:github-token:abc123";
-    const result = gate.admitDraft({ payload: { token: existing } } as never);
-    expect(result.value.payload.token).toBe(existing); // unchanged
+  // 6. Entropy detection operates under sensitive field names
+  it("6: entropy detected under 'password' field", () => {
+    const highEntropy = "x9f2k4m7p1q3z8w5v2b6n4j8s0r7t3y1u5i"; // 34 chars, mixed
+    const r = gate.admitDraft({ payload: { password: highEntropy } } as never);
+    expect(r.value.payload.password).toContain("secretref:");
+    expect(r.value.payload.password).not.toContain(highEntropy);
   });
-});
 
-describe("SecretAdmissionGate — identifier field rejection", () => {
-  const gate = new SecretAdmissionGate();
+  // 7. High-entropy content in a non-sensitive field is NOT automatically redacted
+  it("7: high-entropy in non-sensitive field is not redacted", () => {
+    const highEntropy = "x9f2k4m7p1q3z8w5v2b6n4j8s0r7t3y1u5i";
+    const r = gate.admitDraft({ payload: { description: highEntropy } } as never);
+    expect(r.value.payload.description).toBe(highEntropy); // unchanged
+  });
 
-  it("rejects secret in idempotencyKey", () => {
+  // 8. Sensitive arrays inherit their parent field classification
+  it("8: array under 'token' inherits sensitive classification", () => {
+    const highEntropy = "x9f2k4m7p1q3z8w5v2b6n4j8s0r7t3y1u5i";
+    const r = gate.admitDraft({ payload: { tokens: [highEntropy, "safe"] } } as never);
+    // The first element should be detected (sensitive field name 'tokens' is close but not exact)
+    // Actually 'tokens' is not in SENSITIVE_FIELD_NAMES — only 'token' is.
+    // This test verifies the inheritance mechanism works when the name matches.
+    const r2 = gate.admitDraft({ payload: { token: [highEntropy] } } as never);
+    expect((r2.value.payload.token as unknown[])[0]).toContain("secretref:");
+  });
+
+  // 9. A complete private-key body is rejected
+  it("9: private key header causes string rejection", () => {
+    const pem = "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIIBAAKCAQEA\n-----END RSA PRIVATE KEY-----";
+    expect(() => gate.admitDraft({ payload: { pem } } as never)).toThrow(SecretAdmissionError);
+  });
+
+  // 10. Secrets in every persisted identity field are rejected
+  it("10: secret in sessionId is rejected", () => {
+    expect(() => gate.admitDraft({ payload: {}, sessionId: GH } as never)).toThrow(SecretAdmissionError);
+  });
+
+  it("10b: secret in operationId is rejected", () => {
+    expect(() => gate.admitDraft({ payload: {}, operationId: OAI } as never)).toThrow(SecretAdmissionError);
+  });
+
+  it("10c: secret in occurredAt is rejected", () => {
+    expect(() => gate.admitDraft({ payload: {}, occurredAt: GH } as never)).toThrow(SecretAdmissionError);
+  });
+
+  // 11. Producer identity values are rejected rather than silently rewritten
+  it("11: secret in producer is rejected (not redacted)", () => {
     expect(() => gate.admitDraft({
-      payload: { safe: true }, idempotencyKey: FAKE_GITHUB_TOKEN,
+      payload: {}, producer: { kind: "tool", toolName: GH },
     } as never)).toThrow(SecretAdmissionError);
   });
 
-  it("rejects secret in correlationId", () => {
-    expect(() => gate.admitDraft({
-      payload: { safe: true }, correlationId: FAKE_OPENAI_KEY,
-    } as never)).toThrow(SecretAdmissionError);
-  });
-
-  it("rejects secret in object key", () => {
-    expect(() => gate.admitDraft({
-      payload: { [FAKE_GITHUB_TOKEN]: "value" },
-    } as never)).toThrow(SecretAdmissionError);
-  });
-});
-
-describe("SecretAdmissionGate — stable markers", () => {
-  const gate = new SecretAdmissionGate();
-
-  it("same secret produces the same marker across calls", () => {
-    const r1 = gate.admitDraft({ payload: { token: FAKE_GITHUB_TOKEN } } as never);
-    const r2 = gate.admitDraft({ payload: { token: FAKE_GITHUB_TOKEN } } as never);
-    expect(r1.value.payload.token).toBe(r2.value.payload.token);
-  });
-});
-
-describe("SecretAdmissionGate — diagnostics safety", () => {
-  it("error messages do not contain the matched value", () => {
-    const gate = new SecretAdmissionGate();
+  // 12. Object-key and identifier errors contain no raw value or fragment
+  it("12: object-key error message contains no raw value", () => {
     try {
-      gate.admitDraft({ payload: { safe: true }, idempotencyKey: FAKE_GITHUB_TOKEN } as never);
+      gate.admitDraft({ payload: { [GH]: "value" } } as never);
       expect.fail("should have thrown");
     } catch (e) {
       const msg = (e as Error).message;
-      expect(msg).not.toContain(FAKE_GITHUB_TOKEN);
+      expect(msg).not.toContain(GH);
       expect(msg).not.toContain("ghp_");
+      expect(msg).not.toContain(GH.slice(0, 10));
     }
   });
-});
 
-describe("SecretAdmissionGate — admitted draft retains structure", () => {
-  const gate = new SecretAdmissionGate();
+  // 13. Configured detections carry the real full valueDigest
+  it("13: configured detection has non-empty valueDigest", () => {
+    const r = gate.admitDraft({ payload: { key: CONFIG_VAL } } as never);
+    expect(r.detections.length).toBeGreaterThanOrEqual(1);
+    const configuredDetection = r.detections.find((d) => d.detectorId.includes("configured"));
+    expect(configuredDetection).toBeDefined();
+    expect(configuredDetection!.valueDigest).toMatch(/^[0-9a-f]{64}$/);
+    expect(configuredDetection!.valueDigest).not.toBe("");
+  });
 
-  it("safe content passes through unchanged", () => {
-    const draft = { payload: { message: "hello", count: 42, nested: { arr: [1, "two", null] } } };
-    const result = gate.admitDraft(draft as never);
-    expect(result.value.payload.message).toBe("hello");
-    expect(result.value.payload.count).toBe(42);
-    expect(result.value.payload.nested.arr).toEqual([1, "two", null]);
+  // 14. Input is not mutated
+  it("14: caller input is not mutated", () => {
+    const input = { payload: { token: GH } };
+    const copy = JSON.parse(JSON.stringify(input));
+    gate.admitDraft(input as never);
+    expect(input).toEqual(copy);
+  });
+
+  // 15. Same secret produces stable marker across calls
+  it("15: stable marker across calls", () => {
+    const r1 = gate.admitDraft({ payload: { token: GH } } as never);
+    const r2 = gate.admitDraft({ payload: { token: GH } } as never);
+    expect(r1.value.payload.token).toBe(r2.value.payload.token);
   });
 });

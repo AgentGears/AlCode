@@ -7,6 +7,17 @@
 import { createHash } from "node:crypto";
 
 // ---------------------------------------------------------------------------
+// Strict marker validation (not prefix-based)
+// ---------------------------------------------------------------------------
+
+const VALID_MARKER_RE = /^secretref:[a-z0-9._:-]+:[0-9a-f]{64}$/i;
+
+/** True only if the string is a complete, syntactically valid marker. */
+export function isValidMarker(value: string): boolean {
+  return VALID_MARKER_RE.test(value);
+}
+
+// ---------------------------------------------------------------------------
 // Structured token patterns (high confidence)
 // ---------------------------------------------------------------------------
 
@@ -17,23 +28,15 @@ interface TokenPattern {
 }
 
 const TOKEN_PATTERNS: readonly TokenPattern[] = [
-  // GitHub tokens: ghp_, gho_, ghu_, ghs_, ghr_ followed by 36+ chars
-  { id: "github-token", pattern: /gh[pousr]_[A-Za-z0-9]{36,}/, description: "GitHub personal access token" },
-  // AWS access key ID: AKIA followed by 16 chars
-  { id: "aws-access-key", pattern: /AKIA[0-9A-Z]{16}/, description: "AWS access key ID" },
-  // AWS secret key: 40 chars of base64 after known context (handled separately)
-  // JWT: three base64 segments separated by dots
-  { id: "jwt", pattern: /eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/, description: "JWT token" },
-  // Slack tokens: xox[baprs]- followed by digits/dashes
-  { id: "slack-token", pattern: /xox[baprs]-[0-9a-zA-Z-]{10,}/, description: "Slack token" },
-  // Google API key: AIza followed by 35 chars
-  { id: "google-api-key", pattern: /AIza[0-9A-Za-z_-]{35}/, description: "Google API key" },
-  // OpenAI API key: sk- followed by alphanumeric
-  { id: "openai-key", pattern: /sk-[A-Za-z0-9]{20,}/, description: "OpenAI API key" },
-  // Anthropic API key: sk-ant- followed by alphanumeric
-  { id: "anthropic-key", pattern: /sk-ant-[A-Za-z0-9_-]{20,}/, description: "Anthropic API key" },
-  // Private key headers
-  { id: "private-key", pattern: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----/, description: "Private key header" },
+  { id: "github-token", pattern: /gh[pousr]_[A-Za-z0-9]{36,}/g, description: "GitHub personal access token" },
+  { id: "aws-access-key", pattern: /AKIA[0-9A-Z]{16}/g, description: "AWS access key ID" },
+  { id: "jwt", pattern: /eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, description: "JWT token" },
+  { id: "slack-token", pattern: /xox[baprs]-[0-9a-zA-Z-]{10,}/g, description: "Slack token" },
+  { id: "google-api-key", pattern: /AIza[0-9A-Za-z_-]{35}/g, description: "Google API key" },
+  { id: "openai-key", pattern: /sk-[A-Za-z0-9]{20,}/g, description: "OpenAI API key" },
+  { id: "anthropic-key", pattern: /sk-ant-[A-Za-z0-9_-]{20,}/g, description: "Anthropic API key" },
+  // Private key: match the header — the gate REJECTS the entire string on match
+  { id: "private-key-header", pattern: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----/, description: "Private key header (rejects entire string)" },
 ];
 
 // ---------------------------------------------------------------------------
@@ -51,17 +54,10 @@ function isSensitiveField(name: string): boolean {
   return SENSITIVE_FIELD_NAMES.has(name.toLowerCase());
 }
 
-/**
- * Shannon entropy estimate in bits per character. Used only for values in
- * known-sensitive fields. A string with entropy > 4.5 and length >= 20 is
- * treated as a likely secret.
- */
 function entropy(s: string): number {
   if (s.length < 2) return 0;
   const freq = new Map<string, number>();
-  for (const ch of s) {
-    freq.set(ch, (freq.get(ch) ?? 0) + 1);
-  }
+  for (const ch of s) freq.set(ch, (freq.get(ch) ?? 0) + 1);
   let h = 0;
   for (const count of freq.values()) {
     const p = count / s.length;
@@ -78,60 +74,94 @@ const MIN_ENTROPY = 4.5;
 // ---------------------------------------------------------------------------
 
 export interface SecretDetection {
-  /** Detector ID (e.g. "github-token", "configured-env:OPENAI_API_KEY", "entropy:sensitive-field"). */
   detectorId: string;
-  /** The full SHA-256 digest of the matched secret value (never the value itself). */
   valueDigest: string;
-  /** Marker to substitute (e.g. "secretref:github-token:a1b2c3..."). */
   marker: string;
 }
 
-/**
- * Compute a deterministic SHA-256 digest of a string and return a
- * secretref marker. The same value always produces the same marker.
- */
 function makeMarker(detectorId: string, value: string): { valueDigest: string; marker: string } {
   const valueDigest = createHash("sha256").update(value).digest("hex");
   return { valueDigest, marker: `secretref:${detectorId}:${valueDigest}` };
 }
 
+// ---------------------------------------------------------------------------
+// Pattern scanning (multi-occurrence, looped)
+// ---------------------------------------------------------------------------
+
+export interface ScanResult {
+  redacted: string;
+  detections: SecretDetection[];
+  /** True if a private-key header was found — gate must reject the string. */
+  rejectEntireString: boolean;
+}
+
 /**
- * Scan a string for secrets. Returns the first detection (if any) and the
- * redacted string, or null if no secret was found.
+ * Scan a string for ALL secret patterns, replacing every occurrence.
+ * Loops until no more patterns match. Returns the fully redacted string
+ * and all detections.
+ *
+ * Does NOT skip strings starting with "secretref:" — only skips strings
+ * that are COMPLETE valid markers.
+ *
+ * If a private-key header is found, sets rejectEntireString=true and
+ * returns immediately (the gate will reject the whole string).
  *
  * @param value The string to scan.
  * @param fieldName The field name (for entropy heuristics). Undefined if
- *                  scanning a value without a known field name.
+ *                  scanning without a known field name.
  */
-export function scanString(value: string, fieldName?: string): { detection: SecretDetection; redacted: string } | null {
-  // Skip already-redacted values (idempotent admission)
-  if (value.startsWith("secretref:")) return null;
-
-  // 1. Check structured patterns
-  for (const tp of TOKEN_PATTERNS) {
-    const match = value.match(tp.pattern);
-    if (match) {
-      const { valueDigest, marker } = makeMarker(tp.id, match[0]);
-      return {
-        detection: { detectorId: tp.id, valueDigest, marker },
-        redacted: value.replace(match[0], marker),
-      };
-    }
+export function scanString(value: string, fieldName?: string): ScanResult {
+  // Skip complete valid markers only
+  if (isValidMarker(value)) {
+    return { redacted: value, detections: [], rejectEntireString: false };
   }
 
-  // 2. Entropy heuristic — ONLY for known-sensitive fields
-  if (fieldName && isSensitiveField(fieldName) && value.length >= MIN_SECRET_LENGTH) {
-    const e = entropy(value);
-    if (e >= MIN_ENTROPY) {
-      const { valueDigest, marker } = makeMarker("entropy:sensitive-field", value);
-      return {
-        detection: { detectorId: "entropy:sensitive-field", valueDigest, marker },
-        redacted: marker,
-      };
+  const detections: SecretDetection[] = [];
+  let current = value;
+  let reject = false;
+
+  // Loop: repeatedly scan until no more changes
+  for (let iteration = 0; iteration < 100; iteration++) {
+    let changed = false;
+
+    for (const tp of TOKEN_PATTERNS) {
+      if (reject) break;
+      const re = new RegExp(tp.pattern.source, tp.pattern.flags);
+      let match: RegExpExecArray | null;
+      while ((match = re.exec(current)) !== null) {
+        const matched = match[0];
+
+        if (tp.id === "private-key-header") {
+          // Private key header found — reject the entire string
+          reject = true;
+          break;
+        }
+
+        const { valueDigest, marker } = makeMarker(tp.id, matched);
+        detections.push({ detectorId: tp.id, valueDigest, marker });
+        current = current.replace(matched, marker);
+        changed = true;
+      }
+      if (reject) break;
     }
+
+    if (reject) break;
+
+    // Entropy heuristic — only for known-sensitive fields
+    if (fieldName && isSensitiveField(fieldName) && current.length >= MIN_SECRET_LENGTH && !isValidMarker(current)) {
+      const e = entropy(current);
+      if (e >= MIN_ENTROPY) {
+        const { valueDigest, marker } = makeMarker("entropy:sensitive-field", current);
+        detections.push({ detectorId: "entropy:sensitive-field", valueDigest, marker });
+        current = marker;
+        changed = true;
+      }
+    }
+
+    if (!changed) break;
   }
 
-  return null;
+  return { redacted: current, detections, rejectEntireString: reject };
 }
 
 // ---------------------------------------------------------------------------
@@ -139,40 +169,54 @@ export function scanString(value: string, fieldName?: string): { detection: Secr
 // ---------------------------------------------------------------------------
 
 export interface ConfiguredSecret {
-  /** The field/variable name (e.g. "OPENAI_API_KEY"). */
   name: string;
-  /** The secret value to detect and redact. */
   value: string;
 }
 
 export interface SecretAdmissionConfig {
-  /** Explicitly configured known secrets. */
   configuredSecrets?: ConfiguredSecret[];
 }
 
 /**
- * Build a set of configured secret values for matching. Ignores empty
- * or dangerously short values (would cause pervasive false matches).
+ * Build a sorted list of configured secrets (descending by length for
+ * deterministic overlap handling). Ignores empty/short values.
  */
-export function buildConfiguredSecrets(config: SecretAdmissionConfig): Map<string, { name: string; marker: string }> {
-  const map = new Map<string, { name: string; marker: string }>();
+export function buildConfiguredSecrets(config: SecretAdmissionConfig): Array<{ name: string; value: string; marker: string }> {
+  const list: Array<{ name: string; value: string; marker: string }> = [];
   for (const cs of config.configuredSecrets ?? []) {
-    if (cs.value.length < 8) continue; // ignore dangerously short values
+    if (cs.value.length < 8) continue;
     const { marker } = makeMarker(`configured-env:${cs.name}`, cs.value);
-    map.set(cs.value, { name: cs.name, marker });
+    list.push({ name: cs.name, value: cs.value, marker });
   }
-  return map;
+  // Sort by descending value length so longer secrets are matched first
+  list.sort((a, b) => b.value.length - a.value.length);
+  return list;
 }
 
 /**
- * Check a string against configured secrets. Returns the marker if found.
+ * Replace ALL occurrences of ALL configured secrets within a string.
+ * Returns the redacted string and detections.
  */
-export function checkConfigured(
+export function redactConfigured(
   value: string,
-  configured: Map<string, { name: string; marker: string }>,
-): string | null {
-  if (value.startsWith("secretref:")) return null; // idempotent
-  const entry = configured.get(value);
-  if (entry) return entry.marker;
-  return null;
+  configured: Array<{ name: string; value: string; marker: string }>,
+): { redacted: string; detections: SecretDetection[] } {
+  if (isValidMarker(value)) {
+    return { redacted: value, detections: [] };
+  }
+
+  let current = value;
+  const detections: SecretDetection[] = [];
+
+  for (const cs of configured) {
+    if (!current.includes(cs.value)) continue;
+    current = current.split(cs.value).join(cs.marker);
+    detections.push({
+      detectorId: `configured-env:${cs.name}`,
+      valueDigest: createHash("sha256").update(cs.value).digest("hex"),
+      marker: cs.marker,
+    });
+  }
+
+  return { redacted: current, detections };
 }
