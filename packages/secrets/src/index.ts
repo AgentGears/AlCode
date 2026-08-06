@@ -6,6 +6,7 @@ export {
   redactConfigured,
   buildConfiguredSecrets,
   isValidMarker,
+  InvalidSecretConfigurationError,
   type SecretDetection,
   type SecretAdmissionConfig,
   type ConfiguredSecret,

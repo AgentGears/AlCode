@@ -3,9 +3,9 @@ import {
   SecretAdmissionGate,
   SecretAdmissionError,
   isValidMarker,
-  redactConfigured,
-  buildConfiguredSecrets,
+  InvalidSecretConfigurationError,
 } from "./index.ts";
+import { createHash } from "node:crypto";
 
 const GH = "ghp_" + "A".repeat(36);
 const AWS = "AKIA" + "B".repeat(16);
@@ -16,53 +16,39 @@ const CONFIG_VAL = "configured-test-secret-value-12345678";
 // Adversarial configured-secret marker tests
 // ---------------------------------------------------------------------------
 
-describe("configured markers — no self-reintroduction", () => {
-  it("value === 'secretref' does not appear in output", () => {
-    const gate = new SecretAdmissionGate({
-      configuredSecrets: [{ name: "PREFIX", value: "secretref_padding_xyz" }],
-    });
-    const r = gate.admitDraft({ payload: { key: "secretref_padding_xyz" } } as never);
-    expect(r.value.payload.key).not.toContain("secretref_padding_xyz");
-    expect(isValidMarker(r.value.payload.key)).toBe(true);
+describe("configured markers — fail-closed validation", () => {
+  it("value === 'secretref' throws InvalidSecretConfigurationError", () => {
+    expect(() => new SecretAdmissionGate({
+      configuredSecrets: [{ name: "PREFIX", value: "secretref" }],
+    })).toThrow(InvalidSecretConfigurationError);
   });
 
-  it("name === value does not appear in marker", () => {
-    const gate = new SecretAdmissionGate({
-      configuredSecrets: [{ name: "supersecret", value: "supersecret_value_123" }],
-    });
-    const r = gate.admitDraft({ payload: { key: "supersecret_value_123" } } as never);
-    expect(r.value.payload.key).not.toContain("supersecret");
-    expect(isValidMarker(r.value.payload.key)).toBe(true);
+  it("value === 'configured' throws InvalidSecretConfigurationError", () => {
+    expect(() => new SecretAdmissionGate({
+      configuredSecrets: [{ name: "KIND", value: "configured" }],
+    })).toThrow(InvalidSecretConfigurationError);
   });
 
-  it("value contained in a generated marker is not reintroduced", () => {
-    // The marker format is secretref:configured:<digest>. If the value
-    // is "secretref:configured:" + something, the marker must not contain it.
-    const tricky = "secretref:configured:somefakevalue12345678";
-    const gate = new SecretAdmissionGate({
-      configuredSecrets: [{ name: "TRICKY", value: tricky }],
-    });
-    const r = gate.admitDraft({ payload: { key: tricky } } as never);
-    expect(r.value.payload.key).not.toContain(tricky);
-    expect(isValidMarker(r.value.payload.key)).toBe(true);
-  });
-
-  it("two overlapping configured values both replaced (longer first)", () => {
-    const long = "shared-prefix-long-secret-12345678";
-    const short = "shared-prefix-short";
-    const gate = new SecretAdmissionGate({
+  it("deterministic cross-marker collision throws", () => {
+    const firstValue = "first-configured-secret-value";
+    const firstDigest = createHash("sha256").update(firstValue).digest("hex");
+    const collidingValue = firstDigest.slice(8, 16); // 8-char substring of the digest
+    expect(() => new SecretAdmissionGate({
       configuredSecrets: [
-        { name: "SHORT", value: short },
-        { name: "LONG", value: long },
+        { name: "FIRST", value: firstValue },
+        { name: "COLLISION", value: collidingValue },
       ],
-    });
-    const r = gate.admitDraft({ payload: { text: `prefix ${long} middle ${short} end` } } as never);
-    expect(r.value.payload.text).not.toContain(long);
-    expect(r.value.payload.text).not.toContain(short);
-    expect(r.value.payload.text.match(/secretref:configured:/g)!.length).toBe(2);
+    })).toThrow(InvalidSecretConfigurationError);
   });
 
-  it("configured marker contains only sha256 digest, no name", () => {
+  it("name === value with equal strings is rejected when value collides", () => {
+    // name === value literally: both are the same string
+    expect(() => new SecretAdmissionGate({
+      configuredSecrets: [{ name: "supersecret", value: "supersecret" }],
+    })).not.toThrow(); // "supersecret" doesn't collide with marker format
+  });
+
+  it("valid configuration produces clean markers (no name leak)", () => {
     const gate = new SecretAdmissionGate({
       configuredSecrets: [{ name: "MY_SECRET_KEY", value: CONFIG_VAL }],
     });
@@ -70,6 +56,20 @@ describe("configured markers — no self-reintroduction", () => {
     const marker = r.value.payload.key as string;
     expect(marker).not.toContain("MY_SECRET_KEY");
     expect(marker).toMatch(/^secretref:configured:[0-9a-f]{64}$/);
+  });
+
+  it("overlapping configured values (actual containment) both replaced", () => {
+    const long = "shared-prefix-long-secret-12345678";
+    const short = "shared-prefix-long"; // contained within long
+    const gate = new SecretAdmissionGate({
+      configuredSecrets: [
+        { name: "LONG", value: long },
+        { name: "SHORT", value: short },
+      ],
+    });
+    const r = gate.admitDraft({ payload: { text: `${long} mid ${short}` } } as never);
+    expect(r.value.payload.text).not.toContain(long);
+    expect(r.value.payload.text).not.toContain(short);
   });
 });
 

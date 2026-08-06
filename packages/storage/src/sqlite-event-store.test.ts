@@ -640,15 +640,18 @@ describeLocked("SqliteEventStore — secret admission in append()", () => {
 
     // While the store is still open, byte-scan the DB and WAL files
     const { readFileSync, existsSync } = await import("node:fs");
-    const filesToScan = [dbPath, dbPath + "-wal", dbPath + "-shm"].filter(existsSync);
+    const walPath = dbPath + "-wal";
+    const shmPath = dbPath + "-shm";
+    // Assert WAL exists while store is open (we claim active-WAL scan)
+    expect(existsSync(walPath)).toBe(true);
+    const filesToScan = [dbPath, walPath, shmPath].filter(existsSync);
     for (const f of filesToScan) {
       const bytes = readFileSync(f);
-      const text = bytes.toString("utf8");
-      expect(text).not.toContain(FAKE_GITHUB_TOKEN);
-      expect(text).not.toContain("ghp_");
-      expect(text).not.toContain(FAKE_AWS_KEY);
-      expect(text).not.toContain("AKIA");
-      expect(text).not.toContain(configuredVal);
+      expect(bytes.includes(Buffer.from(FAKE_GITHUB_TOKEN, "utf8"))).toBe(false);
+      expect(bytes.includes(Buffer.from("ghp_", "utf8"))).toBe(false);
+      expect(bytes.includes(Buffer.from(FAKE_AWS_KEY, "utf8"))).toBe(false);
+      expect(bytes.includes(Buffer.from("AKIA", "utf8"))).toBe(false);
+      expect(bytes.includes(Buffer.from(configuredVal, "utf8"))).toBe(false);
     }
 
     rt.close();
@@ -656,9 +659,8 @@ describeLocked("SqliteEventStore — secret admission in append()", () => {
     // After close (checkpoint), scan the main DB again
     if (existsSync(dbPath)) {
       const bytes = readFileSync(dbPath);
-      const text = bytes.toString("utf8");
-      expect(text).not.toContain(FAKE_GITHUB_TOKEN);
-      expect(text).not.toContain(configuredVal);
+      expect(bytes.includes(Buffer.from(FAKE_GITHUB_TOKEN, "utf8"))).toBe(false);
+      expect(bytes.includes(Buffer.from(configuredVal, "utf8"))).toBe(false);
     }
   });
 
@@ -699,9 +701,8 @@ describeLocked("SqliteEventStore — secret admission in append()", () => {
     const { readFileSync, existsSync } = await import("node:fs");
     if (existsSync(dbPath)) {
       const bytes = readFileSync(dbPath);
-      const text = bytes.toString("utf8");
-      expect(text).not.toContain(FAKE_GITHUB_TOKEN);
-      expect(text).not.toContain(configuredVal);
+      expect(bytes.includes(Buffer.from(FAKE_GITHUB_TOKEN, "utf8"))).toBe(false);
+      expect(bytes.includes(Buffer.from(configuredVal, "utf8"))).toBe(false);
     }
   });
 
@@ -749,12 +750,11 @@ describeLocked("SqliteEventStore — secret admission in append()", () => {
     const { readFileSync, existsSync } = await import("node:fs");
     if (existsSync(dbPath)) {
       const bytes = readFileSync(dbPath);
-      const text = bytes.toString("utf8");
-      expect(text).not.toContain(FAKE_GITHUB_TOKEN);
-      expect(text).not.toContain("ghp_");
-      expect(text).not.toContain(FAKE_AWS_KEY);
-      expect(text).not.toContain("AKIA");
-      expect(text).toContain("secretref:"); // markers are present
+      expect(bytes.includes(Buffer.from(FAKE_GITHUB_TOKEN, "utf8"))).toBe(false);
+      expect(bytes.includes(Buffer.from("ghp_", "utf8"))).toBe(false);
+      expect(bytes.includes(Buffer.from(FAKE_AWS_KEY, "utf8"))).toBe(false);
+      expect(bytes.includes(Buffer.from("AKIA", "utf8"))).toBe(false);
+      expect(bytes.includes(Buffer.from("secretref:", "utf8"))).toBe(true);
     }
   });
 });

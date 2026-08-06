@@ -191,6 +191,10 @@ export interface PreparedConfiguredSecret {
  * Markers contain NO caller-controlled names — only the SHA-256 digest of
  * the secret value. This prevents self-reintroduction when the value itself
  * is "secretref" or when the name contains the value.
+ *
+ * FAILS CLOSED: after generating all markers, cross-checks that no
+ * configured value appears as a substring of any generated marker.
+ * Throws InvalidSecretConfigurationError on collision.
  */
 export function buildConfiguredSecrets(config: SecretAdmissionConfig): PreparedConfiguredSecret[] {
   const list: PreparedConfiguredSecret[] = [];
@@ -204,7 +208,28 @@ export function buildConfiguredSecrets(config: SecretAdmissionConfig): PreparedC
     });
   }
   list.sort((a, b) => b.value.length - a.value.length);
+
+  // Fail-closed cross-check: no configured value may appear in any marker.
+  for (let mi = 0; mi < list.length; mi++) {
+    const marker = list[mi]!.marker;
+    for (let si = 0; si < list.length; si++) {
+      if (marker.includes(list[si]!.value)) {
+        throw new InvalidSecretConfigurationError(si);
+      }
+    }
+  }
+
   return list;
+}
+
+/** Error: a configured secret value would appear inside a generated marker. */
+export class InvalidSecretConfigurationError extends Error {
+  constructor(public readonly configurationIndex: number) {
+    super(
+      `Secret configuration entry ${configurationIndex} conflicts with the redaction marker format.`,
+    );
+    this.name = "InvalidSecretConfigurationError";
+  }
 }
 
 /**
