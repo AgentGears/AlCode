@@ -448,14 +448,13 @@ describe("openLockedWorkspaceStore — enforced lifecycle", () => {
       rt2.close();
     });
 
-    it("public package surface has no constructor accepting a raw database", () => {
+    it("public package surface has no constructor accepting a raw database", async () => {
       // The WorkspaceEventStore is an interface, not a class. There is no
       // exported constructor or factory that takes a Database handle.
-      // Verify by attempting to import — if SqliteEventStoreImpl were
-      // exported, this would succeed.
-      const mod = require("./index.ts");
-      expect(mod.SqliteEventStoreImpl).toBeUndefined();
-      expect(mod.SqliteEventStore).toBeUndefined();
+      // Verify the exported names do not include the implementation class.
+      const mod = await import("./index.ts");
+      expect((mod as Record<string, unknown>).SqliteEventStoreImpl).toBeUndefined();
+      expect((mod as Record<string, unknown>).SqliteEventStore).toBeUndefined();
       expect(typeof mod.openLockedWorkspaceStore).toBe("function");
     });
   });
