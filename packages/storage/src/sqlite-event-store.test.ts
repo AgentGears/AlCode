@@ -550,6 +550,7 @@ describe("createOrderedClose — injected failure contract", () => {
 // ---------------------------------------------------------------------------
 
 const FAKE_GITHUB_TOKEN = "ghp_" + "A".repeat(36);
+const FAKE_AWS_KEY = "AKIA" + "B".repeat(16);
 
 describeLocked("SqliteEventStore — secret admission in append()", () => {
   let dir: string;
