@@ -16,14 +16,15 @@
     "test": "vitest run",
     "test:watch": "vitest"
   },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild", "fs-ext", "better-sqlite3"]
+  },
   "devDependencies": {
+    "@types/fs-ext": "^2.0.3",
     "@types/node": "^22.20.1",
+    "fs-ext": "^2.1.1",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3",
     "vitest": "^2.1.8"
-  },
-  "dependencies": {
-    "@types/fs-ext": "^2.0.3",
-    "fs-ext": "^2.1.1"
   }
 }
