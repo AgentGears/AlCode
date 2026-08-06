@@ -16,6 +16,7 @@ import {
   WorkspaceMismatchError,
 } from "./schema.ts";
 import type { AcquiredLock } from "@alcode/workspace";
+import { SecretAdmissionGate, type SecretAdmissionConfig } from "@alcode/secrets";
 
 const require = createRequire(import.meta.url);
 
@@ -239,16 +240,29 @@ export interface WorkspaceEventStore {
 class SqliteEventStoreImpl implements WorkspaceEventStore {
   private readonly db: Database.Database;
   readonly workspaceId: string;
+  private readonly admissionGate: SecretAdmissionGate;
 
-  constructor(db: Database.Database, workspaceId: string) {
+  constructor(db: Database.Database, workspaceId: string, admissionGate: SecretAdmissionGate) {
     this.db = db;
     this.workspaceId = workspaceId;
+    this.admissionGate = admissionGate;
   }
 
   async append(
     drafts: readonly EventDraft<string, unknown>[],
   ): Promise<PersistedDomainEvent<string, unknown>[]> {
+    // 1. Admit ALL drafts through the secret gate BEFORE any fingerprinting or SQL.
+    //    This is structurally unavoidable — append() never passes an unexamined
+    //    draft to the database. If any draft fails admission, the entire batch
+    //    is rejected (no partial persistence).
+    const admittedDrafts: EventDraft<string, unknown>[] = [];
     for (const draft of drafts) {
+      const result = this.admissionGate.admitDraft(draft as unknown as Record<string, unknown>);
+      admittedDrafts.push(result.value as unknown as EventDraft<string, unknown>);
+    }
+
+    // 2. Validate workspaceId + canonical safety on the admitted drafts.
+    for (const draft of admittedDrafts) {
       const draftWs = typeof draft.workspaceId === "string" ? draft.workspaceId : String(draft.workspaceId);
       if (draftWs !== this.workspaceId) {
         throw new WorkspaceIdMismatchError(this.workspaceId, draftWs);
@@ -260,7 +274,7 @@ class SqliteEventStoreImpl implements WorkspaceEventStore {
     const results: PersistedDomainEvent<string, unknown>[] = [];
 
     const txn = this.db.transaction(() => {
-      for (const draft of drafts) {
+      for (const draft of admittedDrafts) {
         const fingerprint = computeRequestFingerprint(draft);
 
         // eventId idempotency + conflict
@@ -434,6 +448,8 @@ export interface OpenLockedWorkspaceStoreOptions {
   lockPath: string;
   workspaceId: string;
   repositoryId: string;
+  /** Configured secrets for the admission gate. */
+  secretConfig?: SecretAdmissionConfig;
 }
 
 /**
@@ -476,8 +492,9 @@ export async function openLockedWorkspaceStore(
     // 4. Bind + verify identity
     bindWorkspace(db, opts.workspaceId, opts.repositoryId);
 
-    // 5. Construct implementation + closure-backed facade
-    const impl = new SqliteEventStoreImpl(db, opts.workspaceId);
+    // 5. Construct secret admission gate + implementation
+    const admissionGate = new SecretAdmissionGate(opts.secretConfig ?? {});
+    const impl = new SqliteEventStoreImpl(db, opts.workspaceId, admissionGate);
 
     // Build a frozen facade with null prototype so the implementation class
     // constructor cannot be recovered via rt.store.constructor.

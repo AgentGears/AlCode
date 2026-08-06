@@ -40,11 +40,16 @@ importers:
 
   packages/events: {}
 
+  packages/secrets: {}
+
   packages/storage:
     dependencies:
       '@alcode/events':
         specifier: workspace:*
         version: link:../events
+      '@alcode/secrets':
+        specifier: workspace:*
+        version: link:../secrets
       '@alcode/workspace':
         specifier: workspace:*
         version: link:../workspace

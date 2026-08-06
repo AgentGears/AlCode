@@ -541,7 +541,85 @@ describe("createOrderedClose — injected failure contract", () => {
     expect(releaseCount).toBe(1);
 
     close();
-    close();
     expect(releaseCount).toBe(1); // no additional releases
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Step 5: Secret admission integration tests
+// ---------------------------------------------------------------------------
+
+const FAKE_GITHUB_TOKEN = "ghp_" + "A".repeat(36);
+
+describeLocked("SqliteEventStore — secret admission in append()", () => {
+  let dir: string;
+
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "alcode-sec-")); });
+
+  it("secret in payload is redacted before persistence", async () => {
+    const dbPath = join(dir, "ws.sqlite");
+    const lockPath = join(dir, "ws.lock");
+    const rt = await openLockedWorkspaceStore({
+      databasePath: dbPath, lockPath, workspaceId: TEST_WS, repositoryId: TEST_REPO,
+    });
+
+    const draft = makeDraft({ payload: { token: FAKE_GITHUB_TOKEN } });
+    await rt.store.append([draft]);
+    rt.close();
+
+    // Query the DB directly — no secret bytes should exist
+    const db = Database(dbPath);
+    const row = db.prepare("SELECT payload FROM events WHERE event_id = ?").get(draft.eventId) as { payload: string };
+    db.close();
+    expect(row.payload).not.toContain(FAKE_GITHUB_TOKEN);
+    expect(row.payload).not.toContain("ghp_");
+    expect(row.payload).toContain("secretref:");
+  });
+
+  it("secret in identifier field is rejected (no persistence)", async () => {
+    const dbPath = join(dir, "ws2.sqlite");
+    const lockPath = join(dir, "ws2.lock");
+    const rt = await openLockedWorkspaceStore({
+      databasePath: dbPath, lockPath, workspaceId: TEST_WS, repositoryId: TEST_REPO,
+    });
+
+    const draft = makeDraft({ idempotencyKey: FAKE_GITHUB_TOKEN });
+    await expect(rt.store.append([draft])).rejects.toThrow(/Secret admission/);
+    expect(await rt.store.headSequence()).toBe(0); // nothing persisted
+    rt.close();
+  });
+
+  it("mixed batch: secret rejection prevents all drafts from persisting", async () => {
+    const dbPath = join(dir, "ws3.sqlite");
+    const lockPath = join(dir, "ws3.lock");
+    const rt = await openLockedWorkspaceStore({
+      databasePath: dbPath, lockPath, workspaceId: TEST_WS, repositoryId: TEST_REPO,
+    });
+
+    const safeDraft = makeDraft({ payload: { value: "safe" } });
+    const secretDraft = makeDraft({ idempotencyKey: FAKE_GITHUB_TOKEN });
+    await expect(rt.store.append([safeDraft, secretDraft])).rejects.toThrow(/Secret admission/);
+    expect(await rt.store.headSequence()).toBe(0); // nothing persisted at all
+    rt.close();
+  });
+
+  it("reopen and replay returns only admitted payloads", async () => {
+    const dbPath = join(dir, "ws4.sqlite");
+    const lockPath = join(dir, "ws4.lock");
+    const opts = { databasePath: dbPath, lockPath, workspaceId: TEST_WS, repositoryId: TEST_REPO };
+
+    const rt1 = await openLockedWorkspaceStore(opts);
+    const draft = makeDraft({ payload: { token: FAKE_GITHUB_TOKEN, safe: "hello" } });
+    await rt1.store.append([draft]);
+    rt1.close();
+
+    // Reopen
+    const rt2 = await openLockedWorkspaceStore(opts);
+    const found = await rt2.store.get(draft.eventId as string);
+    expect(found).toBeDefined();
+    const payload = found!.payload as { token: string; safe: string };
+    expect(payload.token).toContain("secretref:");
+    expect(payload.safe).toBe("hello");
+    rt2.close();
   });
 });

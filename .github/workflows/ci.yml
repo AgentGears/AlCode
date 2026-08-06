@@ -48,9 +48,11 @@ jobs:
           ALCODE_HOME: ${{ runner.temp }}/alcode-home
         run: pnpm gate:0.1A
 
-      - name: Typecheck + test workspace and storage packages
+      - name: Typecheck + test workspace, storage, and secrets packages
         run: |
           pnpm --filter @alcode/workspace exec tsc --noEmit -p tsconfig.json
           pnpm --filter @alcode/storage exec tsc --noEmit -p tsconfig.json
+          pnpm --filter @alcode/secrets exec tsc --noEmit -p tsconfig.json
           pnpm --filter @alcode/workspace exec vitest run
           pnpm --filter @alcode/storage exec vitest run
+          pnpm --filter @alcode/secrets exec vitest run
