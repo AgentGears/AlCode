@@ -1,5 +1,5 @@
 // Durable agent runtime — connects the agent loop to the durable event store.
-// See docs/phase-0-spec.md §0.2 Step 8.
+// See docs/phase-0-spec.md §0.2 Steps 8–9.
 //
 // Architecture: a single AgentEventSink translates each AgentEvent emitted by
 // runAgentLoop into the durable domain events the store expects. We do NOT
@@ -12,6 +12,13 @@
 // operation is not reported complete until its terminal row is visible in the
 // projection — ADR 0001's "an operation isn't complete until its messages are
 // visible" rule.
+//
+// Session lifecycle (Step 9): runDurableAgent owns the
+// runtime.session.started / runtime.session.stopped bracket via
+// startDurableSession / stopDurableSession. The sessions projection
+// (classified 'derived') is synchronously materialized at those boundaries.
+// Finalization order: stopDurableSession (catchUp sessions) then catchUp
+// operations, so both known projections reach the log head before return.
 
 import {
   type AgentEvent,
@@ -22,7 +29,6 @@ import {
 import {
   mkEventId,
   asWorkspaceId,
-  mkSessionId,
   mkOperationId,
   type EventDraft,
   type EventId,
@@ -37,6 +43,8 @@ import {
   type ProjectionCatchUpResult,
 } from "@alcode/storage";
 
+import { startDurableSession, stopDurableSession } from "./session-lifecycle.ts";
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -46,7 +54,7 @@ export interface DurableAgentOptions {
   provider: ModelProvider;
   tools: AgentTool[];
   store: LockedWorkspaceStore;
-  /** Pre-existing session id to resume into; a fresh one is minted otherwise. */
+  /** Explicit identity for the new session; a fresh ID is minted when omitted. */
   sessionId?: SessionId;
   maxSteps?: number;
   /**
@@ -224,57 +232,72 @@ export function buildDurableSinkForTest(
 // ---------------------------------------------------------------------------
 
 /**
- * Run the agent loop with durable event persistence.
+ * Run the agent loop with durable event persistence and session lifecycle.
  *
- * The prompt is persisted as user.message.appended before the loop runs. Each
+ * Owns the runtime.session.started / runtime.session.stopped bracket. The
+ * prompt is persisted as user.message.appended before the loop runs. Each
  * assistant message and each tool execution is persisted as it happens, with
  * the operations projection caught up after every operation event so that
  * completion reporting never races projection state.
+ *
+ * Finalization (try/finally): stopDurableSession catches up the sessions
+ * projection, then the operations projection is caught up so both known
+ * projections reach the log head before the runtime returns — even if the
+ * loop threw.
  */
 export async function runDurableAgent(
   prompt: string,
   opts: DurableAgentOptions,
 ): Promise<DurableAgentResult> {
   const { systemPrompt, provider, tools, store, maxSteps = 50, onEvent } = opts;
-  const sessionId = opts.sessionId ?? mkSessionId();
   const eventStore = store.store;
-  const workspaceId = asWorkspaceId(eventStore.workspaceId);
   const operationsProjection = createOperationsProjection(eventStore.workspaceId);
 
-  // 1. Persist the user message before the loop starts, then catch up so the
-  //    critical projection tracks the log head from the very first event.
-  await eventStore.append([
-    {
-      eventId: mkEventId(),
-      workspaceId,
-      sessionId,
-      occurredAt: new Date().toISOString(),
-      type: "user.message.appended",
-      payload: { text: prompt },
-      payloadSchemaVersion: 1,
-      producer: { kind: "user" },
-    },
-  ]);
-  eventStore.getProjectionRunner().catchUp(operationsProjection);
+  // 1. Start the durable session (appends runtime.session.started, catches up
+  //    the sessions projection). The session id is minted here or honored from
+  //    opts.sessionId.
+  const sessionOpts = opts.sessionId ? { sessionId: opts.sessionId } : undefined;
+  const { sessionId } = await startDurableSession(store, sessionOpts);
+  const workspaceId = asWorkspaceId(eventStore.workspaceId);
 
-  // 2. Build the durable sink (translates AgentEvents → domain events).
-  const { sink } = buildDurableSinkForTest(eventStore, sessionId, tools, onEvent);
+  try {
+    // 2. Persist the user message before the loop starts, then catch up so the
+    //    critical operations projection tracks the log head.
+    await eventStore.append([
+      {
+        eventId: mkEventId(),
+        workspaceId,
+        sessionId,
+        occurredAt: new Date().toISOString(),
+        type: "user.message.appended",
+        payload: { text: prompt },
+        payloadSchemaVersion: 1,
+        producer: { kind: "user" },
+      },
+    ]);
+    eventStore.getProjectionRunner().catchUp(operationsProjection);
 
-  // 3. Run the loop. Imported lazily so this module has no top-level cycle.
-  const { runAgentLoop } = await import("@alcode/agent-core");
-  const transcript = await runAgentLoop(prompt, {
-    systemPrompt,
-    provider,
-    tools,
-    maxSteps,
-    emit: sink,
-  });
+    // 3. Build the durable sink (translates AgentEvents → domain events).
+    const { sink } = buildDurableSinkForTest(eventStore, sessionId, tools, onEvent);
 
-  // 4. Final guarantee: the critical operations projection is caught up to the
-  //    event-log head before the runtime returns, regardless of which events
-  //    were emitted during the run. This is the load-bearing invariant of
-  //    agent integration — no caller can observe a lagging critical projection.
-  eventStore.getProjectionRunner().catchUp(operationsProjection);
+    // 4. Run the loop. Imported lazily so this module has no top-level cycle.
+    const { runAgentLoop } = await import("@alcode/agent-core");
+    const transcript = await runAgentLoop(prompt, {
+      systemPrompt,
+      provider,
+      tools,
+      maxSteps,
+      emit: sink,
+    });
 
-  return { transcript };
+    return { transcript };
+  } finally {
+    // 5. Stop the session (appends runtime.session.stopped, catches up sessions).
+    //    Then catch up operations so both known projections reach the log head
+    //    before the runtime returns — the runtime.session.stopped event advanced
+    //    the head, and the operations cursor must follow even though its apply()
+    //    no-ops on it (the exact class of lag Step 8 found and fixed).
+    await stopDurableSession(store, sessionId);
+    eventStore.getProjectionRunner().catchUp(operationsProjection);
+  }
 }

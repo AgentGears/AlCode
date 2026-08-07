@@ -3,6 +3,7 @@ ref/
 
 # Local agent session state
 .ouroboros/
+.zcode/
 
 # Node
 node_modules/

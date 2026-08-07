@@ -6,3 +6,18 @@ export {
   type DurableAgentOptions,
   type DurableAgentResult,
 } from "./durable-agent.ts";
+export {
+  startDurableSession,
+  stopDurableSession,
+  type StartDurableSessionOptions,
+  type StartedSession,
+} from "./session-lifecycle.ts";
+export {
+  createSessionsProjection,
+  createSessionQuery,
+  sessionStatements,
+  SessionStateError,
+  type SessionStartedPayload,
+  type SessionStoppedPayload,
+  type SessionRecord,
+} from "./sessions-projection.ts";

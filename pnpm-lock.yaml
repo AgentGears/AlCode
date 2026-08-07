@@ -43,6 +43,13 @@ importers:
       '@alcode/test-provider':
         specifier: workspace:*
         version: link:../test-provider
+    devDependencies:
+      '@types/better-sqlite3':
+        specifier: ^7.6.13
+        version: 7.6.13
+      better-sqlite3:
+        specifier: ^13.0.3
+        version: 13.0.3
 
   packages/events: {}
 
