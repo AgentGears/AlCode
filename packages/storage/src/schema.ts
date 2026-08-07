@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { canonicalStringify } from "@alcode/events";
 
 /** Current schema version. */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 /** DDL for fresh databases (all tables at current version). */
 const WORKSPACE_SCHEMA: string[] = [
@@ -56,6 +56,7 @@ const WORKSPACE_SCHEMA: string[] = [
     session_id            TEXT NOT NULL,
     tool_name             TEXT NOT NULL,
     args                  TEXT,
+    lifecycle_state       TEXT NOT NULL DEFAULT 'requested',
     execution_outcome     TEXT,
     effect_status         TEXT DEFAULT 'indeterminate',
     reconciliation_status TEXT DEFAULT 'not_required',
@@ -140,6 +141,9 @@ export function initWorkspaceDb(db: Database.Database): void {
   }
   if (getSchemaVersion(db) < 3) {
     migrateV2toV3(db);
+  }
+  if (getSchemaVersion(db) < 4) {
+    migrateV3toV4(db);
   }
 }
 
@@ -368,6 +372,32 @@ function migrateV2toV3(db: Database.Database): void {
     }
 
     db.prepare("INSERT OR REPLACE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(3, new Date().toISOString());
+  });
+
+  migrationTxn();
+}
+
+/**
+ * Migration from schema v3 to v4.
+ * Adds `lifecycle_state` column to `operations` table.
+ * Existing operations (all NULL execution_outcome) get 'requested'.
+ * Operations with an execution_outcome get 'terminal'.
+ */
+function migrateV3toV4(db: Database.Database): void {
+  const migrationTxn = db.transaction(() => {
+    const hasColumn = db.prepare(
+      "SELECT COUNT(*) as c FROM pragma_table_info('operations') WHERE name = 'lifecycle_state'",
+    ).get() as { c: number };
+
+    if (hasColumn.c === 0) {
+      db.exec("ALTER TABLE operations ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'requested'");
+      // Existing operations with a terminal outcome get 'terminal'
+      db.prepare(
+        "UPDATE operations SET lifecycle_state = 'terminal' WHERE execution_outcome IS NOT NULL",
+      ).run();
+    }
+
+    db.prepare("INSERT OR REPLACE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(4, new Date().toISOString());
   });
 
   migrationTxn();

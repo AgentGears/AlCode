@@ -37,5 +37,23 @@ export {
   ReservedTableInStatementError,
 } from "./projection.ts";
 
+// Operations model:
+export {
+  type OperationLifecycleState,
+  type ExecutionOutcome,
+  type EffectStatus,
+  type ReconciliationStatus,
+  type OperationRecord,
+  type OperationQuery,
+  type OperationRequestedPayload,
+  type OperationStartedPayload,
+  type OperationCompletedPayload,
+  OperationStateError,
+  defaultEffectStatus,
+  defaultReconciliationStatus,
+  createOperationsProjection,
+  createOperationQuery,
+} from "./operations.ts";
+
 // Secrets (re-exported for convenience):
 export { SecretAdmissionError } from "@alcode/secrets";
