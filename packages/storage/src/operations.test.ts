@@ -231,15 +231,18 @@ describeLocked("operations model — projection + state machine", () => {
     expect(query.getByLifecycleState("terminal").length).toBe(0);
   });
 
-  // 11. Unknown event types are ignored by the projection
-  it("11: non-operation events ignored by projection", async () => {
+  // 11. Unknown event types are ignored by the projection (no operations created)
+  it("11: non-operation events produce no operation records", async () => {
     await rt.store.append([
       makeOperationDraft(mkOperationId() as string, "memory.created", { value: 42 }) as EventDraft<string, unknown>,
     ]);
     const proj = createOperationsProjection(TEST_WS);
     const runner = rt.store.getProjectionRunner();
-    const result = runner.catchUp(proj);
-    expect(result.appliedCount).toBe(0); // no operation events to apply
+    runner.catchUp(proj); // cursor advances (event processed) but no operation rows created
+    // Verify no operations exist
+    const query = createOperationQuery(db);
+    expect(query.getByLifecycleState("requested").length).toBe(0);
+    expect(query.getByLifecycleState("terminal").length).toBe(0);
   });
 
   // 12. Default mapping function correctness
