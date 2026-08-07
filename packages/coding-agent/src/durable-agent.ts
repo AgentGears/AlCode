@@ -196,7 +196,11 @@ export function buildDurableSinkForTest(
         const msg = event.message;
         const textBlock = msg.content.find((c): c is { type: "text"; text: string } => c.type === "text");
         if (textBlock && textBlock.text) {
-          await store.append([
+          // Append then catch up: the operations projection ignores this event
+          // (its apply() has a no-op default branch), but the cursor must still
+          // advance past it so the critical projection tracks the log head.
+          // Without this, cursor < head after any non-operation append.
+          await persist([
             draft("assistant.message.appended", { text: textBlock.text }),
           ]);
         }
@@ -235,8 +239,10 @@ export async function runDurableAgent(
   const sessionId = opts.sessionId ?? mkSessionId();
   const eventStore = store.store;
   const workspaceId = asWorkspaceId(eventStore.workspaceId);
+  const operationsProjection = createOperationsProjection(eventStore.workspaceId);
 
-  // 1. Persist the user message before the loop starts.
+  // 1. Persist the user message before the loop starts, then catch up so the
+  //    critical projection tracks the log head from the very first event.
   await eventStore.append([
     {
       eventId: mkEventId(),
@@ -249,6 +255,7 @@ export async function runDurableAgent(
       producer: { kind: "user" },
     },
   ]);
+  eventStore.getProjectionRunner().catchUp(operationsProjection);
 
   // 2. Build the durable sink (translates AgentEvents → domain events).
   const { sink } = buildDurableSinkForTest(eventStore, sessionId, tools, onEvent);
@@ -262,6 +269,12 @@ export async function runDurableAgent(
     maxSteps,
     emit: sink,
   });
+
+  // 4. Final guarantee: the critical operations projection is caught up to the
+  //    event-log head before the runtime returns, regardless of which events
+  //    were emitted during the run. This is the load-bearing invariant of
+  //    agent integration — no caller can observe a lagging critical projection.
+  eventStore.getProjectionRunner().catchUp(operationsProjection);
 
   return { transcript };
 }

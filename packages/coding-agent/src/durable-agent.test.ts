@@ -197,14 +197,16 @@ describeLocked("runDurableAgent — operations projection gating", () => {
     expect(cursor.lastAppliedEventSequence).toBe(head);
   });
 
-  it("the operations projection is caught up to head when onEvent observes tool_execution_end", async () => {
+  it("the operations projection is caught up when onEvent observes tool_execution_end", async () => {
     rt = await openStore(join(dir, "ws.sqlite"));
     const tool = makeScriptedTool({ name: "touch", result: "ok" });
 
-    // Snapshot the cursor/head at the moment onEvent observes tool_execution_end.
-    // Critical-projection gating: the completed event must already be applied.
+    // When onEvent observes tool_execution_end, the operation.completed event
+    // has already been appended AND caught up. We assert this deterministically:
+    // at the observation moment, a no-op catchUp proves the cursor was already
+    // at the head of the operations events that had been emitted by then.
     let cursorAtEnd: number | undefined;
-    let headAtEnd: number | undefined;
+    let appliedIfWeCatchUpNow: number | undefined;
 
     const provider = new TestModelProvider([
       {
@@ -224,17 +226,18 @@ describeLocked("runDurableAgent — operations projection gating", () => {
         if (event.type === "tool_execution_end") {
           const runner = rt.store.getProjectionRunner();
           cursorAtEnd = runner.getCursor("operations").lastAppliedEventSequence;
-          // headSequence is async; capture as a resolved value.
-          void rt.store.headSequence().then((h) => { headAtEnd = h; });
+          // If the projection were lagging, this catchUp would apply >0 events.
+          // Since the sink catches up before forwarding the event, this is a no-op.
+          appliedIfWeCatchUpNow = runner.catchUp(
+            createOperationsProjection(rt.store.workspaceId),
+          ).appliedCount;
         }
       },
     });
 
     expect(cursorAtEnd).toBeDefined();
-    // Wait for the async head read to resolve (onEvent is sync-ish but head is async).
-    await new Promise((r) => setTimeout(r, 10));
-    expect(headAtEnd).toBeDefined();
-    expect(cursorAtEnd).toBe(headAtEnd);
+    expect(cursorAtEnd).toBeGreaterThan(0);
+    expect(appliedIfWeCatchUpNow).toBe(0);
   });
 });
 
