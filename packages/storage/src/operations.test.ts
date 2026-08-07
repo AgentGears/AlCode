@@ -259,3 +259,95 @@ describeLocked("operations model — projection + state machine", () => {
     expect(defaultReconciliationStatus("indeterminate")).toBe("pending");
   });
 });
+
+describeLocked("operations model — invalid transition rejection", () => {
+  let dir: string;
+  let rt: Awaited<ReturnType<typeof openLockedWorkspaceStore>>;
+  let db: Database;
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), "alcode-ops-inv-"));
+    rt = await openLockedWorkspaceStore({
+      databasePath: join(dir, "ws.sqlite"), lockPath: join(dir, "ws.lock"),
+      workspaceId: TEST_WS, repositoryId: TEST_REPO,
+    });
+    db = Database(join(dir, "ws.sqlite"));
+  });
+
+  afterEach(() => {
+    try { db.close(); } catch { /* */ }
+    rt.close();
+  });
+
+  async function appendAndCatchUp(drafts: Record<string, unknown>[]) {
+    await rt.store.append(drafts as EventDraft<string, unknown>[]);
+    const proj = createOperationsProjection(TEST_WS);
+    const runner = rt.store.getProjectionRunner();
+    runner.catchUp(proj);
+  }
+
+  // 1. started without requested → throws; cursor unchanged
+  it("started without requested → throws and no operation created", async () => {
+    const opId = mkOperationId() as string;
+    await expect(appendAndCatchUp([
+      makeOperationDraft(opId, "operation.started", { operationId: opId }),
+    ])).rejects.toThrow();
+
+    const query = createOperationQuery(db);
+    expect(query.getById(opId)).toBeUndefined();
+  });
+
+  // 2. duplicate started → throws
+  it("duplicate started → throws", async () => {
+    const opId = mkOperationId() as string;
+    // First requested + started succeed
+    await appendAndCatchUp([
+      makeOperationDraft(opId, "operation.requested", { operationId: opId, toolName: "bash", args: {}, isReadOnly: false }),
+      makeOperationDraft(opId, "operation.started", { operationId: opId }),
+    ]);
+    // Second started should fail (already in 'started' state)
+    await expect(appendAndCatchUp([
+      makeOperationDraft(opId, "operation.started", { operationId: opId }),
+    ])).rejects.toThrow();
+
+    const op = createOperationQuery(db).getById(opId)!;
+    expect(op.lifecycleState).toBe("started"); // unchanged
+  });
+
+  // 3. completed without requested → throws
+  it("completed without requested → throws", async () => {
+    const opId = mkOperationId() as string;
+    await expect(appendAndCatchUp([
+      makeOperationDraft(opId, "operation.completed", { operationId: opId, outcome: "succeeded", isReadOnly: false }),
+    ])).rejects.toThrow();
+  });
+
+  // 4. contradictory terminal → throws, preserves original
+  it("second contradictory terminal → throws and preserves original", async () => {
+    const opId = mkOperationId() as string;
+    await appendAndCatchUp([
+      makeOperationDraft(opId, "operation.requested", { operationId: opId, toolName: "bash", args: {}, isReadOnly: false }),
+      makeOperationDraft(opId, "operation.completed", { operationId: opId, outcome: "succeeded", isReadOnly: false }),
+    ]);
+
+    // Attempt contradictory completion (failed after succeeded)
+    await expect(appendAndCatchUp([
+      makeOperationDraft(opId, "operation.completed", { operationId: opId, outcome: "failed", isReadOnly: false }),
+    ])).rejects.toThrow();
+
+    const op = createOperationQuery(db).getById(opId)!;
+    expect(op.executionOutcome).toBe("succeeded"); // original preserved
+    expect(op.effectStatus).toBe("confirmed");
+  });
+
+  // 5. duplicate operation.requested → throws (INSERT not INSERT OR REPLACE)
+  it("duplicate requested → throws (strict insert)", async () => {
+    const opId = mkOperationId() as string;
+    await appendAndCatchUp([
+      makeOperationDraft(opId, "operation.requested", { operationId: opId, toolName: "bash", args: {}, isReadOnly: false }),
+    ]);
+    await expect(appendAndCatchUp([
+      makeOperationDraft(opId, "operation.requested", { operationId: opId, toolName: "bash", args: {}, isReadOnly: false }),
+    ])).rejects.toThrow();
+  });
+});

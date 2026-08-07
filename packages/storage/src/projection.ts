@@ -39,10 +39,11 @@ export interface ProjectionCatchUpResult {
 export interface ProjectionTransaction {
   /**
    * Execute a registered statement by name with positional params.
+   * Returns the number of rows affected (better-sqlite3's `changes`).
    * Throws if the statement name is not registered or the transaction is
    * no longer active.
    */
-  exec(statementName: string, ...params: unknown[]): void;
+  exec(statementName: string, ...params: unknown[]): number;
 }
 
 /**
@@ -153,7 +154,7 @@ function createTransaction(
           if (!active) throw new InactiveTransactionError();
           const stmt = statements.get(statementName);
           if (!stmt) throw new UnregisteredStatementError(statementName);
-          stmt.run(...params);
+          return stmt.run(...params).changes;
         },
         enumerable: true,
       },

@@ -130,7 +130,7 @@ export function defaultReconciliationStatus(effect: EffectStatus): Reconciliatio
 export const operationStatements: readonly StatementDefinition[] = [
   {
     name: "insert-operation",
-    sql: `INSERT OR REPLACE INTO operations
+    sql: `INSERT INTO operations
       (operation_id, workspace_id, session_id, tool_name, args, lifecycle_state,
        execution_outcome, effect_status, reconciliation_status, started_at, completed_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -227,7 +227,13 @@ export function createOperationsProjection(workspaceId: string): ProjectionDefin
 
         case "operation.started": {
           const p = event.payload as OperationStartedPayload;
-          tx.exec("update-lifecycle-started", occurredAt, p.operationId);
+          const changes = tx.exec("update-lifecycle-started", occurredAt, p.operationId);
+          if (changes !== 1) {
+            throw new OperationStateError(
+              `operation.started for ${p.operationId}: expected 1 row updated, got ${changes}. ` +
+              "Operation may not exist or may not be in 'requested' state.",
+            );
+          }
           break;
         }
 
@@ -235,7 +241,7 @@ export function createOperationsProjection(workspaceId: string): ProjectionDefin
           const p = event.payload as OperationCompletedPayload;
           const effect = p.toolDeclaredEffect ?? defaultEffectStatus(p.outcome, p.isReadOnly);
           const reconciliation = defaultReconciliationStatus(effect);
-          tx.exec(
+          const changes = tx.exec(
             "update-terminal",
             p.outcome,
             effect,
@@ -243,6 +249,12 @@ export function createOperationsProjection(workspaceId: string): ProjectionDefin
             occurredAt,
             p.operationId,
           );
+          if (changes !== 1) {
+            throw new OperationStateError(
+              `operation.completed for ${p.operationId}: expected 1 row updated, got ${changes}. ` +
+              "Operation may not exist or may already be terminal.",
+            );
+          }
           break;
         }
 
