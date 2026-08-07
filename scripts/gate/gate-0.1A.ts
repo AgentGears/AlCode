@@ -135,7 +135,7 @@ async function main(): Promise<void> {
     checks.push({
       id: `${pkg}.tests`,
       status: passed ? "passed" : "failed",
-      evidence: summaryMatch ? summaryMatch[0] : (passed ? "vitest pass" : failureOutput.slice(0, 200)),
+      evidence: passed ? (summaryMatch ? summaryMatch[0] : "vitest pass") : failureOutput.slice(0, 4000),
     });
   }
 
