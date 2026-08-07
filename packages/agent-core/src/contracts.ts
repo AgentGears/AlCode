@@ -94,6 +94,12 @@ export interface AgentTool<TInput = Record<string, unknown>, TResult = unknown> 
   description: string;
   inputSchema: ToolInputSchema;
   execute(input: TInput, context: ToolExecutionContext): Promise<AgentToolResult<TResult>>;
+  /**
+   * If true, the tool is guaranteed to have no external side effects (pure
+   * read). The durable runtime uses this to set EffectStatus=not_applicable
+   * and skip reconciliation. Defaults to false when omitted.
+   */
+  readonly isReadOnly?: boolean;
 }
 
 // ---------------------------------------------------------------------------

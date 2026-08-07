@@ -34,6 +34,12 @@ importers:
       '@alcode/agent-core':
         specifier: workspace:*
         version: link:../agent-core
+      '@alcode/events':
+        specifier: workspace:*
+        version: link:../events
+      '@alcode/storage':
+        specifier: workspace:*
+        version: link:../storage
       '@alcode/test-provider':
         specifier: workspace:*
         version: link:../test-provider
