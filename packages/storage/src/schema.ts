@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { canonicalStringify } from "@alcode/events";
 
 /** Current schema version. */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 /** DDL for fresh databases (all tables at current version). */
 const WORKSPACE_SCHEMA: string[] = [
@@ -79,6 +79,14 @@ const WORKSPACE_SCHEMA: string[] = [
     body         TEXT NOT NULL,
     created_sequence INTEGER NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS transcript_messages (
+    event_id     TEXT PRIMARY KEY,
+    sequence     INTEGER NOT NULL,
+    workspace_id TEXT NOT NULL,
+    session_id   TEXT NOT NULL,
+    role         TEXT NOT NULL,
+    body         TEXT NOT NULL
+  )`,
   `CREATE TABLE IF NOT EXISTS artifacts (
     digest       TEXT PRIMARY KEY,
     path         TEXT NOT NULL,
@@ -144,6 +152,9 @@ export function initWorkspaceDb(db: Database.Database): void {
   }
   if (getSchemaVersion(db) < 4) {
     migrateV3toV4(db);
+  }
+  if (getSchemaVersion(db) < 5) {
+    migrateV4toV5(db);
   }
 }
 
@@ -398,6 +409,27 @@ function migrateV3toV4(db: Database.Database): void {
     }
 
     db.prepare("INSERT OR REPLACE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(4, new Date().toISOString());
+  });
+
+  migrationTxn();
+}
+
+/**
+ * Migration from schema v4 to v5.
+ * Adds the `transcript_messages` table for the critical transcript projection.
+ */
+function migrateV4toV5(db: Database.Database): void {
+  const migrationTxn = db.transaction(() => {
+    db.exec(`CREATE TABLE IF NOT EXISTS transcript_messages (
+      event_id     TEXT PRIMARY KEY,
+      sequence     INTEGER NOT NULL,
+      workspace_id TEXT NOT NULL,
+      session_id   TEXT NOT NULL,
+      role         TEXT NOT NULL,
+      body         TEXT NOT NULL
+    )`);
+
+    db.prepare("INSERT OR REPLACE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(5, new Date().toISOString());
   });
 
   migrationTxn();

@@ -8,6 +8,12 @@ import { join } from "node:path";
 import {
   type EventDraft,
   type PersistedDomainEvent,
+  type SessionId,
+  type OperationId,
+  mkEventId,
+  asWorkspaceId,
+  asSessionId,
+  asOperationId,
 } from "@alcode/events";
 import { assertCanonical, canonicalStringify } from "@alcode/events";
 import {
@@ -15,6 +21,7 @@ import {
   bindWorkspace,
   WorkspaceMismatchError,
 } from "./schema.ts";
+import { createOperationsProjection } from "./operations.ts";
 import type { AcquiredLock } from "@alcode/workspace";
 import { SecretAdmissionGate, type SecretAdmissionConfig } from "@alcode/secrets";
 import { createProjectionRunner, type ProjectionRunner as ProjectionRunnerType } from "./projection.ts";
@@ -225,6 +232,14 @@ function verifyEventRow(row: EventRow, expectedWorkspaceId: string): PersistedDo
  * Use getProjectionRunner() to obtain a constrained ProjectionRunner that
  * enforces atomic cursor+writes.
  */
+/** Result of the startup recovery pass. */
+export interface InterruptedOperationRecovery {
+  /** Operations newly marked indeterminate/pending during THIS recovery. */
+  newlyMarked: number;
+  /** ALL operations with reconciliation_status='pending' (newly + pre-existing). */
+  pendingOperationIds: string[];
+}
+
 export interface WorkspaceEventStore {
   readonly workspaceId: string;
   append(drafts: readonly EventDraft<string, unknown>[]): Promise<PersistedDomainEvent<string, unknown>[]>;
@@ -235,6 +250,17 @@ export interface WorkspaceEventStore {
   getVerifiedEvents(fromSeq: number, limit: number): PersistedDomainEvent<string, unknown>[];
   /** Obtain the projection runner for atomic projection updates. */
   getProjectionRunner(): ProjectionRunnerType;
+  /**
+   * Canonical startup recovery for interrupted operations. Catches up the
+   * operations projection, scans for non-terminal rows still at
+   * reconciliation_status='not_required', appends operation.interrupted
+   * events for each (using the original sessionId/operationId), catches up
+   * again, and returns all pending operations.
+   *
+   * This is event-sourced: deleting and rebuilding the operations projection
+   * from events reproduces the interrupted state. No direct table mutation.
+   */
+  recoverInterruptedOperations(): Promise<InterruptedOperationRecovery>;
 }
 
 /**
@@ -397,6 +423,66 @@ class SqliteEventStoreImpl implements WorkspaceEventStore {
     return createProjectionRunner(this.db, this.workspaceId, this.getVerifiedEvents.bind(this));
   }
 
+  /**
+   * Canonical startup recovery for interrupted operations.
+   *
+   * 1. Catch up the operations projection so all existing events are applied.
+   * 2. Scan for non-terminal rows still at reconciliation_status='not_required'.
+   * 3. Append operation.interrupted events for each (using the original
+   *    sessionId/operationId and a deterministic admission key
+   *    operation.interrupted:<operationId>).
+   * 4. Catch up again so the interrupted events are applied.
+   * 5. Query ALL pending operations (newly + pre-existing).
+   *
+   * Event-sourced: deleting and rebuilding the operations projection from
+   * events reproduces the interrupted state. No direct table mutation.
+   */
+  async recoverInterruptedOperations(): Promise<InterruptedOperationRecovery> {
+    const workspaceId = asWorkspaceId(this.workspaceId);
+    const operationsProjection = createOperationsProjection(this.workspaceId);
+    const runner = this.getProjectionRunner();
+
+    // 1. Catch up operations projection.
+    runner.catchUp(operationsProjection);
+
+    // 2. Scan for recovery candidates: non-terminal + not_required.
+    const candidates = this.db.prepare(
+      "SELECT operation_id, session_id FROM operations " +
+      "WHERE lifecycle_state IN ('requested', 'started') " +
+      "AND reconciliation_status = 'not_required'",
+    ).all() as Array<{ operation_id: string; session_id: string }>;
+
+    // 3. Append operation.interrupted events for each candidate.
+    if (candidates.length > 0) {
+      const drafts: EventDraft<string, unknown>[] = candidates.map((c) => ({
+        eventId: mkEventId(),
+        idempotencyKey: `operation.interrupted:${c.operation_id}`,
+        workspaceId,
+        sessionId: asSessionId(c.session_id),
+        operationId: asOperationId(c.operation_id),
+        occurredAt: new Date().toISOString(),
+        type: "operation.interrupted",
+        payload: { operationId: c.operation_id },
+        payloadSchemaVersion: 1,
+        producer: { kind: "runtime", component: "recovery" },
+      }));
+      await this.append(drafts);
+
+      // 4. Catch up so the interrupted events are applied.
+      runner.catchUp(operationsProjection);
+    }
+
+    // 5. Query ALL pending operations (newly marked + pre-existing).
+    const pendingRows = this.db.prepare(
+      "SELECT operation_id FROM operations WHERE reconciliation_status = 'pending' ORDER BY started_at",
+    ).all() as Array<{ operation_id: string }>;
+
+    return {
+      newlyMarked: candidates.length,
+      pendingOperationIds: pendingRows.map((r) => r.operation_id),
+    };
+  }
+
   /** Module-internal: closes the database handle. Only callable from openLockedWorkspaceStore's close(). */
   closeDatabase(): void { this.db.close(); }
 }
@@ -507,6 +593,7 @@ export async function openLockedWorkspaceStore(
       headSequence: impl.headSequence.bind(impl),
       getVerifiedEvents: impl.getVerifiedEvents.bind(impl),
       getProjectionRunner: impl.getProjectionRunner.bind(impl),
+      recoverInterruptedOperations: impl.recoverInterruptedOperations.bind(impl),
     });
     Object.freeze(store);
 

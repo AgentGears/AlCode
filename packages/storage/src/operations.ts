@@ -13,7 +13,8 @@
 //   read-only tools → not_applicable
 //
 // State transitions are validated. Indeterminate is a real durable state,
-// never silently retried. Startup reconciliation is deferred to later steps.
+// never silently retried. Startup reconciliation via the canonical
+// operation.interrupted event is implemented in recovery.ts.
 
 import type { PersistedDomainEvent } from "@alcode/events";
 import type { ProjectionTransaction, StatementDefinition, ProjectionDefinition } from "./projection.ts";
@@ -147,6 +148,14 @@ export const operationStatements: readonly StatementDefinition[] = [
       completed_at = ?
       WHERE operation_id = ? AND lifecycle_state IN ('requested', 'started')`,
   },
+  {
+    name: "update-interrupted",
+    sql: `UPDATE operations SET effect_status = 'indeterminate',
+      reconciliation_status = 'pending'
+      WHERE operation_id = ?
+        AND lifecycle_state IN ('requested', 'started')
+        AND reconciliation_status = 'not_required'`,
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -182,6 +191,19 @@ export interface OperationCompletedPayload {
   toolDeclaredEffect?: EffectStatus;
 }
 
+/**
+ * Event payload for operation.interrupted — emitted by the startup recovery
+ * pass when a non-terminal operation from a prior (crashed) session is
+ * detected. Sets the operation to indeterminate/pending via a one-way
+ * transition (only from reconciliation_status='not_required'). The event
+ * is canonical so that deleting and rebuilding the operations projection
+ * from events reproduces the interrupted state — ADR 0003's "indeterminacy
+ * is real persistent state."
+ */
+export interface OperationInterruptedPayload {
+  operationId: string;
+}
+
 // ---------------------------------------------------------------------------
 // Projection definition
 // ---------------------------------------------------------------------------
@@ -190,10 +212,11 @@ export interface OperationCompletedPayload {
  * The operations projection. Classified as 'critical' — an operation cannot
  * be reported complete until this projection has caught up.
  *
- * Handles three event types:
+ * Handles four event types:
  *   operation.requested → insert with lifecycle_state='requested'
  *   operation.started → update to 'started'
  *   operation.completed → update to 'terminal' with outcome × effect × reconciliation
+ *   operation.interrupted → one-way not_required→pending for crash survivors
  */
 export function createOperationsProjection(workspaceId: string): ProjectionDefinition {
   return {
@@ -253,6 +276,18 @@ export function createOperationsProjection(workspaceId: string): ProjectionDefin
             throw new OperationStateError(
               `operation.completed for ${p.operationId}: expected 1 row updated, got ${changes}. ` +
               "Operation may not exist or may already be terminal.",
+            );
+          }
+          break;
+        }
+
+        case "operation.interrupted": {
+          const p = event.payload as OperationInterruptedPayload;
+          const changes = tx.exec("update-interrupted", p.operationId);
+          if (changes !== 1) {
+            throw new OperationStateError(
+              `operation.interrupted for ${p.operationId}: expected 1 row updated, got ${changes}. ` +
+              "Operation may not exist, may already be terminal, or may already be pending.",
             );
           }
           break;
