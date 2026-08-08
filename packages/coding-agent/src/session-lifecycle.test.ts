@@ -9,11 +9,13 @@
 import { describe, expect, it } from "vitest";
 import { asWorkspaceId, type EventDraft } from "@alcode/events";
 import { startDurableSession, stopDurableSession } from "./session-lifecycle.ts";
+import { SessionStateError } from "./sessions-projection.ts";
 import type { LockedWorkspaceStore } from "@alcode/storage";
 
 const WS = asWorkspaceId("00000000-0000-7000-8000-000000000001") as string;
 
-/** Fake store: records appended drafts; exposes a no-op projection runner. */
+/** Fake store: records appended drafts, exposes a no-op projection runner,
+ * and supports replay() so the pre-persistence sessionWasStarted check works. */
 function makeFakeStore() {
   const appended: EventDraft<string, unknown>[] = [];
   let closeCalled = false;
@@ -22,6 +24,11 @@ function makeFakeStore() {
     async append(drafts: readonly EventDraft<string, unknown>[]) {
       appended.push(...drafts);
       return drafts.map((d, i) => ({ ...d, sequence: appended.length - drafts.length + i + 1, recordedAt: "now", eventDigest: "x" }));
+    },
+    async *replay() {
+      for (const d of appended) {
+        yield { ...d, sequence: 1, recordedAt: "now", eventDigest: "x" } as never;
+      }
     },
     getProjectionRunner() {
       return {
@@ -56,6 +63,9 @@ describe("startDurableSession", () => {
     expect(d.workspaceId).toBe(WS);
     expect(d.sessionId).toBe("00000000-0000-7000-8000-00000000000A");
     expect(d.occurredAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    // B1: per-invocation correlationId makes the fingerprint clock-independent.
+    expect(d.correlationId).toBeDefined();
+    expect(d.correlationId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-/); // UUIDv7
   });
 
   it("mints a fresh sessionId when none is provided", async () => {
@@ -78,23 +88,33 @@ describe("stopDurableSession", () => {
   it("appends runtime.session.stopped with correct shape, producer, and idempotencyKey", async () => {
     const fake = makeFakeStore();
     const sid = "00000000-0000-7000-8000-00000000000B" as never;
+    await startDurableSession(fake.handle, { sessionId: sid });
     await stopDurableSession(fake.handle, sid);
 
+    // The stopped event is the second appended draft.
     const snap = fake.snapshot();
-    expect(snap.length).toBe(1);
-    const d = snap[0]!;
-    expect(d.type).toBe("runtime.session.stopped");
-    expect(d.idempotencyKey).toBe("runtime.session.stopped:00000000-0000-7000-8000-00000000000B");
-    expect(d.payload).toEqual({ sessionId: "00000000-0000-7000-8000-00000000000B" });
-    expect(d.payloadSchemaVersion).toBe(1);
-    expect(d.producer).toEqual({ kind: "runtime", component: "session-lifecycle" });
-    expect(d.sessionId).toBe(sid);
+    const stopped = snap.find((d) => d.type === "runtime.session.stopped")!;
+    expect(stopped.idempotencyKey).toBe("runtime.session.stopped:00000000-0000-7000-8000-00000000000B");
+    expect(stopped.payload).toEqual({ sessionId: "00000000-0000-7000-8000-00000000000B" });
+    expect(stopped.payloadSchemaVersion).toBe(1);
+    expect(stopped.producer).toEqual({ kind: "runtime", component: "session-lifecycle" });
+    expect(stopped.sessionId).toBe(sid);
   });
 
   it("does NOT close the store handle", async () => {
     const fake = makeFakeStore();
-    await stopDurableSession(fake.handle, "00000000-0000-7000-8000-00000000000C" as never);
+    const sid = "00000000-0000-7000-8000-00000000000C" as never;
+    await startDurableSession(fake.handle, { sessionId: sid });
+    await stopDurableSession(fake.handle, sid);
     expect(fake.wasClosed()).toBe(false);
+  });
+
+  it("throws SessionStateError and appends nothing when the session was never started", async () => {
+    const fake = makeFakeStore();
+    const sid = "00000000-0000-7000-8000-00000000000G" as never;
+    await expect(stopDurableSession(fake.handle, sid)).rejects.toThrow(SessionStateError);
+    // No event appended.
+    expect(fake.snapshot().length).toBe(0);
   });
 });
 

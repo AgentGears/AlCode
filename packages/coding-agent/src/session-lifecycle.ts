@@ -23,12 +23,13 @@ import {
   mkEventId,
   mkSessionId,
   asWorkspaceId,
+  uuidv7,
   type EventDraft,
   type SessionId,
 } from "@alcode/events";
 import type { LockedWorkspaceStore } from "@alcode/storage";
 
-import { createSessionsProjection } from "./sessions-projection.ts";
+import { createSessionsProjection, SessionStateError } from "./sessions-projection.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -44,6 +45,32 @@ export interface StartedSession {
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Establish via verified replay that a runtime.session.started event exists
+ * for the given session id. Used to reject a stop for a session that was
+ * never started BEFORE appending the stopped event — otherwise the invalid
+ * event would become canonical and poison every later sessions catchUp.
+ */
+async function sessionWasStarted(
+  store: LockedWorkspaceStore,
+  sessionId: SessionId,
+): Promise<boolean> {
+  const target = sessionId as string;
+  for await (const event of store.store.replay()) {
+    if (
+      event.type === "runtime.session.started" &&
+      (event.payload as { sessionId?: string }).sessionId === target
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // Primitives
 // ---------------------------------------------------------------------------
 
@@ -53,8 +80,10 @@ export interface StartedSession {
  * returns. Does NOT open or close the store.
  *
  * Throws IdempotencyConflictError if a session with the same id was already
- * started (different occurredAt → different fingerprint → conflict). This
- * rejects the duplicate before any event enters the canonical log.
+ * started. The conflict is clock-independent: each attempt carries a
+ * per-invocation correlationId (a fingerprinted field), so even if two
+ * attempts share the same occurredAt timestamp, their fingerprints differ
+ * and the store rejects the second before any event enters the canonical log.
  */
 export async function startDurableSession(
   store: LockedWorkspaceStore,
@@ -67,6 +96,7 @@ export async function startDurableSession(
   const draft: EventDraft<string, unknown> = {
     eventId: mkEventId(),
     idempotencyKey: `runtime.session.started:${sessionId as string}`,
+    correlationId: uuidv7(),
     workspaceId,
     sessionId,
     occurredAt: new Date().toISOString(),
@@ -87,20 +117,32 @@ export async function startDurableSession(
  * the sessions projection so the stopped_at column is set before this
  * returns. Does NOT open or close the store.
  *
- * Throws IdempotencyConflictError if the session was already stopped
- * (different occurredAt → different fingerprint → conflict), rejecting the
- * duplicate before any event enters the canonical log.
+ * Throws SessionStateError if the session was never started — checked via
+ * verified replay BEFORE append, so no invalid event enters the canonical
+ * log. Throws IdempotencyConflictError if the session was already stopped
+ * (clock-independent: per-invocation correlationId in the fingerprint).
  */
 export async function stopDurableSession(
   store: LockedWorkspaceStore,
   sessionId: SessionId,
 ): Promise<void> {
+  // Pre-persistence guard: establish the session was started before appending
+  // stopped. Without this, a stop for an unknown session would become a
+  // canonical event that the sessions projection can never apply (0 rows),
+  // poisoning every later catchUp.
+  if (!(await sessionWasStarted(store, sessionId))) {
+    throw new SessionStateError(
+      `Cannot stop session ${sessionId as string}: no runtime.session.started event exists for this session.`,
+    );
+  }
+
   const eventStore = store.store;
   const workspaceId = asWorkspaceId(eventStore.workspaceId);
 
   const draft: EventDraft<string, unknown> = {
     eventId: mkEventId(),
     idempotencyKey: `runtime.session.stopped:${sessionId as string}`,
+    correlationId: uuidv7(),
     workspaceId,
     sessionId,
     occurredAt: new Date().toISOString(),

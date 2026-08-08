@@ -36,7 +36,7 @@ import {
 import { TestModelProvider } from "./test-model-provider.ts";
 import { runDurableAgent } from "./durable-agent.ts";
 import { startDurableSession, stopDurableSession } from "./session-lifecycle.ts";
-import { createSessionsProjection, createSessionQuery } from "./sessions-projection.ts";
+import { createSessionsProjection, createSessionQuery, SessionStateError } from "./sessions-projection.ts";
 import type { AgentTool } from "@alcode/agent-core";
 
 const require = createRequire(import.meta.url);
@@ -77,12 +77,32 @@ async function readAllEvents(store: LockedWorkspaceStore): Promise<PersistedDoma
   return events;
 }
 
-/** Read-only DB connection (WAL allows concurrent reads). */
+/** Read-only DB connection (WAL allows concurrent reads). Always closes. */
 function readWorkspaceMeta(dbPath: string) {
   const roDb = new Database(dbPath, { readonly: true, fileMustExist: true });
   try {
     const meta = roDb.prepare("SELECT workspace_id, repository_id FROM workspace_metadata").get() as Record<string, unknown>;
     return { workspaceId: meta.workspace_id as string, repositoryId: meta.repository_id as string };
+  } finally {
+    roDb.close();
+  }
+}
+
+/** Read operation records via a read-only connection. Always closes. */
+function readOperations(dbPath: string) {
+  const roDb = new Database(dbPath, { readonly: true, fileMustExist: true });
+  try {
+    return createOperationQuery(roDb).getByLifecycleState("terminal");
+  } finally {
+    roDb.close();
+  }
+}
+
+/** Read session records via a read-only connection. Always closes. */
+function readSessions(dbPath: string) {
+  const roDb = new Database(dbPath, { readonly: true, fileMustExist: true });
+  try {
+    return createSessionQuery(roDb).getAll();
   } finally {
     roDb.close();
   }
@@ -144,14 +164,10 @@ describeLocked("Step 9 — shutdown/reopen vertical test", () => {
     expect(opsCursorA).toBe(headA);
     expect(sessCursorA).toBe(headA);
 
-    // Snapshot S1: events + operation rows + session row + workspace meta.
+    // Snapshot S1: events + full operation records + session row + workspace meta.
     const eventsS1 = (await readAllEvents(rt)).map(eventSignature);
-    const opsS1 = createOperationQuery(
-      new Database(dbPath, { readonly: true, fileMustExist: true }),
-    ).getByLifecycleState("terminal").length;
-    const sessionsS1 = createSessionQuery(
-      new Database(dbPath, { readonly: true, fileMustExist: true }),
-    ).getAll();
+    const opsS1 = readOperations(dbPath);
+    const sessionsS1 = readSessions(dbPath);
     const metaS1 = readWorkspaceMeta(dbPath);
     // Session A should be stopped (runDurableAgent owns the bracket).
     expect(sessionsS1.length).toBe(1);
@@ -181,16 +197,14 @@ describeLocked("Step 9 — shutdown/reopen vertical test", () => {
     expect(runner2.getCursor("operations").lastAppliedEventSequence).toBe(headA);
     expect(runner2.getCursor("sessions").lastAppliedEventSequence).toBe(headA);
 
-    // Prove durable equivalence: operation rows survive intact and terminal.
-    const opsReopened = createOperationQuery(
-      new Database(dbPath, { readonly: true, fileMustExist: true }),
-    ).getByLifecycleState("terminal").length;
-    expect(opsReopened).toBe(opsS1);
+    // Prove durable equivalence: full operation records survive intact (not
+    // just count — operationId, toolName, args, outcome, effectStatus,
+    // reconciliationStatus, startedAt, completedAt all compared).
+    const opsReopened = readOperations(dbPath);
+    expect(opsReopened).toEqual(opsS1);
 
     // Prove durable equivalence: session row survives intact (started + stopped).
-    const sessionsReopened = createSessionQuery(
-      new Database(dbPath, { readonly: true, fileMustExist: true }),
-    ).getAll();
+    const sessionsReopened = readSessions(dbPath);
     expect(sessionsReopened).toEqual(sessionsS1);
 
     // Prove durable equivalence: workspace identity identical.
@@ -220,7 +234,8 @@ describeLocked("Step 9 — shutdown/reopen vertical test", () => {
       store: rt,
     });
     const headH = await rt.store.headSequence();
-    const priorEventIds = new Set((await readAllEvents(rt)).map((e) => e.eventId));
+    // Snapshot full event signatures [1..H] for deep equivalence after reopen.
+    const priorSignatures = (await readAllEvents(rt)).map(eventSignature);
     rt.close();
 
     // Reopen.
@@ -234,10 +249,12 @@ describeLocked("Step 9 — shutdown/reopen vertical test", () => {
     const headAfterB = await rt.store.headSequence();
     expect(headAfterB).toBe(headH + 1);
 
-    // Events [1..H] unchanged, no duplicate IDs.
+    // Events [1..H] unchanged (full signature equivalence, not just IDs).
     const allEvents = await readAllEvents(rt);
-    const priorEventIdsAfter = allEvents.filter((e) => e.sequence <= headH).map((e) => e.eventId);
-    expect(new Set(priorEventIdsAfter)).toEqual(priorEventIds); // same set, no dupes
+    const priorSignaturesAfter = allEvents
+      .filter((e) => e.sequence <= headH)
+      .map(eventSignature);
+    expect(priorSignaturesAfter).toEqual(priorSignatures);
 
     // The new event is the session B start.
     const newEvent = allEvents.find((e) => e.sequence === headH + 1)!;
@@ -279,5 +296,24 @@ describeLocked("Step 9 — shutdown/reopen vertical test", () => {
     // Head unchanged.
     const headAfter = await rt.store.headSequence();
     expect(headAfter).toBe(headBefore);
+  });
+
+  it("stopDurableSession for a never-started session rejects pre-persistence and head does not advance", async () => {
+    rt = await openStore(join(dir, "ws.sqlite"));
+    const headBefore = await rt.store.headSequence();
+    const unknownSid = asSessionId(uuidv7());
+
+    // Stop for a session that was never started → SessionStateError before append.
+    await expect(stopDurableSession(rt, unknownSid)).rejects.toThrow(SessionStateError);
+
+    // Head unchanged — no poison event entered the canonical log.
+    const headAfter = await rt.store.headSequence();
+    expect(headAfter).toBe(headBefore);
+
+    // The sessions projection is still usable afterward (catchUp does not
+    // encounter a poison stopped event it can never apply).
+    const runner = rt.store.getProjectionRunner();
+    const sessResult = runner.catchUp(createSessionsProjection(rt.store.workspaceId));
+    expect(sessResult.caught).toBe(true);
   });
 });
