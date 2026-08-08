@@ -99,9 +99,11 @@ async function main(): Promise<void> {
   // 4. Schema version is 5 (transcript_messages table present)
   {
     const result = run("npx", ["tsx", "-e", `
-      const { SCHEMA_VERSION } = await import("${join(ROOT, "packages/storage/src/schema.ts").replace(/\\/g, "/")}");
-      if (SCHEMA_VERSION === 5) { console.log("SCHEMA_VERSION=5"); process.exit(0); }
-      else { console.log("SCHEMA_VERSION=" + SCHEMA_VERSION); process.exit(1); }
+      import { readFileSync } from "node:fs";
+      const content = readFileSync("${join(ROOT, "packages/storage/src/schema.ts").replace(/\\/g, "/")}", "utf-8");
+      const match = content.match(/export const SCHEMA_VERSION = (\\d+)/);
+      if (match && match[1] === "5") { console.log("SCHEMA_VERSION=5"); process.exit(0); }
+      console.log("SCHEMA_VERSION=" + (match ? match[1] : "unknown")); process.exit(1);
     `], { cwd: ROOT, throwOnError: false });
     checks.push({
       id: "phase0.schema_version",
