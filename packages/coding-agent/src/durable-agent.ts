@@ -39,6 +39,7 @@ import {
   type WorkspaceEventStore,
   type LockedWorkspaceStore,
   createOperationsProjection,
+  createTranscriptProjection,
   type ExecutionOutcome,
   type ProjectionCatchUpResult,
 } from "@alcode/storage";
@@ -68,6 +69,8 @@ export interface DurableAgentOptions {
 export interface DurableAgentResult {
   /** The agent-loop transcript (verbatim projection — in-memory). */
   transcript: Awaited<ReturnType<typeof import("@alcode/agent-core").runAgentLoop>>;
+  /** Operations with reconciliation_status='pending' at startup (surfaced, not retried). */
+  pendingOperations: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -110,6 +113,7 @@ export function buildDurableSinkForTest(
   const workspaceId = asWorkspaceId(store.workspaceId);
   const ops = new Map<string, PendingOp>();
   const operationsProjection = createOperationsProjection(store.workspaceId);
+  const transcriptProjection = createTranscriptProjection(store.workspaceId);
   const runner = store.getProjectionRunner();
 
   function draft(
@@ -132,10 +136,17 @@ export function buildDurableSinkForTest(
     return d;
   }
 
-  /** Append drafts then catch up the operations projection. */
+  /** Append drafts then catch up both critical projections (operations + transcript). */
   async function persist(drafts: EventDraft<string, unknown>[]): Promise<ProjectionCatchUpResult> {
     await store.append(drafts);
+    runner.catchUp(transcriptProjection);
     return runner.catchUp(operationsProjection);
+  }
+
+  /** Catch up both critical projections without appending. */
+  function catchUpBothCritical(): void {
+    runner.catchUp(transcriptProjection);
+    runner.catchUp(operationsProjection);
   }
 
   const sink: AgentEventSink = async (event: AgentEvent) => {
@@ -164,7 +175,7 @@ export function buildDurableSinkForTest(
             operationId: operationId as string,
           }, { operationId }),
         ]);
-        runner.catchUp(operationsProjection);
+        catchUpBothCritical();
 
         // causationEventId for completion: the started event we just appended.
         const startedEvent = persisted[1];
@@ -184,7 +195,7 @@ export function buildDurableSinkForTest(
           // dangling completed event.
           break;
         }
-        const outcome: ExecutionOutcome = event.isError ? "failed" : "succeeded";
+        const outcome: ExecutionOutcome = event.outcome;
         await persist([
           draft("operation.completed", {
             operationId: pending.operationId as string,
@@ -252,6 +263,14 @@ export async function runDurableAgent(
   const { systemPrompt, provider, tools, store, maxSteps = 50, onEvent } = opts;
   const eventStore = store.store;
   const operationsProjection = createOperationsProjection(eventStore.workspaceId);
+  const transcriptProjection = createTranscriptProjection(eventStore.workspaceId);
+  const runner = eventStore.getProjectionRunner();
+
+  // 0. Canonical startup recovery — detect interrupted operations from prior
+  //    crashed sessions and mark them indeterminate/pending via canonical
+  //    operation.interrupted events. Returns all pending operation IDs
+  //    (newly marked + pre-existing). These are surfaced, never retried.
+  const recovery = await eventStore.recoverInterruptedOperations();
 
   // 1. Start the durable session (appends runtime.session.started, catches up
   //    the sessions projection). The session id is minted here or honored from
@@ -262,7 +281,7 @@ export async function runDurableAgent(
 
   try {
     // 2. Persist the user message before the loop starts, then catch up so the
-    //    critical operations projection tracks the log head.
+    //    critical projections track the log head.
     await eventStore.append([
       {
         eventId: mkEventId(),
@@ -275,7 +294,8 @@ export async function runDurableAgent(
         producer: { kind: "user" },
       },
     ]);
-    eventStore.getProjectionRunner().catchUp(operationsProjection);
+    runner.catchUp(transcriptProjection);
+    runner.catchUp(operationsProjection);
 
     // 3. Build the durable sink (translates AgentEvents → domain events).
     const { sink } = buildDurableSinkForTest(eventStore, sessionId, tools, onEvent);
@@ -290,14 +310,13 @@ export async function runDurableAgent(
       emit: sink,
     });
 
-    return { transcript };
+    return { transcript, pendingOperations: recovery.pendingOperationIds };
   } finally {
     // 5. Stop the session (appends runtime.session.stopped, catches up sessions).
-    //    Then catch up operations so both known projections reach the log head
-    //    before the runtime returns — the runtime.session.stopped event advanced
-    //    the head, and the operations cursor must follow even though its apply()
-    //    no-ops on it (the exact class of lag Step 8 found and fixed).
+    //    Then catch up both critical projections so they reach the log head
+    //    before the runtime returns — even if the loop threw.
     await stopDurableSession(store, sessionId);
-    eventStore.getProjectionRunner().catchUp(operationsProjection);
+    runner.catchUp(transcriptProjection);
+    runner.catchUp(operationsProjection);
   }
 }

@@ -11,6 +11,7 @@
   "scripts": {
     "gate:0.0": "tsx scripts/gate/gate-0.0.ts",
     "gate:0.1A": "tsx scripts/gate/gate-0.1A.ts",
+    "gate:0.2": "tsx scripts/gate/gate-0.2.ts",
     "build": "tsc -b",
     "typecheck": "tsc -b --pretty",
     "test": "vitest run",

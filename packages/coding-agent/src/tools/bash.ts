@@ -185,6 +185,7 @@ export function createBashTool(opts: {
           resolveFn({
             content: [{ type: "text", text }],
             details,
+            executionOutcome: cancelled ? "cancelled" : timedOut ? "timed_out" : exitCode !== 0 ? "failed" : "succeeded",
           });
         });
 
@@ -197,6 +198,7 @@ export function createBashTool(opts: {
           resolveFn({
             content: [{ type: "text", text: `[spawn error] ${err.message}` }],
             details: { exitCode: null, durationMs, timedOut: false, cancelled: false, truncated: false },
+            executionOutcome: "failed",
           });
         });
       });

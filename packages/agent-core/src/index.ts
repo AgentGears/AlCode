@@ -18,6 +18,7 @@ export type {
   AgentMessage,
   ToolInputSchema,
   AgentToolResult,
+  ToolExecutionOutcome,
   ToolExecutionContext,
   AgentTool,
   ToolDefinition,

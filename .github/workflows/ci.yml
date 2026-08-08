@@ -55,3 +55,8 @@ jobs:
           pnpm --filter @alcode/workspace exec vitest run
           pnpm --filter @alcode/storage exec vitest run
           pnpm --filter @alcode/secrets exec vitest run
+
+      - name: Run Phase 0.2 gate
+        env:
+          ALCODE_HOME: ${{ runner.temp }}/alcode-home
+        run: pnpm gate:0.2

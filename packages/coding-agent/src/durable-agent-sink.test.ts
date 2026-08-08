@@ -57,7 +57,7 @@ describe("buildDurableSink — event translation (Windows-runnable)", () => {
     const { sink } = buildDurableSinkForTest(store as never, "00000000-0000-7000-8000-000000000002" as never, tools);
 
     await sink({ type: "tool_execution_start", toolCallId: "tc1", toolName: "write", args: {} });
-    await sink({ type: "tool_execution_end", toolCallId: "tc1", toolName: "write", result: { content: [], details: {} }, isError: true });
+    await sink({ type: "tool_execution_end", toolCallId: "tc1", toolName: "write", result: { content: [], details: {} }, isError: true, outcome: "failed" });
 
     const completed = store.snapshot().find((s) => s.type === "operation.completed")!;
     const payload = completed.payload as { outcome: string; isReadOnly: boolean };
@@ -75,7 +75,7 @@ describe("buildDurableSink — event translation (Windows-runnable)", () => {
     const { sink } = buildDurableSinkForTest(store as never, "00000000-0000-7000-8000-000000000002" as never, tools);
 
     await sink({ type: "tool_execution_start", toolCallId: "tc1", toolName: "read", args: {} });
-    await sink({ type: "tool_execution_end", toolCallId: "tc1", toolName: "read", result: { content: [], details: {} }, isError: false });
+    await sink({ type: "tool_execution_end", toolCallId: "tc1", toolName: "read", result: { content: [], details: {} }, isError: false, outcome: "succeeded" });
 
     const requested = store.snapshot().find((s) => s.type === "operation.requested")!;
     const completed = store.snapshot().find((s) => s.type === "operation.completed")!;
@@ -89,7 +89,7 @@ describe("buildDurableSink — event translation (Windows-runnable)", () => {
     const { sink } = buildDurableSinkForTest(store as never, "00000000-0000-7000-8000-000000000002" as never, tools);
 
     await sink({ type: "tool_execution_start", toolCallId: "tc1", toolName: "write", args: {} });
-    await sink({ type: "tool_execution_end", toolCallId: "tc1", toolName: "write", result: { content: [], details: {} }, isError: false });
+    await sink({ type: "tool_execution_end", toolCallId: "tc1", toolName: "write", result: { content: [], details: {} }, isError: false, outcome: "succeeded" });
 
     const started = store.snapshot().find((s) => s.type === "operation.started")!;
     const completed = store.snapshot().find((s) => s.type === "operation.completed")!;
@@ -104,7 +104,7 @@ describe("buildDurableSink — event translation (Windows-runnable)", () => {
     const tools: AgentTool[] = [{ name: "write", description: "", inputSchema: { type: "object", properties: {} }, async execute() { return { content: [], details: {} }; } }];
     const { sink } = buildDurableSinkForTest(store as never, "00000000-0000-7000-8000-000000000002" as never, tools);
 
-    await sink({ type: "tool_execution_end", toolCallId: "ghost", toolName: "write", result: { content: [], details: {} }, isError: false });
+    await sink({ type: "tool_execution_end", toolCallId: "ghost", toolName: "write", result: { content: [], details: {} }, isError: false, outcome: "succeeded" });
 
     expect(store.snapshot().some((s) => s.type === "operation.completed")).toBe(false);
   });
