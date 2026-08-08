@@ -78,9 +78,19 @@ export interface ToolInputSchema {
   required?: string[];
 }
 
+/**
+ * The execution outcome a tool reports. When omitted, the agent loop infers
+ * succeeded (normal return) or failed (thrown). Tools that can distinguish
+ * cancellation or timeout (e.g. bash) populate this so the durable runtime
+ * records the correct terminal state per ADR 0003.
+ */
+export type ToolExecutionOutcome = "succeeded" | "failed" | "cancelled" | "timed_out";
+
 export interface AgentToolResult<TDetails = unknown> {
   content: TextContent[];
   details: TDetails;
+  /** Tool-reported outcome; defaults to succeeded (return) or failed (throw). */
+  executionOutcome?: ToolExecutionOutcome;
   terminate?: boolean;
 }
 
@@ -151,6 +161,6 @@ export type AgentEvent =
   | { type: "message_start"; message: AgentMessage }
   | { type: "message_end"; message: AgentMessage }
   | { type: "tool_execution_start"; toolCallId: string; toolName: string; args: unknown }
-  | { type: "tool_execution_end"; toolCallId: string; toolName: string; result: AgentToolResult; isError: boolean };
+  | { type: "tool_execution_end"; toolCallId: string; toolName: string; result: AgentToolResult; isError: boolean; outcome: ToolExecutionOutcome };
 
 export type AgentEventSink = (event: AgentEvent) => void | Promise<void>;

@@ -15,6 +15,7 @@ export {
   openLockedWorkspaceStore,
   type OpenLockedWorkspaceStoreOptions,
   type LockedWorkspaceStore,
+  type InterruptedOperationRecovery,
 } from "./sqlite-event-store.ts";
 
 // Projection model:
@@ -48,12 +49,37 @@ export {
   type OperationRequestedPayload,
   type OperationStartedPayload,
   type OperationCompletedPayload,
+  type OperationInterruptedPayload,
   OperationStateError,
   defaultEffectStatus,
   defaultReconciliationStatus,
   createOperationsProjection,
   createOperationQuery,
 } from "./operations.ts";
+
+// Transcript model:
+export {
+  createTranscriptProjection,
+  createTranscriptQuery,
+  transcriptStatements,
+  type UserMessageAppendedPayload,
+  type AssistantMessageAppendedPayload,
+  type TranscriptRecord,
+} from "./transcript-projection.ts";
+
+// Reasoning + memory models (minimal Phase 0.2 derived projections):
+export {
+  createReasoningProjection,
+  reasoningStatements,
+  type ObjectiveSetPayload,
+} from "./reasoning-memory-projections.ts";
+export {
+  createMemoryProjection,
+  createMemoryQuery,
+  memoryStatements,
+  type MemoryCreatedPayload,
+  type MemoryRecord,
+} from "./reasoning-memory-projections.ts";
 
 // Secrets (re-exported for convenience):
 export { SecretAdmissionError } from "@alcode/secrets";

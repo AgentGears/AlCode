@@ -16,6 +16,7 @@ import type {
   AgentMessage,
   AgentTool,
   AgentToolResult,
+  ToolExecutionOutcome,
   AssistantMessage,
   Message,
   ModelEvent,
@@ -90,6 +91,7 @@ export async function runAgentLoop(
       const tool = tools.find((t) => t.name === tc.name);
       let result: AgentToolResult;
       let isError: boolean;
+      let outcome: ToolExecutionOutcome;
 
       if (!tool) {
         result = {
@@ -97,11 +99,13 @@ export async function runAgentLoop(
           details: { error: "tool_not_found" },
         };
         isError = true;
+        outcome = "failed";
       } else {
         try {
           const ctx = signal ? { signal } : {};
           result = await tool.execute(tc.arguments, ctx);
           isError = false;
+          outcome = result.executionOutcome ?? "succeeded";
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
           result = {
@@ -109,10 +113,11 @@ export async function runAgentLoop(
             details: { error: msg },
           };
           isError = true;
+          outcome = "failed";
         }
       }
 
-      await emit({ type: "tool_execution_end", toolCallId: tc.id, toolName: tc.name, result, isError });
+      await emit({ type: "tool_execution_end", toolCallId: tc.id, toolName: tc.name, result, isError, outcome });
 
       const toolResult: ToolResultMessage = {
         role: "toolResult",
