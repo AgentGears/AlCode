@@ -153,6 +153,41 @@ describeLocked("Step 10 — crash-vertical integration", () => {
     expect(ops[0]!.reconciliationStatus).toBe("not_required");
   });
 
+  it("bash cancellation via AbortSignal → operation.completed with cancelled, indeterminate, pending", async () => {
+    const dbPath = join(dir, "ws.sqlite");
+    rt = await openStore(dbPath);
+
+    const bashTool = createBashTool({ workingDirectory: dir, timeoutMs: 60_000 });
+    const cmd = process.platform === "win32"
+      ? "powershell -NoProfile -Command Start-Sleep -Seconds 30"
+      : "sleep 30";
+
+    const provider = new TestModelProvider([
+      { match: "run", text: "Calling bash", toolCall: { id: "tc1", name: "bash", arguments: { command: cmd } } },
+      { match: "*", text: "Done." },
+    ]);
+
+    const controller = new AbortController();
+
+    // Abort shortly after the loop starts (the bash tool is sleeping).
+    setTimeout(() => controller.abort(), 500);
+
+    await runDurableAgent("run", {
+      systemPrompt: "",
+      provider,
+      tools: [bashTool],
+      store: rt,
+      signal: controller.signal,
+    });
+
+    const ops = readAllOpsByTool(dbPath, "bash");
+    expect(ops.length).toBe(1);
+    expect(ops[0]!.executionOutcome).toBe("cancelled");
+    expect(ops[0]!.effectStatus).toBe("indeterminate");
+    expect(ops[0]!.reconciliationStatus).toBe("pending");
+    expect(ops[0]!.lifecycleState).toBe("terminal");
+  });
+
   it("startup recovery surfaces pending operations from prior crashed session", async () => {
     const dbPath = join(dir, "ws.sqlite");
 

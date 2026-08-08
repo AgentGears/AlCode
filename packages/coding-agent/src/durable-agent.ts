@@ -64,6 +64,8 @@ export interface DurableAgentOptions {
    * state consistent with the event they're observing.
    */
   onEvent?: AgentEventSink;
+  /** AbortSignal forwarded to runAgentLoop for caller-driven cancellation. */
+  signal?: AbortSignal;
 }
 
 export interface DurableAgentResult {
@@ -302,13 +304,15 @@ export async function runDurableAgent(
 
     // 4. Run the loop. Imported lazily so this module has no top-level cycle.
     const { runAgentLoop } = await import("@alcode/agent-core");
-    const transcript = await runAgentLoop(prompt, {
+    const loopOpts: Parameters<typeof runAgentLoop>[1] = {
       systemPrompt,
       provider,
       tools,
       maxSteps,
       emit: sink,
-    });
+    };
+    if (opts.signal) loopOpts.signal = opts.signal;
+    const transcript = await runAgentLoop(prompt, loopOpts);
 
     return { transcript, pendingOperations: recovery.pendingOperationIds };
   } finally {

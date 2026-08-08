@@ -250,7 +250,7 @@ describeLocked("Step 10 — crash matrix", () => {
   // Scenario 5: crash during a projection update (mid-transaction)
   // -------------------------------------------------------------------------
 
-  it("scenario 5: throw inside projection apply → write + cursor roll back atomically", async () => {
+  it("scenario 5: throw inside projection apply → data write + cursor roll back atomically", async () => {
     const dbPath = join(dir, "ws.sqlite");
     rt = await openStore(dbPath);
     const sid = mkSessionId() as string;
@@ -261,15 +261,16 @@ describeLocked("Step 10 — crash matrix", () => {
     ]);
     const head = await rt.store.headSequence();
 
-    // Test-only projection that throws mid-apply.
-    const crashStmts: readonly StatementDefinition[] = [
+    const probeStmts: readonly StatementDefinition[] = [
       { name: "insert-probe", sql: "INSERT INTO operations (operation_id, workspace_id, session_id, tool_name, args, lifecycle_state, execution_outcome, effect_status, reconciliation_status, started_at, completed_at) VALUES ('crash-probe', ?, ?, 'test', '{}', 'requested', NULL, 'indeterminate', 'not_required', NULL, NULL)" },
     ];
+
+    // Test-only projection that throws mid-apply.
     const crashProjection: ProjectionDefinition = {
       name: "crash-test",
       schemaVersion: 1,
       classification: "derived",
-      statements: crashStmts,
+      statements: probeStmts,
       apply(_event, tx: ProjectionTransaction) {
         tx.exec("insert-probe", TEST_WS, sid as string);
         throw new Error("INJECTED_CRASH");
@@ -285,18 +286,29 @@ describeLocked("Step 10 — crash matrix", () => {
     const cursorAfter = runner.getCursor("crash-test").lastAppliedEventSequence;
     expect(cursorAfter).toBe(0);
 
-    // Now catch up with a non-throwing projection — the event applies cleanly.
-    const cleanStmts: readonly StatementDefinition[] = [
-      { name: "insert-probe-clean", sql: "INSERT INTO operations (operation_id, workspace_id, session_id, tool_name, args, lifecycle_state, execution_outcome, effect_status, reconciliation_status, started_at, completed_at) VALUES ('clean-probe', ?, ?, 'test', '{}', 'requested', NULL, 'indeterminate', 'not_required', NULL, NULL)" },
-    ];
+    // CRITICAL: the data write also rolled back. Assert directly that no
+    // crash-probe row leaked past the transaction boundary.
+    const roDb = new Database(dbPath, { readonly: true, fileMustExist: true });
+    try {
+      const leakedProbe = roDb.prepare(
+        "SELECT COUNT(*) as c FROM operations WHERE operation_id = 'crash-probe'",
+      ).get() as { c: number };
+      expect(leakedProbe.c).toBe(0);
+    } finally {
+      roDb.close();
+    }
+
+    // Now catch up with a non-throwing projection using the SAME probe ID —
+    // this proves both halves: the failed apply rolled back (0 rows above),
+    // and the clean replay commits exactly once (1 row below).
     const cleanProjection: ProjectionDefinition = {
       name: "crash-test",
       schemaVersion: 1,
       classification: "derived",
-      statements: cleanStmts,
+      statements: probeStmts,
       apply(event, tx: ProjectionTransaction) {
         if (event.type === "test.crash-probe") {
-          tx.exec("insert-probe-clean", TEST_WS, sid as string);
+          tx.exec("insert-probe", TEST_WS, sid as string);
         }
       },
     };
@@ -304,6 +316,17 @@ describeLocked("Step 10 — crash matrix", () => {
     const result = runner.catchUp(cleanProjection);
     expect(result.caught).toBe(true);
     expect(runner.getCursor("crash-test").lastAppliedEventSequence).toBe(head);
+
+    // Exactly one crash-probe row now exists.
+    const roDb2 = new Database(dbPath, { readonly: true, fileMustExist: true });
+    try {
+      const probeCount = roDb2.prepare(
+        "SELECT COUNT(*) as c FROM operations WHERE operation_id = 'crash-probe'",
+      ).get() as { c: number };
+      expect(probeCount.c).toBe(1);
+    } finally {
+      roDb2.close();
+    }
   });
 
   // -------------------------------------------------------------------------

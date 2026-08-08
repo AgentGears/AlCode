@@ -96,6 +96,21 @@ async function main(): Promise<void> {
     });
   }
 
+  // 3b. Exact Phase 0.2 vertical test — the frozen gate sequence as an explicit check
+  {
+    const result = run("npx", ["vitest", "run", "src/phase-0.2-vertical.test.ts"], {
+      cwd: join(ROOT, "packages/coding-agent"), throwOnError: false,
+    });
+    const passed = result.exitCode === 0;
+    const summaryMatch = result.stdout.match(/Tests\s+(\d+ passed|\d+ failed)/);
+    const failureOutput = `${result.stdout}\n${result.stderr}`.trim();
+    checks.push({
+      id: "phase0.exact_vertical",
+      status: passed ? "passed" : "failed",
+      evidence: passed ? (summaryMatch ? `${summaryMatch[0]} (exact gate sequence)` : "exact vertical passed") : failureOutput.slice(0, 4000),
+    });
+  }
+
   // 4. Schema version is 5 (transcript_messages table present)
   {
     const result = run("npx", ["tsx", "-e", `
