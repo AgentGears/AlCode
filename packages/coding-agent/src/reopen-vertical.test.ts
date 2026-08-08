@@ -316,4 +316,36 @@ describeLocked("Step 9 — shutdown/reopen vertical test", () => {
     const sessResult = runner.catchUp(createSessionsProjection(rt.store.workspaceId));
     expect(sessResult.caught).toBe(true);
   });
+
+  // -------------------------------------------------------------------------
+  // Frozen-clock regression: duplicate start rejects even when occurredAt is
+  // identical for both attempts. Proves the conflict is structural (per-attempt
+  // correlationId), not clock-dependent.
+  // -------------------------------------------------------------------------
+
+  it("duplicate startDurableSession rejects with identical occurredAt (frozen clock)", async () => {
+    rt = await openStore(join(dir, "ws.sqlite"));
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    try {
+      const sid = asSessionId(uuidv7());
+
+      // First start succeeds.
+      await startDurableSession(rt, { sessionId: sid });
+      const head = await rt.store.headSequence();
+
+      // Second start with the same session id — occurredAt is identical because
+      // the clock is frozen. The conflict must come from the per-attempt
+      // correlationId (a fingerprinted field), not the timestamp.
+      await expect(
+        startDurableSession(rt, { sessionId: sid }),
+      ).rejects.toThrow(IdempotencyConflictError);
+
+      // Head unchanged — no poison event entered the canonical log.
+      expect(await rt.store.headSequence()).toBe(head);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

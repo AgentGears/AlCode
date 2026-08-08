@@ -125,8 +125,10 @@ describe("start/stop idempotency keys are deterministic per session id", () => {
     const sid = "00000000-0000-7000-8000-00000000000D" as never;
     await startDurableSession(fakeA.handle, { sessionId: sid });
     await startDurableSession(fakeB.handle, { sessionId: sid });
-    // Both calls use the same idempotencyKey — the second would conflict at
-    // the real store because occurredAt differs → different fingerprint.
+    // Both calls use the same deterministic idempotencyKey. The second would
+    // conflict at the real store because each attempt carries a per-invocation
+    // correlationId (a fingerprinted field), making fingerprints differ even
+    // with an identical occurredAt.
     expect(fakeA.snapshot()[0]!.idempotencyKey).toBe(fakeB.snapshot()[0]!.idempotencyKey);
   });
 });

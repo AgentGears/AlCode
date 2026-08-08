@@ -11,9 +11,10 @@
 // idempotencyKey keyed by the session id:
 //   runtime.session.started:<sessionId>
 //   runtime.session.stopped:<sessionId>
-// A second start or stop for the same session has a different occurredAt
-// (and therefore a different request fingerprint), so the store raises
-// IdempotencyConflictError and the event never enters the canonical log.
+// A second start or stop for the same session carries a per-invocation
+// correlationId (a fingerprinted field), so even if two attempts share the
+// same occurredAt timestamp, their fingerprints differ and the store raises
+// IdempotencyConflictError before any event enters the canonical log.
 // The sessions-table PRIMARY KEY and the changes===1 projection check are
 // defense in depth, not the primary guard — because projection application
 // happens after immutable append, a poison event would already be canonical
