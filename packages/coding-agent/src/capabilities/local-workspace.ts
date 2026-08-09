@@ -135,13 +135,20 @@ class LocalFilesystem implements FilesystemCapability {
         .split("\n")
         .filter(Boolean)
         .map((line) => {
-          const colonIdx1 = line.indexOf(":");
-          const colonIdx2 = line.indexOf(":", colonIdx1 + 1);
+          // Parse from the right: text is after the last colon, line number
+          // is between the last two colons, filepath is everything before.
+          // This handles Windows drive-letter paths (C:\...) which contain colons.
+          const lastColon = line.lastIndexOf(":");
+          const text = line.substring(lastColon + 1);
+          const beforeText = line.substring(0, lastColon);
+          const secondLastColon = beforeText.lastIndexOf(":");
+          const lineNum = parseInt(beforeText.substring(secondLastColon + 1), 10);
+          const filepath = beforeText.substring(0, secondLastColon);
           return {
-            path: line.substring(0, colonIdx1),
-            line: parseInt(line.substring(colonIdx1 + 1, colonIdx2), 10),
+            path: relative(this.root, filepath),
+            line: lineNum,
             column: 1,
-            text: line.substring(colonIdx2 + 1),
+            text,
           };
         });
     } catch (e) {

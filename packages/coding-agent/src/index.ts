@@ -1,6 +1,12 @@
 // @alcode/coding-agent — the application layer.
 export { TestModelProvider, type CannedModelResponse } from "./test-model-provider.ts";
 export { createBashTool, type BashToolInput, type BashToolDetails } from "./tools/bash.ts";
+export { createReadTool, type ReadToolInput, type ReadToolDetails } from "./tools/read.ts";
+export { createWriteTool, type WriteToolInput, type WriteToolDetails } from "./tools/write.ts";
+export { createEditTool, type EditToolInput, type EditToolDetails } from "./tools/edit.ts";
+export { createGrepTool, type GrepToolInput, type GrepToolDetails } from "./tools/grep.ts";
+export { createLsTool, type LsToolInput, type LsToolDetails } from "./tools/ls.ts";
+export { createFindTool, type FindToolInput, type FindToolDetails } from "./tools/find.ts";
 export {
   type Workspace,
   type WorkspaceIdentity,
