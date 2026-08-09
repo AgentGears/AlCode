@@ -29,6 +29,12 @@ importers:
 
   packages/agent-core: {}
 
+  packages/ai:
+    dependencies:
+      '@alcode/agent-core':
+        specifier: workspace:*
+        version: link:../agent-core
+
   packages/coding-agent:
     dependencies:
       '@alcode/agent-core':
