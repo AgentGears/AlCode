@@ -59,6 +59,12 @@ importers:
 
   packages/events: {}
 
+  packages/memory:
+    dependencies:
+      '@alcode/agent-core':
+        specifier: workspace:*
+        version: link:../agent-core
+
   packages/secrets: {}
 
   packages/storage:
