@@ -60,3 +60,41 @@ jobs:
         env:
           ALCODE_HOME: ${{ runner.temp }}/alcode-home
         run: pnpm gate:0.2
+
+  gate-0-1B:
+    name: Phase 0.1B gate
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.17.0"
+          cache: pnpm
+
+      - name: Install (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: pnpm install --frozen-lockfile
+
+      - name: Install (Windows — skip native builds)
+        # Windows runners lack Visual Studio C++ build tools for native
+      # module compilation (better-sqlite3, fs-ext). Phase 0.1B tests skip
+        # POSIX-locked tests on Windows, so native modules aren't needed.
+        if: runner.os == 'Windows'
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Run Phase 0.1B gate
+        env:
+          ALCODE_HOME: ${{ runner.temp }}/alcode-home
+        run: pnpm gate:0.1B

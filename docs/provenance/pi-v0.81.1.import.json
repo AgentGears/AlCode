@@ -31,6 +31,906 @@
       "source": "packages/agent/src/stream-fn.ts",
       "destination": "packages/agent-core/src/imported/stream-fn.ts",
       "sha256": "1f9dee101a5ce1052558458d9ce47e53e05187224e879217899059a80d90bc45"
+    },
+    {
+      "source": "packages/coding-agent/src/core/tools/read.ts",
+      "destination": "packages/agent-core/src/imported/tools/read.ts",
+      "sha256": "1acc6fcb88a29317d4f800fa1e9e1ff3d13d32527dd8c6f1cdbeeab5107ae06d"
+    },
+    {
+      "source": "packages/coding-agent/src/core/tools/write.ts",
+      "destination": "packages/agent-core/src/imported/tools/write.ts",
+      "sha256": "7f7f1425e2a7cdffe48b190033189fd03dffc5756708b12775dddb0acfe90c6c"
+    },
+    {
+      "source": "packages/coding-agent/src/core/tools/edit.ts",
+      "destination": "packages/agent-core/src/imported/tools/edit.ts",
+      "sha256": "a42f745488ab89553173479986efc222544eeac26e1820692954031c63c27fdd"
+    },
+    {
+      "source": "packages/coding-agent/src/core/tools/grep.ts",
+      "destination": "packages/agent-core/src/imported/tools/grep.ts",
+      "sha256": "9737dcfd27ae56a33fd934c0b336b9f1cb64eaab6b6378a91270dde4b505ba47"
+    },
+    {
+      "source": "packages/coding-agent/src/core/tools/ls.ts",
+      "destination": "packages/agent-core/src/imported/tools/ls.ts",
+      "sha256": "0cd36018b68f08c98e615c761d6c3af19842537cd500d7be9912f932cd2b1b22"
+    },
+    {
+      "source": "packages/coding-agent/src/core/tools/find.ts",
+      "destination": "packages/agent-core/src/imported/tools/find.ts",
+      "sha256": "d64b5fbee7f8fa399adca3f8971ead79a064927b41ed5777501763221ef890de"
+    },
+    {
+      "source": "packages/coding-agent/src/core/tools/path-utils.ts",
+      "destination": "packages/agent-core/src/imported/tools/path-utils.ts",
+      "sha256": "ab6f420d2388a41366113c17a25e356867820b87b02a169d044cfcf83e1997d3"
+    },
+    {
+      "source": "packages/coding-agent/src/core/tools/render-utils.ts",
+      "destination": "packages/agent-core/src/imported/tools/render-utils.ts",
+      "sha256": "38913e15575b7c314687c1a7d53b2763eecb8e7a86b0b58d7b5532c900503cf3"
+    },
+    {
+      "source": "packages/coding-agent/src/core/tools/truncate.ts",
+      "destination": "packages/agent-core/src/imported/tools/truncate.ts",
+      "sha256": "104e61ea602c7f7894097b2771dad8c68de75c5a10ea6222e615c4ad144451c7"
+    },
+    {
+      "source": "packages/coding-agent/src/core/tools/tool-definition-wrapper.ts",
+      "destination": "packages/agent-core/src/imported/tools/tool-definition-wrapper.ts",
+      "sha256": "15f112deefccb4699ee78386adba206fd1beb73e59b4f66ce9a3b122e1b647da"
+    },
+    {
+      "source": "packages/coding-agent/src/core/tools/file-mutation-queue.ts",
+      "destination": "packages/agent-core/src/imported/tools/file-mutation-queue.ts",
+      "sha256": "33cb06ac9bcdf32c8b84d9d12e33be44c503a7670f668e003a3262cd34294d11"
+    },
+    {
+      "source": "packages/coding-agent/src/core/tools/edit-diff.ts",
+      "destination": "packages/agent-core/src/imported/tools/edit-diff.ts",
+      "sha256": "13ba03ebceda7f1aa95b36f76a71a7e83efb1db7eb51222b9960bd7e4b1a8bda"
+    },
+    {
+      "source": "packages/coding-agent/src/core/tools/index.ts",
+      "destination": "packages/agent-core/src/imported/tools/index.ts",
+      "sha256": "afeb406e0f5edde143aaac51b9c928cb497bfb8216c04ac9242bfd0f9241ffe1"
+    },
+    {
+      "source": "packages/ai/src/api/anthropic-messages.lazy.ts",
+      "destination": "packages/agent-core/src/imported/ai/api/anthropic-messages.lazy.ts",
+      "sha256": "5d1925e8b2664c91a11ef4c73d8c400b4075597c8c4e8beb085f8e4ba137fc08"
+    },
+    {
+      "source": "packages/ai/src/api/anthropic-messages.ts",
+      "destination": "packages/agent-core/src/imported/ai/api/anthropic-messages.ts",
+      "sha256": "8a0cdafd227298f05e6b48c0c3f9781be529a5d91f9d77a5e133fb33d6ded00a"
+    },
+    {
+      "source": "packages/ai/src/api/azure-openai-responses.lazy.ts",
+      "destination": "packages/agent-core/src/imported/ai/api/azure-openai-responses.lazy.ts",
+      "sha256": "de36a9a2749ac4cb45a5449356bceadb676d1a16e6d46f4fc5522a3f700aa2fd"
+    },
+    {
+      "source": "packages/ai/src/api/azure-openai-responses.ts",
+      "destination": "packages/agent-core/src/imported/ai/api/azure-openai-responses.ts",
+      "sha256": "4d57bebe26bdc609945da5e20fe0ac075e31be2a2dfcfe40b816d8d9959274bb"
+    },
+    {
+      "source": "packages/ai/src/api/bedrock-converse-stream.lazy.ts",
+      "destination": "packages/agent-core/src/imported/ai/api/bedrock-converse-stream.lazy.ts",
+      "sha256": "3ee8a1b2a2cd58927bee18ab5b4150401da810e9d5f4595822b3b10ded35de86"
+    },
+    {
+      "source": "packages/ai/src/api/bedrock-converse-stream.ts",
+      "destination": "packages/agent-core/src/imported/ai/api/bedrock-converse-stream.ts",
+      "sha256": "b5acfd542648986548f6a7b275753d795b052ec879e0cc40cbd7fc2a14ab11eb"
+    },
+    {
+      "source": "packages/ai/src/api/cloudflare.ts",
+      "destination": "packages/agent-core/src/imported/ai/api/cloudflare.ts",
+      "sha256": "6333a0f78e8cd6b75e408fdeb594d5e1e02605206247c5a921c2f56dd99cf96a"
+    },
+    {
+      "source": "packages/ai/src/api/github-copilot-headers.ts",
+      "destination": "packages/agent-core/src/imported/ai/api/github-copilot-headers.ts",
+      "sha256": "32d154965223d746140957ca6754f69955f1c631ed5e8445dcf2be11bb4b5180"
+    },
+    {
+      "source": "packages/ai/src/api/google-generative-ai.lazy.ts",
+      "destination": "packages/agent-core/src/imported/ai/api/google-generative-ai.lazy.ts",
+      "sha256": "ba7700f2e44838fb19da46f866f47f35f4e10f5068800be1ea698e9e95e1e1ce"
+    },
+    {
+      "source": "packages/ai/src/api/google-generative-ai.ts",
+      "destination": "packages/agent-core/src/imported/ai/api/google-generative-ai.ts",
+      "sha256": "6a7a12181baa42d6304bc03e71aa36467695776010a739c48c2beaa1f3da7f91"
+    },
+    {
+      "source": "packages/ai/src/api/google-shared.ts",
+      "destination": "packages/agent-core/src/imported/ai/api/google-shared.ts",
+      "sha256": "e13a24638039354780926c136f8bb5573ee5499fb13f6a3aa6d03bd34c98af42"
+    },
+    {
+      "source": "packages/ai/src/api/google-vertex.lazy.ts",
+      "destination": "packages/agent-core/src/imported/ai/api/google-vertex.lazy.ts",
+      "sha256": "891f0e07eaaa1bb1df97f0a2d8f067df6acbab50078242108d93b96a710c4712"
+    },
+    {
+      "source": "packages/ai/src/api/google-vertex.ts",
+      "destination": "packages/agent-core/src/imported/ai/api/google-vertex.ts",
+      "sha256": "f12718c3d594b14a8e8e23af960c8be48caeacc08a8638a918b53cf3140f74d2"
+    },
+    {
+      "source": "packages/ai/src/api/lazy.ts",
+      "destination": "packages/agent-core/src/imported/ai/api/lazy.ts",
+      "sha256": "56c8a8958d37af646dba3a87b147bf86f27a9cf8d7c752149c3228b4adbbf66b"
+    },
+    {
+      "source": "packages/ai/src/api/mistral-conversations.lazy.ts",
+      "destination": "packages/agent-core/src/imported/ai/api/mistral-conversations.lazy.ts",
+      "sha256": "74267bc430c0c2562d166e4ae9d05966634e91b226bc564010b2b199db52dd86"
+    },
+    {
+      "source": "packages/ai/src/api/mistral-conversations.ts",
+      "destination": "packages/agent-core/src/imported/ai/api/mistral-conversations.ts",
+      "sha256": "13d0a8a7aedf8e62efd9761a2aa45824937e107a181266c5bd962b3a2af4145e"
+    },
+    {
+      "source": "packages/ai/src/api/openai-codex-responses.lazy.ts",
+      "destination": "packages/agent-core/src/imported/ai/api/openai-codex-responses.lazy.ts",
+      "sha256": "89e1883f937df0992b852970f574b5e1fc2a69fefaacc89628cd1d924a8af63f"
+    },
+    {
+      "source": "packages/ai/src/api/openai-codex-responses.ts",
+      "destination": "packages/agent-core/src/imported/ai/api/openai-codex-responses.ts",
+      "sha256": "760c5179a0daf865e64cc0093b3026583977735854ad0481ff2e121559b02847"
+    },
+    {
+      "source": "packages/ai/src/api/openai-completions.lazy.ts",
+      "destination": "packages/agent-core/src/imported/ai/api/openai-completions.lazy.ts",
+      "sha256": "a1defe07f6d7bd37de3933164cc88cfeb2d46cf390d0bbb52c85b280cc58d193"
+    },
+    {
+      "source": "packages/ai/src/api/openai-completions.ts",
+      "destination": "packages/agent-core/src/imported/ai/api/openai-completions.ts",
+      "sha256": "1bb65506c83f82dd2551b958a7cd652a1dc543fb52c450f2138fff2fa764424f"
+    },
+    {
+      "source": "packages/ai/src/api/openai-prompt-cache.ts",
+      "destination": "packages/agent-core/src/imported/ai/api/openai-prompt-cache.ts",
+      "sha256": "78727b9b42d5c5cdc47d17f44d532cdf951cbee3b158cacfb3e640d8f792e8a4"
+    },
+    {
+      "source": "packages/ai/src/api/openai-responses-shared.ts",
+      "destination": "packages/agent-core/src/imported/ai/api/openai-responses-shared.ts",
+      "sha256": "55156a4010a0b08a1b46d7e39a25f061ceca36ab009ec511c4fc55d629c5a2c0"
+    },
+    {
+      "source": "packages/ai/src/api/openai-responses.lazy.ts",
+      "destination": "packages/agent-core/src/imported/ai/api/openai-responses.lazy.ts",
+      "sha256": "ea6bf6019f6b2f949bce4ad248ec1e0fa25dd058a009cf70fb5eb0e99b4c94db"
+    },
+    {
+      "source": "packages/ai/src/api/openai-responses.ts",
+      "destination": "packages/agent-core/src/imported/ai/api/openai-responses.ts",
+      "sha256": "c5b50b6828f64fe394f058d6c699f1b1454a9e7a80d99a7ac4e0b5c5c2550b1f"
+    },
+    {
+      "source": "packages/ai/src/api/openrouter-images.lazy.ts",
+      "destination": "packages/agent-core/src/imported/ai/api/openrouter-images.lazy.ts",
+      "sha256": "04c18f8c065779c2f705850e593cee4e0d6207a4121473540a223fc83026a8f4"
+    },
+    {
+      "source": "packages/ai/src/api/openrouter-images.ts",
+      "destination": "packages/agent-core/src/imported/ai/api/openrouter-images.ts",
+      "sha256": "a2ca2cf0edb423d025b7d97c40db4f9929aa88258ccbfd16d4c783db59917777"
+    },
+    {
+      "source": "packages/ai/src/api/pi-messages.lazy.ts",
+      "destination": "packages/agent-core/src/imported/ai/api/pi-messages.lazy.ts",
+      "sha256": "620e55f1a498f70c8578deb6375f9433c6991c98f6c323465b1889c2f07a72d9"
+    },
+    {
+      "source": "packages/ai/src/api/pi-messages.ts",
+      "destination": "packages/agent-core/src/imported/ai/api/pi-messages.ts",
+      "sha256": "75245743f8657c62b7a4727caacb99bc9b3d84a2e8efd6d83e9f0fbaa7f6a0ce"
+    },
+    {
+      "source": "packages/ai/src/api/simple-options.ts",
+      "destination": "packages/agent-core/src/imported/ai/api/simple-options.ts",
+      "sha256": "0c46eb77a8524be36cde02567e6bc24f828af0afed61dca15470ba177485073b"
+    },
+    {
+      "source": "packages/ai/src/api/transform-messages.ts",
+      "destination": "packages/agent-core/src/imported/ai/api/transform-messages.ts",
+      "sha256": "cf309c00b943bc0a90ccaabb185730a3f27a3c92de6696ada3155b0185904161"
+    },
+    {
+      "source": "packages/ai/src/auth/context.ts",
+      "destination": "packages/agent-core/src/imported/ai/auth/context.ts",
+      "sha256": "03101bfa711fad214af111e25328b6f607d6b0a7ebfe289af58a89cd55baf639"
+    },
+    {
+      "source": "packages/ai/src/auth/credential-store.ts",
+      "destination": "packages/agent-core/src/imported/ai/auth/credential-store.ts",
+      "sha256": "57cd7b71f8c74c6712542066c0e827c10735644974231f0fb82788b5c90045f7"
+    },
+    {
+      "source": "packages/ai/src/auth/helpers.ts",
+      "destination": "packages/agent-core/src/imported/ai/auth/helpers.ts",
+      "sha256": "31cb4fda56593a9aef191a8dbfdcd54b736181f75b3306a2b358e155f68dc900"
+    },
+    {
+      "source": "packages/ai/src/auth/oauth/anthropic.ts",
+      "destination": "packages/agent-core/src/imported/ai/auth/oauth/anthropic.ts",
+      "sha256": "1f989e989a1d4ebd835aa4b09ab0b08d9a2df73648c3d2cea99c4e075308d2b1"
+    },
+    {
+      "source": "packages/ai/src/auth/oauth/device-code.ts",
+      "destination": "packages/agent-core/src/imported/ai/auth/oauth/device-code.ts",
+      "sha256": "c7785aa4f75341acfced74305c72a2d0f28d86add7c55c72aea4747ed02070a2"
+    },
+    {
+      "source": "packages/ai/src/auth/oauth/github-copilot.ts",
+      "destination": "packages/agent-core/src/imported/ai/auth/oauth/github-copilot.ts",
+      "sha256": "d0629dd87f13dd0f61b03b9a652478556156b6d0699ce4a1422a9b4b38c609db"
+    },
+    {
+      "source": "packages/ai/src/auth/oauth/kimi-coding.ts",
+      "destination": "packages/agent-core/src/imported/ai/auth/oauth/kimi-coding.ts",
+      "sha256": "2028ccda988f19b0544ce592f24f9f69db85f76b0e52e419b9535ac83bd47114"
+    },
+    {
+      "source": "packages/ai/src/auth/oauth/load.ts",
+      "destination": "packages/agent-core/src/imported/ai/auth/oauth/load.ts",
+      "sha256": "a7e69ab672f183c0e95b321f701178c6b8ed90bd4fd5d81e426867b69dc45d7f"
+    },
+    {
+      "source": "packages/ai/src/auth/oauth/oauth-page.ts",
+      "destination": "packages/agent-core/src/imported/ai/auth/oauth/oauth-page.ts",
+      "sha256": "f58b133d271be4ff47352947fd4e55ab66230dc2647b7cbc7c79a574a93de632"
+    },
+    {
+      "source": "packages/ai/src/auth/oauth/openai-codex.ts",
+      "destination": "packages/agent-core/src/imported/ai/auth/oauth/openai-codex.ts",
+      "sha256": "e7c496f5894df234e7ade5c0e30c3d5e2eebe2e01654a049e3e70de3e040a741"
+    },
+    {
+      "source": "packages/ai/src/auth/oauth/openrouter.ts",
+      "destination": "packages/agent-core/src/imported/ai/auth/oauth/openrouter.ts",
+      "sha256": "98e0803f5d969311c8930de5303eb0bd2e34b814dd0d85dad29bb779b9778372"
+    },
+    {
+      "source": "packages/ai/src/auth/oauth/pkce.ts",
+      "destination": "packages/agent-core/src/imported/ai/auth/oauth/pkce.ts",
+      "sha256": "33835111577490103dbb7509b7687db1643691d7b425845428f3cbeb873fe9cf"
+    },
+    {
+      "source": "packages/ai/src/auth/oauth/radius.ts",
+      "destination": "packages/agent-core/src/imported/ai/auth/oauth/radius.ts",
+      "sha256": "f9c0a721c59eec03ec6aba7eac7c2e6d2a3d427f3dad22670f49db89d6b9d66b"
+    },
+    {
+      "source": "packages/ai/src/auth/oauth/xai.ts",
+      "destination": "packages/agent-core/src/imported/ai/auth/oauth/xai.ts",
+      "sha256": "9c55ed76e6b5099c09e74156b85a5f6e7ff652b1e591d223e424bbe014095d6f"
+    },
+    {
+      "source": "packages/ai/src/auth/resolve.ts",
+      "destination": "packages/agent-core/src/imported/ai/auth/resolve.ts",
+      "sha256": "a0ea352377af7520a5b4c5ee5a63af816972dfd74399135ab5ca3786a200be80"
+    },
+    {
+      "source": "packages/ai/src/auth/types.ts",
+      "destination": "packages/agent-core/src/imported/ai/auth/types.ts",
+      "sha256": "31512f892227ac67c65bafbde0e7512862373fee396ac497bb5050989edbffbb"
+    },
+    {
+      "source": "packages/ai/src/bedrock-provider.ts",
+      "destination": "packages/agent-core/src/imported/ai/bedrock-provider.ts",
+      "sha256": "427a4e76812ea4ac42133e7f41e75df99e0edaff883659c96a0e4ec78f670f9f"
+    },
+    {
+      "source": "packages/ai/src/bun-oauth.ts",
+      "destination": "packages/agent-core/src/imported/ai/bun-oauth.ts",
+      "sha256": "27818a6489809c8b38cea6ca5a75ede67cbb17e3cd48de450a1d04300e95333d"
+    },
+    {
+      "source": "packages/ai/src/cli.ts",
+      "destination": "packages/agent-core/src/imported/ai/cli.ts",
+      "sha256": "fc7787111c100b29b5131fa9b90087c0c3d86c6e9d7e6a7b8dcd5b7fde999676"
+    },
+    {
+      "source": "packages/ai/src/compat/extension-oauth-types.ts",
+      "destination": "packages/agent-core/src/imported/ai/compat/extension-oauth-types.ts",
+      "sha256": "52065af0c8958696c9e37852d5005bf410679f4afba1b92a6e107e9320c44ff3"
+    },
+    {
+      "source": "packages/ai/src/compat.ts",
+      "destination": "packages/agent-core/src/imported/ai/compat.ts",
+      "sha256": "c1212487653e4508243ddc2c420334166699470b9908326ff8f74b8aeb4fc8a5"
+    },
+    {
+      "source": "packages/ai/src/env-api-keys.ts",
+      "destination": "packages/agent-core/src/imported/ai/env-api-keys.ts",
+      "sha256": "2c88fc505c318f99ad26dd1f5c8d690c99523f1ff5a8543065d285c374067fc5"
+    },
+    {
+      "source": "packages/ai/src/image-models.generated.ts",
+      "destination": "packages/agent-core/src/imported/ai/image-models.generated.ts",
+      "sha256": "4085d0ea83c8215b10587e905ba7446081f24ea0aea9965eae60c9b3f9eb8dab"
+    },
+    {
+      "source": "packages/ai/src/image-models.ts",
+      "destination": "packages/agent-core/src/imported/ai/image-models.ts",
+      "sha256": "58f11488a6623fe8528153235f9216c249d70e146b0f99f8b22db8d88a49ae74"
+    },
+    {
+      "source": "packages/ai/src/images-api-registry.ts",
+      "destination": "packages/agent-core/src/imported/ai/images-api-registry.ts",
+      "sha256": "604636b0a4b59d1798d79aad48a1dfdd96ee79e3f16b16cdc54dbd1b81c44ffe"
+    },
+    {
+      "source": "packages/ai/src/images-models.ts",
+      "destination": "packages/agent-core/src/imported/ai/images-models.ts",
+      "sha256": "e57cadc7d9b033c07fd98b4a31f9ecd14ebc8a79c3689eb05b891210173f0d27"
+    },
+    {
+      "source": "packages/ai/src/images.ts",
+      "destination": "packages/agent-core/src/imported/ai/images.ts",
+      "sha256": "de83a96c1eb420cfb1b6f4e3ce8430f19b2312399d195fb786c76ebae4111dcf"
+    },
+    {
+      "source": "packages/ai/src/index.ts",
+      "destination": "packages/agent-core/src/imported/ai/index.ts",
+      "sha256": "50b8cf3a481383473bf165c59fbef36fde3c346fa6b4398e9f6fb98fa840d24e"
+    },
+    {
+      "source": "packages/ai/src/legacy-api-aliases.ts",
+      "destination": "packages/agent-core/src/imported/ai/legacy-api-aliases.ts",
+      "sha256": "784ae74c00b3cf2836b6ed930519b5d7d3aa1a7a4e7ace933af3bdad77df67e3"
+    },
+    {
+      "source": "packages/ai/src/model-catalog.ts",
+      "destination": "packages/agent-core/src/imported/ai/model-catalog.ts",
+      "sha256": "49ea2292bcc7a1cec41dde2c7e263ecd7f5fd6784084619f6e5f85323fb43452"
+    },
+    {
+      "source": "packages/ai/src/models-store.ts",
+      "destination": "packages/agent-core/src/imported/ai/models-store.ts",
+      "sha256": "f7ca56eacfe3cb3bc09b50e03db7da4bdde09f10f655a6dcf6fc157644b89406"
+    },
+    {
+      "source": "packages/ai/src/models.generated.ts",
+      "destination": "packages/agent-core/src/imported/ai/models.generated.ts",
+      "sha256": "7ee1f5c5b61db7b3ac710833210edb883d2fe63997472c46c728e1c07204d468"
+    },
+    {
+      "source": "packages/ai/src/models.ts",
+      "destination": "packages/agent-core/src/imported/ai/models.ts",
+      "sha256": "b8f0d2b3d6bd70c9ffeab844b8aa901a40506b01e14a8033bcbc78cfdc3cddf3"
+    },
+    {
+      "source": "packages/ai/src/oauth.ts",
+      "destination": "packages/agent-core/src/imported/ai/oauth.ts",
+      "sha256": "1250a2a276dc310849e64a0fd306a896d42e47ad0fc8d9394279eaee4e11cdff"
+    },
+    {
+      "source": "packages/ai/src/providers/all.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/all.ts",
+      "sha256": "bc1051c4edd063221b743c2a44a3af98fefdf1c13b0bec099ef2f5fd051105cb"
+    },
+    {
+      "source": "packages/ai/src/providers/amazon-bedrock.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/amazon-bedrock.models.ts",
+      "sha256": "9c9cbe9b1c977177454ed12dc48c521fdc88d257ee1b92bc3805aa77eaf9b982"
+    },
+    {
+      "source": "packages/ai/src/providers/amazon-bedrock.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/amazon-bedrock.ts",
+      "sha256": "0bdb730452b5ad8d1a763f850f6ad7e2d25d048fe8f469031981a642b58129c7"
+    },
+    {
+      "source": "packages/ai/src/providers/ant-ling.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/ant-ling.models.ts",
+      "sha256": "da223d56dbe033f48b96ed451591498cb7ffa8d4851785ea9ad7542377f6c855"
+    },
+    {
+      "source": "packages/ai/src/providers/ant-ling.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/ant-ling.ts",
+      "sha256": "20ba100f8a9150f809fc42bf60f1d23840cc358d636793f1ec9fddf0e9feb2a7"
+    },
+    {
+      "source": "packages/ai/src/providers/anthropic.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/anthropic.models.ts",
+      "sha256": "35fb58e216e45b3d1319b610f3f3021ef30e699a9e44250cbfcbefeeaaea2ff7"
+    },
+    {
+      "source": "packages/ai/src/providers/anthropic.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/anthropic.ts",
+      "sha256": "d28c2884868e7e5d93cd264574755ea33e5f2e434f7193e2221efe5dbf45495a"
+    },
+    {
+      "source": "packages/ai/src/providers/azure-openai-responses.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/azure-openai-responses.models.ts",
+      "sha256": "9d0525eab9472b48dee748f7c6d2f3b65f25467389ff1facbf34dc2d40732717"
+    },
+    {
+      "source": "packages/ai/src/providers/azure-openai-responses.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/azure-openai-responses.ts",
+      "sha256": "76e9f5cde761fcd516370d4d99519e4658e0db1029518746d0d0c0550ce54fa5"
+    },
+    {
+      "source": "packages/ai/src/providers/cerebras.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/cerebras.models.ts",
+      "sha256": "45412b6f921b67cf7b82276bac1d8b95f164c5bf2ff3297b950f94f773162c57"
+    },
+    {
+      "source": "packages/ai/src/providers/cerebras.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/cerebras.ts",
+      "sha256": "457fc35499abea92be4ad7add4f08502d069293380be61bf05b11ae5352bce4f"
+    },
+    {
+      "source": "packages/ai/src/providers/cloudflare-ai-gateway.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/cloudflare-ai-gateway.models.ts",
+      "sha256": "c90e50ce6cd8b536e893ca7180a5b9731581d76b31125aff5bdfc62bd17efe26"
+    },
+    {
+      "source": "packages/ai/src/providers/cloudflare-ai-gateway.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/cloudflare-ai-gateway.ts",
+      "sha256": "6629197929c376b75640cf044e9f7c31277f0964a6764b0a002ee90059a7989d"
+    },
+    {
+      "source": "packages/ai/src/providers/cloudflare-auth.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/cloudflare-auth.ts",
+      "sha256": "3bb8130e1e9a07d63d78bdb5b12c1e607e29e83c67f36f5218054e6f932918db"
+    },
+    {
+      "source": "packages/ai/src/providers/cloudflare-stream.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/cloudflare-stream.ts",
+      "sha256": "866117c0e12f6bba9da36842271d0208b200364dc785dc968fa5d31b6da6594b"
+    },
+    {
+      "source": "packages/ai/src/providers/cloudflare-workers-ai.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/cloudflare-workers-ai.models.ts",
+      "sha256": "95da6a78965178d952b46a4de4e2ea52723ac051ad37583537a3b79e4033ecde"
+    },
+    {
+      "source": "packages/ai/src/providers/cloudflare-workers-ai.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/cloudflare-workers-ai.ts",
+      "sha256": "5ab1575a34fd66e35706fcae8a38516d7c2e427521b7f8680e1f756d8420ec9c"
+    },
+    {
+      "source": "packages/ai/src/providers/data-json.d.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/data-json.d.ts",
+      "sha256": "d30c397c753fb4c6a608ab2e2d95e50c763a369b591bcc2bd6e02147016f8aff"
+    },
+    {
+      "source": "packages/ai/src/providers/deepseek.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/deepseek.models.ts",
+      "sha256": "afce9b250edda8c9df66e800cfa791f1a2c2546503956c45c5262204265624cf"
+    },
+    {
+      "source": "packages/ai/src/providers/deepseek.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/deepseek.ts",
+      "sha256": "4d4ac9870d3dcdb13a90627a95598314459f5cc2f8a122f802fab3b0d2840fee"
+    },
+    {
+      "source": "packages/ai/src/providers/faux.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/faux.ts",
+      "sha256": "eea5c33e3a3553adf4d8216e2660dac19a69663d3ac295dd61c4e35a346ed535"
+    },
+    {
+      "source": "packages/ai/src/providers/fireworks.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/fireworks.models.ts",
+      "sha256": "68f77ac268a3e643944401e96fdc71abe7b34e1ccc3c50f885eb3e236b4fb45e"
+    },
+    {
+      "source": "packages/ai/src/providers/fireworks.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/fireworks.ts",
+      "sha256": "72dbb53e3bb8b0bc6c42dd7937ec11dd0126efe3176f11153b1d599a0c7776af"
+    },
+    {
+      "source": "packages/ai/src/providers/github-copilot.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/github-copilot.models.ts",
+      "sha256": "6bd4c4ae054ea91fe4c9eea8c8372901584e851532352cb621a9e9de6ecece5c"
+    },
+    {
+      "source": "packages/ai/src/providers/github-copilot.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/github-copilot.ts",
+      "sha256": "216e06b4d780a70eb0b5641e7a8f3d7cdb7063deb366cd15a950a3c8b1470865"
+    },
+    {
+      "source": "packages/ai/src/providers/google-vertex.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/google-vertex.models.ts",
+      "sha256": "964109cc69cadf77329846f4fb4baf6c86b00995f33a813230c5a9e54573e93e"
+    },
+    {
+      "source": "packages/ai/src/providers/google-vertex.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/google-vertex.ts",
+      "sha256": "1a976f38fff9d1342f126382db395982a6c7fd6e17ebda19a3e3c05e7348b707"
+    },
+    {
+      "source": "packages/ai/src/providers/google.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/google.models.ts",
+      "sha256": "cdb63f50fae431dc67c6627ae7a5b9580039b9807f014f838ebe568b11831d27"
+    },
+    {
+      "source": "packages/ai/src/providers/google.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/google.ts",
+      "sha256": "2d807d5f9273ede8c23970fe0414883ab362c677df80e4603d30b621232a2036"
+    },
+    {
+      "source": "packages/ai/src/providers/groq.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/groq.models.ts",
+      "sha256": "41fbe59a9104788078b57b490ebf2312291905e579a67ceaeff803ff41ffc9c0"
+    },
+    {
+      "source": "packages/ai/src/providers/groq.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/groq.ts",
+      "sha256": "a8bbced4fbc37370892fec68fb7f03cf634d08d134d9f003fa63edb5a8b60873"
+    },
+    {
+      "source": "packages/ai/src/providers/huggingface.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/huggingface.models.ts",
+      "sha256": "0da3c6e72a35d04571f1800989c3731df686a8ab1291065b6dd8855966f0e675"
+    },
+    {
+      "source": "packages/ai/src/providers/huggingface.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/huggingface.ts",
+      "sha256": "51c4af194c9989ab033c5b3303831ec9e2df999f51d9fa40ab6d28f632e8ff43"
+    },
+    {
+      "source": "packages/ai/src/providers/images/register-builtins.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/images/register-builtins.ts",
+      "sha256": "8c8bd4e614b8b733c0a4232f7cc974bf38c5a4bb6b9615c732e3b794ff1d908f"
+    },
+    {
+      "source": "packages/ai/src/providers/kimi-coding.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/kimi-coding.models.ts",
+      "sha256": "57ca50b17d1e96ba8f064b63adfe9773c2e494d7495c52336769ef6b86a7e2ff"
+    },
+    {
+      "source": "packages/ai/src/providers/kimi-coding.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/kimi-coding.ts",
+      "sha256": "1aee67b75455ff73f1452f6e885016ddf7f01670f4bee6c55867f8f0738e4cc3"
+    },
+    {
+      "source": "packages/ai/src/providers/minimax-cn.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/minimax-cn.models.ts",
+      "sha256": "25dd4d8e980898f274a3c787a59e6e7570d596330c7f833f080b780817cdea74"
+    },
+    {
+      "source": "packages/ai/src/providers/minimax-cn.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/minimax-cn.ts",
+      "sha256": "ae3170234556ef355f7cffcfc666888992ae50caa8daf07352f22bac69cca0ba"
+    },
+    {
+      "source": "packages/ai/src/providers/minimax.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/minimax.models.ts",
+      "sha256": "e80186fef0f1b647990f029281604c435da5d8ceb659d3f6a79681cdb03c3b41"
+    },
+    {
+      "source": "packages/ai/src/providers/minimax.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/minimax.ts",
+      "sha256": "d571a6a8b5a47daf40b034a2dae4ac902a252fbd44b073c4caee8eeb1d7035b5"
+    },
+    {
+      "source": "packages/ai/src/providers/mistral.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/mistral.models.ts",
+      "sha256": "949f1e72e32a0028beb855db2642f13783c8697c4be236e9061c241f1d698a51"
+    },
+    {
+      "source": "packages/ai/src/providers/mistral.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/mistral.ts",
+      "sha256": "dfcd087d7317d6a6cd1acf701547567435f5eaf0c1cc1d8eb89eed7e977c2fb3"
+    },
+    {
+      "source": "packages/ai/src/providers/moonshotai-cn.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/moonshotai-cn.models.ts",
+      "sha256": "059db388929164d03595ead666c3bcf56e8e078be072dc2d4d3a784b9e207cc2"
+    },
+    {
+      "source": "packages/ai/src/providers/moonshotai-cn.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/moonshotai-cn.ts",
+      "sha256": "da8ec0ed30a2cf42972cead61a93b1fcb64380095f9d062ee4ed9e4807ebd5bc"
+    },
+    {
+      "source": "packages/ai/src/providers/moonshotai.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/moonshotai.models.ts",
+      "sha256": "ddafd640693869455756b31e87d09df13388531cf8e0421bd3618d8836ac5eb2"
+    },
+    {
+      "source": "packages/ai/src/providers/moonshotai.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/moonshotai.ts",
+      "sha256": "2e269cca0231ebdbd2a58848ab3d19b0a43697e132b48a679e3c1b0cd4897665"
+    },
+    {
+      "source": "packages/ai/src/providers/nvidia.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/nvidia.models.ts",
+      "sha256": "15b8e279632a231d1794aec8083f00c17ac94cd5e89717393dd48fc182c0e4b4"
+    },
+    {
+      "source": "packages/ai/src/providers/nvidia.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/nvidia.ts",
+      "sha256": "73c981d27b364f83a32983d19f4ded346acf6af7eb4a653334622f891aedf860"
+    },
+    {
+      "source": "packages/ai/src/providers/openai-codex.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/openai-codex.models.ts",
+      "sha256": "11045582d310b854c4a55e510e3628b8a8652efab918f9f017541b9261db474f"
+    },
+    {
+      "source": "packages/ai/src/providers/openai-codex.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/openai-codex.ts",
+      "sha256": "cb50e5b9db20f8953034601e1f9e66ad95ff1f925a9608419f4623d6246606b4"
+    },
+    {
+      "source": "packages/ai/src/providers/openai.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/openai.models.ts",
+      "sha256": "9424770fdbf0ca5f3307c6b20217686d8c448379fd8548ac1c362ad678ac7898"
+    },
+    {
+      "source": "packages/ai/src/providers/openai.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/openai.ts",
+      "sha256": "1904f9511221f47bbe890dc007571add9ac16ab28cd48c4090b58f13950cbfd0"
+    },
+    {
+      "source": "packages/ai/src/providers/opencode-go.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/opencode-go.models.ts",
+      "sha256": "db2994d632b02692e3cb1a9c7fde97e5b7e4f77719f7d530c9a2cb2628aee52d"
+    },
+    {
+      "source": "packages/ai/src/providers/opencode-go.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/opencode-go.ts",
+      "sha256": "a62d20b3d31c554d9f1301815db88466851e6a56c5045e7465aca0eb1db1eb1d"
+    },
+    {
+      "source": "packages/ai/src/providers/opencode.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/opencode.models.ts",
+      "sha256": "ddbfa6ca1f40c0ed1bf96904d3e0ecdb9b8298a4fb8d12a084cd4e1669a6596c"
+    },
+    {
+      "source": "packages/ai/src/providers/opencode.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/opencode.ts",
+      "sha256": "5907b03b4f4f24cb8457f2a1fadae2683e2ba5101da84f2b100c32c50b355954"
+    },
+    {
+      "source": "packages/ai/src/providers/openrouter-images.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/openrouter-images.ts",
+      "sha256": "921e057fa1880412c29a849505ddd7dbe466996d78087c0c0628437ec2051880"
+    },
+    {
+      "source": "packages/ai/src/providers/openrouter.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/openrouter.models.ts",
+      "sha256": "101afc36afce8bdac7f893b8c2b1dffddc13caf7774c1a371f37e82e69a87b90"
+    },
+    {
+      "source": "packages/ai/src/providers/openrouter.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/openrouter.ts",
+      "sha256": "1d40af55225367209d55d563b25bf79f0a2ed92f3a587c4d0426234ab86bb21f"
+    },
+    {
+      "source": "packages/ai/src/providers/qwen-token-plan-cn.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/qwen-token-plan-cn.models.ts",
+      "sha256": "cf75bfef4683dd80f98a33cc8894d5b0a37930c13907f29b08e33a745b7d48f0"
+    },
+    {
+      "source": "packages/ai/src/providers/qwen-token-plan-cn.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/qwen-token-plan-cn.ts",
+      "sha256": "1869aabbff4baaa12faef00071aab0a5b1b1d38d43f16ce735137fc0e13fa897"
+    },
+    {
+      "source": "packages/ai/src/providers/qwen-token-plan.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/qwen-token-plan.models.ts",
+      "sha256": "5a45908ccd14785c3aca0307f12e4e462702b0d469ea06bd90ba20b848c918c7"
+    },
+    {
+      "source": "packages/ai/src/providers/qwen-token-plan.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/qwen-token-plan.ts",
+      "sha256": "c26b85ab529779c4c2e61f6dd749592b515ec25b121b49dc81989d8a767d51f5"
+    },
+    {
+      "source": "packages/ai/src/providers/radius-config.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/radius-config.ts",
+      "sha256": "1f82a7db25753be09374792ae0a3cd63417739018fb69b3212ad8b3b9eb11c21"
+    },
+    {
+      "source": "packages/ai/src/providers/radius.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/radius.ts",
+      "sha256": "67c62a866d0ed2dccdab5bd495cbd646ddbcf1fe3a6f49e6b569478b49a3c5df"
+    },
+    {
+      "source": "packages/ai/src/providers/together.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/together.models.ts",
+      "sha256": "09e3a5b9a2afbced7314acb8bfd7f2d77a17283dab78a49ca786a04b466f9d15"
+    },
+    {
+      "source": "packages/ai/src/providers/together.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/together.ts",
+      "sha256": "cbf232b1bfe5753bba855f0a95e2c4d180db8155121effcbdffc955fe090738c"
+    },
+    {
+      "source": "packages/ai/src/providers/vercel-ai-gateway.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/vercel-ai-gateway.models.ts",
+      "sha256": "3c4227acdc66f716f4a0af4f84d1ba1e8582384763f6850ed9dcc2fdadee10c5"
+    },
+    {
+      "source": "packages/ai/src/providers/vercel-ai-gateway.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/vercel-ai-gateway.ts",
+      "sha256": "57b77111d50a2238128f56b7f4cc0680415b58c7d3d2eb51cc9f88e508b40343"
+    },
+    {
+      "source": "packages/ai/src/providers/xai.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/xai.models.ts",
+      "sha256": "8d0a7bf9fd4fc8a0030d9cf93dab88421625bf250030a6d3b2397eea48ea2298"
+    },
+    {
+      "source": "packages/ai/src/providers/xai.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/xai.ts",
+      "sha256": "f4e3369e26fca433eefbc456a302bb1941f2ee9e21de0cfbc0989c9d7badbe3d"
+    },
+    {
+      "source": "packages/ai/src/providers/xiaomi-token-plan-ams.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/xiaomi-token-plan-ams.models.ts",
+      "sha256": "26bc2100a4471d0605e768b8aff2e82aedce9c880622b5c7046ac6e32c14fb8b"
+    },
+    {
+      "source": "packages/ai/src/providers/xiaomi-token-plan-ams.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/xiaomi-token-plan-ams.ts",
+      "sha256": "59d03fc70eca720f8ca9a9f676aedaf241524dac26c179a78e2e30aabe116e0f"
+    },
+    {
+      "source": "packages/ai/src/providers/xiaomi-token-plan-cn.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/xiaomi-token-plan-cn.models.ts",
+      "sha256": "bcd190721ecfe6233f2d66e86e68f68e2a9d14a8d6afe27132131e5721793093"
+    },
+    {
+      "source": "packages/ai/src/providers/xiaomi-token-plan-cn.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/xiaomi-token-plan-cn.ts",
+      "sha256": "255528bca12e929f0f683bcbf5a6b8ef0de779bb484b128bdda23bf2fb80caa8"
+    },
+    {
+      "source": "packages/ai/src/providers/xiaomi-token-plan-sgp.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/xiaomi-token-plan-sgp.models.ts",
+      "sha256": "26f56144eac6a3e7d6c86d558a348dc96cea1bb7ec655beea04dc6088e67d761"
+    },
+    {
+      "source": "packages/ai/src/providers/xiaomi-token-plan-sgp.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/xiaomi-token-plan-sgp.ts",
+      "sha256": "536da73a1588741c6a70809b5e94ab5a1ba2b8e81f24116e3ed734d6bc60b5e8"
+    },
+    {
+      "source": "packages/ai/src/providers/xiaomi.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/xiaomi.models.ts",
+      "sha256": "326ec2a587d3f83a92aea6dd9548b317ba91ce9dd8dccdfd83ea14035897dcef"
+    },
+    {
+      "source": "packages/ai/src/providers/xiaomi.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/xiaomi.ts",
+      "sha256": "d0d20dbcbcecca8b02948df1506ffa474461565546f7c24dfce44aebebef2344"
+    },
+    {
+      "source": "packages/ai/src/providers/zai-coding-cn.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/zai-coding-cn.models.ts",
+      "sha256": "b96ff0b9ebb1792993256178de1b6c89741a651dfd07a7735c38dd05bfc25708"
+    },
+    {
+      "source": "packages/ai/src/providers/zai-coding-cn.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/zai-coding-cn.ts",
+      "sha256": "89ff82b1f7b1a7e3427498598ce03574d76217f1c38b0d1731be82b6d8ff87a7"
+    },
+    {
+      "source": "packages/ai/src/providers/zai.models.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/zai.models.ts",
+      "sha256": "9ff2f0e33f4299651cd265543d6387ee3d9ef2715ab7315dfaf5e67130c14125"
+    },
+    {
+      "source": "packages/ai/src/providers/zai.ts",
+      "destination": "packages/agent-core/src/imported/ai/providers/zai.ts",
+      "sha256": "489a48539c3abc291315dad6f8b7c5554f5f3f9bf8b2a11a60d4ab2cbd3c2f74"
+    },
+    {
+      "source": "packages/ai/src/session-resources.ts",
+      "destination": "packages/agent-core/src/imported/ai/session-resources.ts",
+      "sha256": "3e6d76f038d6b7fe515ede0b6650d41a7df16eb4b3a9f1aa91c9de329ff092e2"
+    },
+    {
+      "source": "packages/ai/src/types.ts",
+      "destination": "packages/agent-core/src/imported/ai/types.ts",
+      "sha256": "1ebf8fd380f9e1d0ef73990aa81d0c1f4ce233b756c02ce4a53350ece36debcb"
+    },
+    {
+      "source": "packages/ai/src/utils/abort-signals.ts",
+      "destination": "packages/agent-core/src/imported/ai/utils/abort-signals.ts",
+      "sha256": "320d17e2354c4e66afccf48337d79d1cdb78bc3c42a6f5be993702175711f4ab"
+    },
+    {
+      "source": "packages/ai/src/utils/deferred-tools.ts",
+      "destination": "packages/agent-core/src/imported/ai/utils/deferred-tools.ts",
+      "sha256": "cab1dbf6c0b40a64e2db3079dd3efa23786ad4cdae64abdedc04b1088a301d65"
+    },
+    {
+      "source": "packages/ai/src/utils/diagnostics.ts",
+      "destination": "packages/agent-core/src/imported/ai/utils/diagnostics.ts",
+      "sha256": "d22b4f96a00f032220ff0cc27458c7a525dcec948bdbd2bbb67b4d7598cb395d"
+    },
+    {
+      "source": "packages/ai/src/utils/error-body.ts",
+      "destination": "packages/agent-core/src/imported/ai/utils/error-body.ts",
+      "sha256": "db69ea6e238e2c6755ce3da7b39467da8013d3c22745c910d845805bd841e824"
+    },
+    {
+      "source": "packages/ai/src/utils/estimate.ts",
+      "destination": "packages/agent-core/src/imported/ai/utils/estimate.ts",
+      "sha256": "8334f683185cc11d7e867f30963dfc4b9d89c3db79e852364e89a24cb89b316a"
+    },
+    {
+      "source": "packages/ai/src/utils/event-stream.ts",
+      "destination": "packages/agent-core/src/imported/ai/utils/event-stream.ts",
+      "sha256": "55ddd6e6e4299f377fc3f8876ea9d8073f0051d569f1629f8817ec78e28d64e6"
+    },
+    {
+      "source": "packages/ai/src/utils/hash.ts",
+      "destination": "packages/agent-core/src/imported/ai/utils/hash.ts",
+      "sha256": "2cdfce4af41810d1a92c7f0a55c78637a3173041038aafd85b378be345761ed8"
+    },
+    {
+      "source": "packages/ai/src/utils/headers.ts",
+      "destination": "packages/agent-core/src/imported/ai/utils/headers.ts",
+      "sha256": "db52ff4621bef3e5a6b6ace56fd0ff09063ae840517c16b1690c60f89f85e106"
+    },
+    {
+      "source": "packages/ai/src/utils/json-parse.ts",
+      "destination": "packages/agent-core/src/imported/ai/utils/json-parse.ts",
+      "sha256": "828440b19a64773f696ced9461166913ddaddd8479697fbde32d3f298872b153"
+    },
+    {
+      "source": "packages/ai/src/utils/node-http-proxy.ts",
+      "destination": "packages/agent-core/src/imported/ai/utils/node-http-proxy.ts",
+      "sha256": "22aa2daa87825fb9727811ede80d6bed694c7bde4d59dc5d7582099ef5eec82c"
+    },
+    {
+      "source": "packages/ai/src/utils/overflow.ts",
+      "destination": "packages/agent-core/src/imported/ai/utils/overflow.ts",
+      "sha256": "e1af348b6cad22e35c9103770ab9f95989368c32a6ce8202541846dbb3c0f0e7"
+    },
+    {
+      "source": "packages/ai/src/utils/provider-env.ts",
+      "destination": "packages/agent-core/src/imported/ai/utils/provider-env.ts",
+      "sha256": "3829251ae0674cef7ca09800cee9f46d4e305770129b72b822ea2f6f85efe675"
+    },
+    {
+      "source": "packages/ai/src/utils/retry.ts",
+      "destination": "packages/agent-core/src/imported/ai/utils/retry.ts",
+      "sha256": "7b66e5f5fea7824ef08e1bf1ab4b6e2b421699d2bb90c5731544a129d53bf0c2"
+    },
+    {
+      "source": "packages/ai/src/utils/sanitize-unicode.ts",
+      "destination": "packages/agent-core/src/imported/ai/utils/sanitize-unicode.ts",
+      "sha256": "f8ef2c957f9f13a77df45ebf344f1b852dfe8f2e3d164d815127ea7290c12e22"
+    },
+    {
+      "source": "packages/ai/src/utils/text.ts",
+      "destination": "packages/agent-core/src/imported/ai/utils/text.ts",
+      "sha256": "442d027929fa6db4aa19638d64b55838ccada6c07f350610c53a521cd620ddf3"
+    },
+    {
+      "source": "packages/ai/src/utils/typebox-helpers.ts",
+      "destination": "packages/agent-core/src/imported/ai/utils/typebox-helpers.ts",
+      "sha256": "caf756258ce20c793dc8002cb8130a8efce18a7b5262ba0c54832b96f5a76e9f"
+    },
+    {
+      "source": "packages/ai/src/utils/uuid.ts",
+      "destination": "packages/agent-core/src/imported/ai/utils/uuid.ts",
+      "sha256": "e24350c38e12128f30d121aaad164e42444cb37c01cdde4439eb745e2dc06d37"
+    },
+    {
+      "source": "packages/ai/src/utils/validation.ts",
+      "destination": "packages/agent-core/src/imported/ai/utils/validation.ts",
+      "sha256": "6af9f8687ae3598217db6157c1acaa73d53229277c43f789f99e96fb12e42d24"
     }
   ]
 }
