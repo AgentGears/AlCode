@@ -248,17 +248,18 @@ describeLocked("memory projection integration", () => {
       producer: { kind: "runtime", component: "test" },
     }]);
 
-    // 5 recordSeen events
+    // 5 recordSeen events — accumulate the count across iterations
+    let seenStats = createInitialStats(memId, "lesson", 0.8, NOW);
     for (let i = 1; i <= 5; i++) {
-      const stats = createInitialStats(memId, "lesson", 0.8, NOW);
-      const seenResult = applyRecordSeen(stats, NOW + i * 1000);
+      const seenResult = applyRecordSeen(seenStats, NOW + i * 1000);
+      seenStats = { ...seenStats, ...seenResult };
       await rt.store.append([{
         eventId: mkEventId(),
         workspaceId: wsId as never,
         sessionId: "00000000-0000-7000-8000-000000000002" as never,
         occurredAt: new Date(NOW + i * 1000).toISOString(),
         type: "memory.reinforced",
-        payload: { memoryId: memId, kind: "seen" as const, count: seenResult.seen_count, consolidationCount: 0, strength: 0.8 },
+        payload: { memoryId: memId, kind: "seen" as const, count: seenStats.seen_count, consolidationCount: 0, strength: 0.8 },
         payloadSchemaVersion: 1,
         producer: { kind: "runtime", component: "test" },
       }]);

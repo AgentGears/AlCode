@@ -225,7 +225,7 @@ describe("relevanceScore", () => {
   });
 });
 
-describe("isExactMatch", () => {
+describe("exact-match override (isExactMatch)", () => {
   it("matches memory_id in query", () => {
     const record = makeRecord({});
     expect(isExactMatch(record, "lesson/test_2026-07-01T000000000Z.md", [])).toBe(true);
