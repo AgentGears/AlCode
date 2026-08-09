@@ -541,7 +541,11 @@ cancelled request, concurrent reinforcement).
 
 **Exit gate:** `pnpm gate:0.5` emits `status: "passed"` — the Ouroboros 0.20
 continuity proof reproduced in ALCODE: kill process mid-task, reopen,
-`resume → orient → act` with state intact; all crash/concurrency tests pass.
+`resume → orient → act` with state intact; **Agent replacement/restart does
+not invalidate Host-owned execution identity or durable state** — the Host
+supervises the Agent, so replacing or restarting the Agent process preserves
+operation identity, session state, and canonical events; all
+crash/concurrency tests pass.
 
 **Failure/rollback rule:** if cognition semantics leak into the extension,
 refactor — the boundary is a hard rule.
@@ -737,9 +741,9 @@ migration receipt. **Never point the new runtime at old live databases.**
 ## Phase 0 estimated total range
 
 ```
-0.0  Architecture foundation (REOPENED):        2–4 days
-0.1A Minimal agent loop + offline provider:    2–4 days
-0.2  Minimal durable vertical slice:           1–2 weeks   (load-bearing)
+0.0  Architecture foundation (CLOSED):          2–4 days
+0.1A Minimal agent loop + offline provider:    2–4 days    [CLOSED]
+0.2  Minimal durable vertical slice:           1–2 weeks   [CLOSED]
 0.1B Remaining tools, live providers, repro:   3–7 days
 0.3  Memory semantic core (Ola):               3–7 days
 0.4  Reasoning semantic core (Ouroboros):      1–2 weeks
