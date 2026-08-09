@@ -75,6 +75,24 @@ export interface MemoryCreatedPayload {
   memoryId: string;
   type: string;
   body: string;
+  /** Phase 0.3 extended fields (optional for v1 backward compatibility) */
+  name?: string;
+  confidence?: number;
+  fields?: Record<string, unknown>;
+}
+
+export interface MemoryReinforcedPayload {
+  memoryId: string;
+  kind: "seen" | "used" | "consolidated";
+  count: number;
+  consolidationCount: number;
+  strength: number;
+}
+
+export interface MemoryLifecycleEventPayload {
+  memoryId: string;
+  from: string;
+  to: string;
 }
 
 export const memoryStatements: readonly StatementDefinition[] = [
@@ -84,30 +102,96 @@ export const memoryStatements: readonly StatementDefinition[] = [
       (memory_id, workspace_id, type, body, created_sequence)
       VALUES (?, ?, ?, ?, ?)`,
   },
+  {
+    name: "insert-memory-stats",
+    sql: `INSERT OR REPLACE INTO memory_stats
+      (memory_id, type, confidence, last_seen, last_used, seen_count,
+       used_count, consolidation_count, strength, lifecycle, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  },
+  {
+    name: "update-memory-seen",
+    sql: `UPDATE memory_stats SET seen_count = ?, last_seen = ?, updated_at = ?
+      WHERE memory_id = ?`,
+  },
+  {
+    name: "update-memory-used",
+    sql: `UPDATE memory_stats SET used_count = ?, consolidation_count = ?,
+      last_used = ?, strength = ?, updated_at = ?
+      WHERE memory_id = ?`,
+  },
+  {
+    name: "update-memory-lifecycle",
+    sql: `UPDATE memory_stats SET lifecycle = ?, updated_at = ?
+      WHERE memory_id = ?`,
+  },
 ];
 
 /**
- * The memory projection. Classified 'derived'. Handles memory.created by
- * inserting a single memory record. Minimal — no scoring or consolidation.
+ * The memory projection. Classified 'derived'. Schema v2 — handles the full
+ * Phase 0.3 memory lifecycle: creation with initial stats, reinforcement
+ * (seen/used/consolidated), and lifecycle transitions (archived/tombstoned/
+ * deleted/restored). Rebuildable from canonical memory.* events.
  */
 export function createMemoryProjection(workspaceId: string): ProjectionDefinition {
   return {
     name: "memory",
-    schemaVersion: 1,
+    schemaVersion: 2,
     classification: "derived",
     statements: memoryStatements,
     apply(event: PersistedDomainEvent<string, unknown>, tx: ProjectionTransaction): void {
+      const occurredAt = event.occurredAt;
+      const eventTime = new Date(occurredAt).getTime();
+
       switch (event.type) {
         case "memory.created": {
           const p = event.payload as MemoryCreatedPayload;
+          // Insert immutable record
+          tx.exec("insert-memory", p.memoryId, workspaceId, p.type, p.body, event.sequence);
+          // Insert initial stats
           tx.exec(
-            "insert-memory",
+            "insert-memory-stats",
             p.memoryId,
-            workspaceId,
             p.type,
-            p.body,
-            event.sequence,
+            p.confidence ?? 0.5,
+            null, // last_seen
+            null, // last_used
+            0,    // seen_count
+            0,    // used_count
+            0,    // consolidation_count
+            p.confidence ?? 0.5, // initial strength = confidence at creation
+            "active",
+            eventTime,
+            eventTime,
           );
+          break;
+        }
+
+        case "memory.reinforced": {
+          const p = event.payload as MemoryReinforcedPayload;
+          if (p.kind === "seen") {
+            tx.exec("update-memory-seen", p.count, eventTime, eventTime, p.memoryId);
+          } else {
+            // "used" or "consolidated" — both update the same fields
+            tx.exec(
+              "update-memory-used",
+              p.count,
+              p.consolidationCount,
+              eventTime,
+              p.strength,
+              eventTime,
+              p.memoryId,
+            );
+          }
+          break;
+        }
+
+        case "memory.archived":
+        case "memory.tombstoned":
+        case "memory.deleted":
+        case "memory.restored": {
+          const p = event.payload as MemoryLifecycleEventPayload;
+          tx.exec("update-memory-lifecycle", p.to, eventTime, p.memoryId);
           break;
         }
 
@@ -119,7 +203,7 @@ export function createMemoryProjection(workspaceId: string): ProjectionDefinitio
 }
 
 // ---------------------------------------------------------------------------
-// Memory query helper (read-only — for the "create/retrieve one memory" gate step)
+// Memory query helper (read-only)
 // ---------------------------------------------------------------------------
 
 export interface MemoryRecord {
@@ -128,6 +212,21 @@ export interface MemoryRecord {
   type: string;
   body: string;
   createdSequence: number;
+}
+
+export interface MemoryStatsRecord {
+  memoryId: string;
+  type: string;
+  confidence: number;
+  lastSeen: number | null;
+  lastUsed: number | null;
+  seenCount: number;
+  usedCount: number;
+  consolidationCount: number;
+  strength: number;
+  lifecycle: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export function createMemoryQuery(db: import("better-sqlite3").Database) {
@@ -141,6 +240,23 @@ export function createMemoryQuery(db: import("better-sqlite3").Database) {
     };
   }
 
+  function rowToStats(row: Record<string, unknown>): MemoryStatsRecord {
+    return {
+      memoryId: row.memory_id as string,
+      type: row.type as string,
+      confidence: row.confidence as number,
+      lastSeen: (row.last_seen as number | null) ?? null,
+      lastUsed: (row.last_used as number | null) ?? null,
+      seenCount: row.seen_count as number,
+      usedCount: row.used_count as number,
+      consolidationCount: row.consolidation_count as number,
+      strength: row.strength as number,
+      lifecycle: row.lifecycle as string,
+      createdAt: row.created_at as number,
+      updatedAt: row.updated_at as number,
+    };
+  }
+
   return {
     getById(memoryId: string): MemoryRecord | undefined {
       const row = db.prepare("SELECT * FROM memories WHERE memory_id = ?").get(memoryId);
@@ -149,6 +265,18 @@ export function createMemoryQuery(db: import("better-sqlite3").Database) {
     getAll(): MemoryRecord[] {
       const rows = db.prepare("SELECT * FROM memories ORDER BY created_sequence").all();
       return (rows as Record<string, unknown>[]).map(rowToRecord);
+    },
+    getStats(memoryId: string): MemoryStatsRecord | undefined {
+      const row = db.prepare("SELECT * FROM memory_stats WHERE memory_id = ?").get(memoryId);
+      return row ? rowToStats(row as Record<string, unknown>) : undefined;
+    },
+    getAllStats(): MemoryStatsRecord[] {
+      const rows = db.prepare("SELECT * FROM memory_stats ORDER BY created_at").all();
+      return (rows as Record<string, unknown>[]).map(rowToStats);
+    },
+    getActiveStats(): MemoryStatsRecord[] {
+      const rows = db.prepare("SELECT * FROM memory_stats WHERE lifecycle = 'active' ORDER BY created_at").all();
+      return (rows as Record<string, unknown>[]).map(rowToStats);
     },
   };
 }

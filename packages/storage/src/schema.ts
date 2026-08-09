@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { canonicalStringify } from "@alcode/events";
 
 /** Current schema version. */
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 /** DDL for fresh databases (all tables at current version). */
 const WORKSPACE_SCHEMA: string[] = [
@@ -78,6 +78,20 @@ const WORKSPACE_SCHEMA: string[] = [
     type         TEXT NOT NULL,
     body         TEXT NOT NULL,
     created_sequence INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS memory_stats (
+    memory_id           TEXT PRIMARY KEY,
+    type                TEXT NOT NULL,
+    confidence          REAL NOT NULL,
+    last_seen           INTEGER,
+    last_used           INTEGER,
+    seen_count          INTEGER NOT NULL DEFAULT 0,
+    used_count          INTEGER NOT NULL DEFAULT 0,
+    consolidation_count INTEGER NOT NULL DEFAULT 0,
+    strength            REAL,
+    lifecycle           TEXT NOT NULL DEFAULT 'active',
+    created_at          INTEGER NOT NULL,
+    updated_at          INTEGER NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS transcript_messages (
     event_id     TEXT PRIMARY KEY,
@@ -155,6 +169,9 @@ export function initWorkspaceDb(db: Database.Database): void {
   }
   if (getSchemaVersion(db) < 5) {
     migrateV4toV5(db);
+  }
+  if (getSchemaVersion(db) < 6) {
+    migrateV5toV6(db);
   }
 }
 
@@ -430,6 +447,35 @@ function migrateV4toV5(db: Database.Database): void {
     )`);
 
     db.prepare("INSERT OR REPLACE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(5, new Date().toISOString());
+  });
+
+  migrationTxn();
+}
+
+/**
+ * Migration from schema v5 to v6.
+ * Adds the `memory_stats` table for mutable memory statistics (strength,
+ * usage counters, lifecycle, consolidation count) — the Ola-derived sidecar
+ * that lives alongside the immutable `memories` content table.
+ */
+function migrateV5toV6(db: Database.Database): void {
+  const migrationTxn = db.transaction(() => {
+    db.exec(`CREATE TABLE IF NOT EXISTS memory_stats (
+      memory_id           TEXT PRIMARY KEY,
+      type                TEXT NOT NULL,
+      confidence          REAL NOT NULL,
+      last_seen           INTEGER,
+      last_used           INTEGER,
+      seen_count          INTEGER NOT NULL DEFAULT 0,
+      used_count          INTEGER NOT NULL DEFAULT 0,
+      consolidation_count INTEGER NOT NULL DEFAULT 0,
+      strength            REAL,
+      lifecycle           TEXT NOT NULL DEFAULT 'active',
+      created_at          INTEGER NOT NULL,
+      updated_at          INTEGER NOT NULL
+    )`);
+
+    db.prepare("INSERT OR REPLACE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(6, new Date().toISOString());
   });
 
   migrationTxn();
