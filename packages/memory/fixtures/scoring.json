@@ -29,7 +29,7 @@
         "tags": ["auth"],
         "queryTokens": ["xyzzy_no_match"]
       },
-      "expected": { "final_range": [0.10, 0.20], "exact_match": false }
+      "expected": { "final": 0.135, "exact_match": false }
     }
   ]
 }

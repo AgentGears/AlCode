@@ -134,7 +134,7 @@ async function main(): Promise<void> {
       import { readFileSync, existsSync } from "node:fs";
       import { join } from "node:path";
       const dir = "${join(ROOT, "packages/memory/fixtures").replace(/\\/g, "/")}";
-      const expected = ["strength.json", "scoring.json", "reinforcement.json"];
+      const expected = ["strength.json", "scoring.json", "reinforcement.json", "lifecycle.json"];
       let totalCases = 0;
       for (const f of expected) {
         const p = join(dir, f);

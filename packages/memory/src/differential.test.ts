@@ -141,7 +141,7 @@ describe("differential: scoring (Ola golden corpus)", () => {
         daysSinceCreation: number;
         tags?: string[];
       };
-      expected: { final?: number; final_range?: [number, number]; exact_match: boolean };
+      expected: { final?: number; exact_match: boolean };
     }>;
   };
 
@@ -170,10 +170,6 @@ describe("differential: scoring (Ola golden corpus)", () => {
 
       if (c.expected.final !== undefined) {
         expect(ranked[0]!.score.final).toBe(c.expected.final);
-      }
-      if (c.expected.final_range) {
-        expect(ranked[0]!.score.final).toBeGreaterThanOrEqual(c.expected.final_range[0]!);
-        expect(ranked[0]!.score.final).toBeLessThanOrEqual(c.expected.final_range[1]!);
       }
       expect(ranked[0]!.score.exact_match).toBe(c.expected.exact_match);
     });

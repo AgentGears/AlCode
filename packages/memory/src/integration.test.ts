@@ -66,9 +66,11 @@ describeLocked("memory projection integration", () => {
     const mem2Confidence = resolveConfidence("high"); // 0.9
 
     // 1. Append memory.created events
+    const mem1EventId = mkEventId();
+    const mem2EventId = mkEventId();
     await rt.store.append([
       {
-        eventId: mkEventId(),
+        eventId: mem1EventId,
         workspaceId: wsId as never,
         sessionId: "00000000-0000-7000-8000-000000000001" as never,
         occurredAt: new Date(NOW).toISOString(),
@@ -80,12 +82,13 @@ describeLocked("memory projection integration", () => {
           name: "test_lesson",
           confidence: mem1Confidence,
           fields: { lesson_name: "test_lesson", domain: "auth", tags: ["security"], content: "auth lesson" },
+          sourceEventIds: [mem1EventId],
         },
         payloadSchemaVersion: 1,
         producer: { kind: "runtime", component: "test" },
       },
       {
-        eventId: mkEventId(),
+        eventId: mem2EventId,
         workspaceId: wsId as never,
         sessionId: "00000000-0000-7000-8000-000000000001" as never,
         occurredAt: new Date(NOW).toISOString(),
@@ -97,6 +100,7 @@ describeLocked("memory projection integration", () => {
           name: "auth_pattern",
           confidence: mem2Confidence,
           fields: { playbook_name: "auth_pattern", domain: "auth", tags: ["security", "auth"], content: "auth playbook" },
+          sourceEventIds: [mem2EventId],
         },
         payloadSchemaVersion: 1,
         producer: { kind: "runtime", component: "test" },
@@ -131,6 +135,8 @@ describeLocked("memory projection integration", () => {
     expect(mem1!.name).toBe("test_lesson");
     expect(mem1!.fields).not.toBeNull();
     expect(mem1!.confidence).toBe(0.8);
+    // Provenance: sourceEventIds survive the projection round-trip.
+    expect(mem1!.sourceEventIds).toEqual([mem1EventId]);
 
     // 4. Append reinforcement events (use mem1)
     let stats = createInitialStats(mem1Id, "lesson", mem1Confidence, NOW);
