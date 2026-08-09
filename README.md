@@ -8,16 +8,17 @@ reasoning, tools, model access, persistence, and UI are governed by one
 codebase. The append-only event log is the source of truth; reasoning, memory,
 the transcript, the UI, and the LLM context window are all projections of it.
 
-**Status:** Phase 0.0 (architecture foundation) — **reopened**. Documentation
-is complete; the executable scaffold (workspace, `events` package, gate runner,
-ADRs, threat model, recovery model, licensing, minimal CI) is pending.
+**Status:** Phases 0.0, 0.1A, 0.2 — **closed**. The durable event/recovery
+spine is proven (gate:0.2 green on `main`). See
+[`docs/roadmap.md`](docs/roadmap.md) for architecture orientation.
 
 `ref/` (gitignored) holds studied reference codebases — not part of this repo.
 
 ## Read first
 
 1. [`docs/constitution.md`](docs/constitution.md) — the 10 frozen principles.
-2. [`docs/phase-0-spec.md`](docs/phase-0-spec.md) — the executable build order,
+2. [`docs/roadmap.md`](docs/roadmap.md) — architecture orientation and sequencing.
+3. [`docs/phase-0-spec.md`](docs/phase-0-spec.md) — the executable build order,
    with gate-receipt schema and per-phase `pnpm gate:X.Y` exit gates.
 3. [`docs/event-contract.md`](docs/event-contract.md) — the domain event
    envelope, producer, identity, versioning semantics, and ownership rules.
@@ -58,9 +59,9 @@ accidental distribution by owning the whole cognitive loop. See
 ## Phase 0 at a glance
 
 ```
-0.0  Architecture foundation (REOPENED):        2–4 days      [docs done; scaffold pending]
-0.1A Minimal agent loop + offline provider:    2–4 days      [next]
-0.2  Minimal durable vertical slice:           1–2 weeks     (load-bearing)
+0.0  Architecture foundation (CLOSED):          2–4 days
+0.1A Minimal agent loop + offline provider:    2–4 days      [CLOSED]
+0.2  Minimal durable vertical slice:           1–2 weeks     [CLOSED]
 0.1B Remaining tools, live providers, repro:   3–7 days
 0.3  Memory semantic core (Ola):               3–7 days
 0.4  Reasoning semantic core (Ouroboros):      1–2 weeks
@@ -77,14 +78,12 @@ Every phase ends with an **executable gate** (`pnpm gate:X.Y`) that emits a
 machine-readable `GateReceipt` — see `docs/phase-0-spec.md` for the schema.
 Gates drive sequencing, not calendars.
 
-## The next action
+## The next phases
 
-Phase 0.0's documentation is complete; the executable scaffold is pending. The
-next action is to **finish Phase 0.0**: create the `packages/` workspace,
-implement the `events` scaffold, add the `test-provider`, set up the gate
-runner harness with the `GateReceipt` schema, add minimal CI on one platform,
-write `LICENSE`/`THIRD_PARTY_NOTICES.md`, and make `pnpm gate:0.0` emit
-`status: "passed"`.
+Phases 0.0, 0.1A, and 0.2 are closed — the durable event/recovery spine is
+proven. The next phases are 0.1B (capability foundation), 0.3 (memory
+semantics), and 0.4 (reasoning semantics), which can proceed in parallel.
 
-See [`docs/phase-0-spec.md`](docs/phase-0-spec.md) §0.0 for the exact scope,
-exclusions, deliverables, tests, and exit gate.
+See [`docs/roadmap.md`](docs/roadmap.md) for architecture orientation and
+[`docs/phase-0-spec.md`](docs/phase-0-spec.md) for the executable
+specification with per-phase exit gates.

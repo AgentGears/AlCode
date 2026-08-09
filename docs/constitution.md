@@ -67,10 +67,9 @@ governed by one codebase.
 
 ## Status
 
-Phase 0.0 is **reopened** — documentation was complete but the executable
-scaffold (workspace, `events` package, gate runner, ADRs, threat model,
-recovery model, licensing, minimal CI) was not. See `docs/phase-0-spec.md` §0.0
-for the corrected, executable scope.
+Phases 0.0, 0.1A, and 0.2 are **closed** — the durable event/recovery spine
+is proven (`gate:0.2` green on `main`). See `docs/roadmap.md` for architecture
+orientation and `docs/phase-0-spec.md` for the executable specification.
 
 ## Relationship to the prior work
 
