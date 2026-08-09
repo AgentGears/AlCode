@@ -17,5 +17,11 @@
   },
   "dependencies": {
     "@alcode/agent-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@alcode/events": "workspace:*",
+    "@alcode/storage": "workspace:*",
+    "@types/better-sqlite3": "^7.6.13",
+    "better-sqlite3": "^13.0.3"
   }
 }
