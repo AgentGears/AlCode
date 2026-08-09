@@ -120,14 +120,48 @@ async function main(): Promise<void> {
     });
   }
 
-  // 6. Live-provider smoke: skipped unless explicitly enabled
+  // 6. Live-provider smoke test — actually executes when ALCODE_LIVE_SMOKE=1.
+  //    Without the flag: skipped. With the flag + success: passed. With the flag + failure: failed.
   {
     const smokeEnabled = process.env.ALCODE_LIVE_SMOKE === "1";
-    checks.push({
-      id: "phase0.live_provider_smoke",
-      status: "passed",
-      evidence: smokeEnabled ? "live smoke enabled (not run in default CI)" : "skipped (opt-in, not required by default CI)",
-    });
+    if (!smokeEnabled) {
+      checks.push({
+        id: "phase0.live_provider_smoke",
+        status: "skipped",
+        evidence: "opt-in (set ALCODE_LIVE_SMOKE=1 + ANTHROPIC_API_KEY to run)",
+      });
+    } else {
+      // Execute a real Anthropic API request.
+      const result = run("npx", ["tsx", "-e", `
+        const { AnthropicProvider, resolveProviderConfig } = await import("${join(ROOT, "packages/ai/src/index.ts").replace(/\\/g, "/")}");
+        const config = resolveProviderConfig("anthropic", "claude-sonnet-4-20250514");
+        if (!config.apiKey) { console.error("No ANTHROPIC_API_KEY"); process.exit(1); }
+        const provider = new AnthropicProvider(config);
+        const stream = await provider.stream({
+          systemPrompt: "You are a test assistant. Reply with exactly: OK",
+          messages: [{ role: "user", content: [{ type: "text", text: "ping" }], timestamp: Date.now() }],
+          tools: [],
+        });
+        let text = "";
+        let gotDone = false;
+        for await (const event of stream) {
+          if (event.type === "text_delta") text += event.text;
+          if (event.type === "done") gotDone = true;
+          if (event.type === "error") { console.error("Provider error:", event.message); process.exit(1); }
+        }
+        if (!gotDone) { console.error("No done event"); process.exit(1); }
+        console.log("smoke: received response (" + text.length + " chars)");
+        process.exit(0);
+      `], { cwd: ROOT, throwOnError: false });
+
+      checks.push({
+        id: "phase0.live_provider_smoke",
+        status: result.exitCode === 0 ? "passed" : "failed",
+        evidence: result.exitCode === 0
+          ? result.stdout.trim().slice(0, 200)
+          : `FAILED: ${result.stderr.trim().slice(0, 300)}`,
+      });
+    }
   }
 
   // Build receipt

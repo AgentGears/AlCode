@@ -173,3 +173,6 @@ function streamFromEvents(events: ModelEvent[]): ModelStream {
 export function liveCredentialsAvailable(config: ProviderConfig): boolean {
   return config.apiKey !== undefined && config.apiKey.length > 0;
 }
+
+// Live provider adapter (Anthropic)
+export { AnthropicProvider } from "./anthropic-provider.ts";
