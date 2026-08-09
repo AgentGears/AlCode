@@ -67,6 +67,8 @@ export interface MemoryRecord {
   name: string;
   fields: LessonFields | PlaybookFields;
   stored_at: number;
+  /** Event IDs that caused this memory's creation (provenance). */
+  sourceEventIds?: string[];
 }
 
 // ---------------------------------------------------------------------------

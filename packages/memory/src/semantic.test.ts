@@ -267,7 +267,9 @@ describe("exact-match override (isExactMatch)", () => {
 describe("rankByBlendedScore", () => {
   it("exact match ranks first with final=1.0", () => {
     const record = makeRecord({});
-    const statsMap = new Map<string, MemoryStats>();
+    const statsMap = new Map<string, MemoryStats>([
+      [record.memory_id, createInitialStats(record.memory_id, "lesson", 0.8, NOW)],
+    ]);
     const ranked = rankByBlendedScore([record], statsMap, "test", NOW);
     expect(ranked[0]!.score.final).toBe(1);
     expect(ranked[0]!.score.exact_match).toBe(true);

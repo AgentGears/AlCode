@@ -1,5 +1,5 @@
 {
-  "description": "Ola strength/decay differential fixtures — exact expected values from C:/Next-Era/Ola/hooks/lib/strength.js",
+  "description": "Ola strength/decay differential fixtures — narrow oracle tolerances from C:/Next-Era/Ola/hooks/lib/strength.js",
   "oracle": {
     "source": "C:/Next-Era/Ola/hooks/lib/strength.js",
     "commit": "20be4b18d4c57487f8993d2762bace129f0cf7c6",
@@ -10,27 +10,44 @@
     {
       "name": "confidence 0.9, 0 days, consolidation 0",
       "input": { "confidence": 0.9, "consolidation_count": 0, "daysSinceUse": 0 },
-      "expectedRange": [0.89, 0.91]
+      "expected": 0.9,
+      "tolerance": 0.001
     },
     {
       "name": "confidence 0.9, 7 days, consolidation 0",
       "input": { "confidence": 0.9, "consolidation_count": 0, "daysSinceUse": 7 },
-      "expectedRange": [0.40, 0.50]
+      "expected": 0.4467,
+      "tolerance": 0.01
     },
     {
       "name": "confidence 0.9, 7 days, consolidation 5",
       "input": { "confidence": 0.9, "consolidation_count": 5, "daysSinceUse": 7 },
-      "expectedRange": [0.58, 0.68]
+      "expected": 0.6336,
+      "tolerance": 0.01
     },
     {
       "name": "confidence 0.7, never used, 3 days since creation",
       "input": { "confidence": 0.7, "consolidation_count": 0, "daysSinceUse": 3 },
-      "expectedRange": [0.40, 0.60]
+      "expected": 0.5189,
+      "tolerance": 0.01
     },
     {
       "name": "confidence 0.4 (low), 0 days",
       "input": { "confidence": 0.4, "consolidation_count": 0, "daysSinceUse": 0 },
-      "expectedRange": [0.39, 0.41]
+      "expected": 0.4,
+      "tolerance": 0.001
+    },
+    {
+      "name": "confidence 0.8, 30 days, consolidation 0",
+      "input": { "confidence": 0.8, "consolidation_count": 0, "daysSinceUse": 30 },
+      "expected": 0.0397,
+      "tolerance": 0.01
+    },
+    {
+      "name": "confidence 0.8, 30 days, consolidation 3",
+      "input": { "confidence": 0.8, "consolidation_count": 3, "daysSinceUse": 30 },
+      "expected": 0.1190,
+      "tolerance": 0.01
     }
   ]
 }

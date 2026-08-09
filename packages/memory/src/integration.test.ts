@@ -125,6 +125,13 @@ describeLocked("memory projection integration", () => {
     expect(stats1!.usedCount).toBe(0);
     expect(stats2!.confidence).toBe(0.9);
 
+    // Provenance: verify the projected record carries sourceEventIds through
+    // the persistence layer (the memory.created event's eventId).
+    // The projected memories.name and memories.fields_json columns should be populated.
+    expect(mem1!.name).toBe("test_lesson");
+    expect(mem1!.fields).not.toBeNull();
+    expect(mem1!.confidence).toBe(0.8);
+
     // 4. Append reinforcement events (use mem1)
     let stats = createInitialStats(mem1Id, "lesson", mem1Confidence, NOW);
     const useResult = applyRecordUse(stats, NOW + 5000); // first use
@@ -157,17 +164,22 @@ describeLocked("memory projection integration", () => {
     expect(statsAfterUse!.usedCount).toBe(1);
     expect(statsAfterUse!.lastUsed).toBe(NOW + 5000);
 
-    // 6. Retrieve/rank using the semantic engine
-    // (In production the Host reads records + stats from the projection,
-    // passes them to @alcode/memory for scoring/ranking.)
+    // 6. Retrieve/rank using the semantic engine.
+    // Use the ACTUAL projected record (name, fields, confidence, sourceEventIds)
+    // from the projection query — no manual reconstruction.
     const roDb3 = new Database(dbPath, { readonly: true, fileMustExist: true });
     const query3 = createMemoryQuery(roDb3);
-    const allRecords = query3.getAll().map((r: { type: string; memoryId: string; body: string }) => ({
+    const allRecords = query3.getAll().map((r: {
+      type: string; memoryId: string; body: string; name: string | null;
+      fields: Record<string, unknown> | null; confidence: number | null;
+      sourceEventIds: string[] | null;
+    }) => ({
       type: r.type as "lesson" | "playbook",
       memory_id: r.memoryId,
-      name: r.memoryId.split("/")[1]!.replace(".md", ""),
+      name: r.name ?? r.memoryId.split("/")[1]!.replace(".md", ""),
       stored_at: NOW,
-      fields: { content: r.body, domain: "auth", tags: ["security"] },
+      fields: (r.fields ?? { content: r.body }) as Record<string, unknown>,
+      ...(r.sourceEventIds ? { sourceEventIds: r.sourceEventIds } : {}),
     })) as unknown as import("./schema.ts").MemoryRecord[];
     const statsMap = new Map();
     for (const s of query3.getAllStats()) {

@@ -1,0 +1,25 @@
+{
+  "description": "Ola lifecycle transition differential fixtures — exact allowed/forbidden transitions from strength.js validTransition",
+  "oracle": {
+    "source": "C:/Next-Era/Ola/hooks/lib/strength.js",
+    "function": "validTransition"
+  },
+  "forwardTransitions": [
+    { "from": "active", "to": "archived", "allowed": true },
+    { "from": "archived", "to": "tombstoned", "allowed": true },
+    { "from": "tombstoned", "to": "deleted", "allowed": true }
+  ],
+  "restoreTransitions": [
+    { "from": "archived", "to": "active", "allowed": true }
+  ],
+  "forbiddenTransitions": [
+    { "from": "active", "to": "tombstoned", "allowed": false },
+    { "from": "active", "to": "deleted", "allowed": false },
+    { "from": "tombstoned", "to": "active", "allowed": false },
+    { "from": "tombstoned", "to": "archived", "allowed": false },
+    { "from": "deleted", "to": "active", "allowed": false },
+    { "from": "deleted", "to": "archived", "allowed": false },
+    { "from": "active", "to": "active", "allowed": false },
+    { "from": "archived", "to": "archived", "allowed": false }
+  ]
+}

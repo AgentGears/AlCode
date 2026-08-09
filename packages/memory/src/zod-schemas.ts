@@ -47,6 +47,7 @@ export const MemoryRecordSchema = z.object({
   name: z.string(),
   fields: z.union([LessonFieldsSchema, PlaybookFieldsSchema]),
   stored_at: z.number(),
+  sourceEventIds: z.array(z.string()).optional(),
 });
 
 // ---------------------------------------------------------------------------

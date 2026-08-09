@@ -25,6 +25,8 @@ export interface MemoryCreatedPayload {
   confidence: number;
   /** Schema fields (lesson or playbook) as JSON-serializable object */
   fields: Record<string, unknown>;
+  /** Event IDs that caused this memory's creation (provenance). */
+  sourceEventIds?: string[];
 }
 
 // ---------------------------------------------------------------------------

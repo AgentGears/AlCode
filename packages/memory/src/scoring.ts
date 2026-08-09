@@ -180,11 +180,13 @@ export function rankByBlendedScore(
 ): ScoredMemory[] {
   const queryTokens = tokenize(query);
 
-  // Filter: exclude inactive memories (archived/tombstoned/deleted).
-  // A memory with no stats row is treated as active.
+  // Filter: exclude inactive memories AND memories with no stats row.
+  // A record without a stats row was not created through the normal
+  // memory.created path (which always creates a stats row in the v2
+  // projection). Fail closed: missing stats = not eligible.
   const activeRecords = records.filter((record) => {
     const stats = statsMap.get(record.memory_id);
-    if (!stats) return true; // no stats = never lifecycle-managed = active
+    if (!stats) return false; // fail closed: no stats = not eligible
     return stats.lifecycle === "active";
   });
 
