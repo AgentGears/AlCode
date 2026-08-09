@@ -1,6 +1,6 @@
 # ALCODE — Phase 0 Specification (executable)
 
-Status: **active; Phase 0.0 reopened** (documentation complete, scaffold pending).
+Status: **active; Phases 0.0, 0.1A, 0.2 closed** — gate:0.2 green on `main` (`dd07fb2`). See `docs/roadmap.md` for architecture orientation.
 
 This is the executable build order. Each phase has an objective, inputs,
 implementation scope, explicit exclusions, deliverables, required tests, an
@@ -117,7 +117,7 @@ output lives in content-addressed artifact files referenced by digest.
 
 ---
 
-## Phase 0.0 — Architecture foundation (REOPENED)
+## Phase 0.0 — Architecture foundation (CLOSED)
 
 **Objective:** Establish the executable foundation — workspace, minimal
 `events` scaffold, test framework, licensing, minimal CI on one platform, and
@@ -171,7 +171,7 @@ the constitution itself is wrong, amend via a documented constitutional change.
 
 ---
 
-## Phase 0.1A — Minimal agent loop with offline provider
+## Phase 0.1A — Minimal agent loop with offline provider (CLOSED)
 
 **Objective:** a runnable owned agent (vendored pi loop semantics) with one
 controlled tool, driven by the offline `test-provider`, persisting nothing yet.
@@ -266,7 +266,7 @@ the listed modules.
 
 ---
 
-## Phase 0.2 — Minimal durable vertical slice
+## Phase 0.2 — Minimal durable vertical slice (CLOSED)
 
 **Objective:** prove the event-log-as-truth architecture end-to-end on a thin
 slice, before any Ola/Ouroboros port. The load-bearing proof.
