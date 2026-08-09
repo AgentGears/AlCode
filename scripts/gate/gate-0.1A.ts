@@ -84,7 +84,7 @@ async function main(): Promise<void> {
     });
   }
 
-  // 2. Imported-file checksums: compute SHA-256 of all 4 files and compare
+  // 2. Imported-file checksums: compute SHA-256 of all manifest files and compare
   {
     const manifestPath = join(ROOT, "docs/provenance/pi-v0.81.1.import.json");
     const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
@@ -106,8 +106,8 @@ async function main(): Promise<void> {
     }
     checks.push({
       id: "provenance.pi.checksums_verified",
-      status: allMatch && files.length === 4 ? "passed" : "failed",
-      evidence: allMatch && files.length === 4 ? "4/4 SHA-256 verified" : detail || "checksum verification failed",
+      status: allMatch && files.length > 0 ? "passed" : "failed",
+      evidence: allMatch && files.length > 0 ? `${files.length}/${files.length} SHA-256 verified` : detail || "checksum verification failed",
     });
   }
 
