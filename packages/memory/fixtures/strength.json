@@ -1,0 +1,36 @@
+{
+  "description": "Ola strength/decay differential fixtures — exact expected values from C:/Next-Era/Ola/hooks/lib/strength.js",
+  "oracle": {
+    "source": "C:/Next-Era/Ola/hooks/lib/strength.js",
+    "commit": "20be4b18d4c57487f8993d2762bace129f0cf7c6",
+    "formula": "confidence × exp(−DECAY_RATE × daysSinceUse / (1 + CONSOLIDATION_FACTOR × consolidationCount))",
+    "constants": { "DECAY_RATE": 0.1, "CONSOLIDATION_FACTOR": 0.2 }
+  },
+  "cases": [
+    {
+      "name": "confidence 0.9, 0 days, consolidation 0",
+      "input": { "confidence": 0.9, "consolidation_count": 0, "daysSinceUse": 0 },
+      "expectedRange": [0.89, 0.91]
+    },
+    {
+      "name": "confidence 0.9, 7 days, consolidation 0",
+      "input": { "confidence": 0.9, "consolidation_count": 0, "daysSinceUse": 7 },
+      "expectedRange": [0.40, 0.50]
+    },
+    {
+      "name": "confidence 0.9, 7 days, consolidation 5",
+      "input": { "confidence": 0.9, "consolidation_count": 5, "daysSinceUse": 7 },
+      "expectedRange": [0.58, 0.68]
+    },
+    {
+      "name": "confidence 0.7, never used, 3 days since creation",
+      "input": { "confidence": 0.7, "consolidation_count": 0, "daysSinceUse": 3 },
+      "expectedRange": [0.40, 0.60]
+    },
+    {
+      "name": "confidence 0.4 (low), 0 days",
+      "input": { "confidence": 0.4, "consolidation_count": 0, "daysSinceUse": 0 },
+      "expectedRange": [0.39, 0.41]
+    }
+  ]
+}

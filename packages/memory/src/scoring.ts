@@ -166,6 +166,10 @@ export function computeBlendedScore(
 
 /**
  * Rank memories by blended score, descending. Exact matches always rank first.
+ *
+ * Only active memories participate: records whose stats lifecycle is not
+ * "active" are excluded before scoring. A memory with no stats row is
+ * treated as active (it has not been lifecycle-managed yet).
  */
 export function rankByBlendedScore(
   records: MemoryRecord[],
@@ -176,7 +180,15 @@ export function rankByBlendedScore(
 ): ScoredMemory[] {
   const queryTokens = tokenize(query);
 
-  const scored: ScoredMemory[] = records.map((record) => {
+  // Filter: exclude inactive memories (archived/tombstoned/deleted).
+  // A memory with no stats row is treated as active.
+  const activeRecords = records.filter((record) => {
+    const stats = statsMap.get(record.memory_id);
+    if (!stats) return true; // no stats = never lifecycle-managed = active
+    return stats.lifecycle === "active";
+  });
+
+  const scored: ScoredMemory[] = activeRecords.map((record) => {
     const stats = statsMap.get(record.memory_id) ?? null;
     const { breakdown, strength: _strength } = computeBlendedScore(
       record,

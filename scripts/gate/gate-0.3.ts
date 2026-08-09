@@ -127,22 +127,48 @@ async function main(): Promise<void> {
     });
   }
 
-  // 5. Ola differential fixture families present
+  // 5. Ola differential fixtures — checked-in JSON corpus + execution
   {
-    const result = run("npx", ["tsx", "-e", `
-      import { readFileSync } from "node:fs";
-      const content = readFileSync("${join(ROOT, "packages/memory/src/semantic.test.ts").replace(/\\/g, "/")}", "utf-8");
-      const families = ["scoring", "exact-match", "recordSeen", "recordUse", "computeStrength", "lifecycle"];
-      const missing = families.filter(f => !content.includes(f));
-      if (missing.length > 0) { console.log("MISSING: " + missing.join(", ")); process.exit(1); }
-      console.log("5 fixture families present (scoring, exact-match, reinforcement, lifecycle, decay)");
+    // First verify the fixture JSON files exist and have oracle metadata
+    const fixtureCheck = run("npx", ["tsx", "-e", `
+      import { readFileSync, existsSync } from "node:fs";
+      import { join } from "node:path";
+      const dir = "${join(ROOT, "packages/memory/fixtures").replace(/\\/g, "/")}";
+      const expected = ["strength.json", "scoring.json", "reinforcement.json"];
+      let totalCases = 0;
+      for (const f of expected) {
+        const p = join(dir, f);
+        if (!existsSync(p)) { console.error("MISSING fixture: " + f); process.exit(1); }
+        const json = JSON.parse(readFileSync(p, "utf-8"));
+        if (!json.oracle || !json.oracle.source) { console.error("MISSING oracle metadata in " + f); process.exit(1); }
+        totalCases += (json.cases || []).length;
+      }
+      console.log(totalCases + " differential cases across 3 fixture files");
       process.exit(0);
     `], { cwd: ROOT, throwOnError: false });
-    checks.push({
-      id: "phase0.differential_fixtures",
-      status: result.exitCode === 0 ? "passed" : "failed",
-      evidence: result.exitCode === 0 ? "5 fixture families present" : result.stdout.trim().slice(0, 200),
-    });
+
+    if (fixtureCheck.exitCode !== 0) {
+      checks.push({
+        id: "phase0.differential_fixtures",
+        status: "failed",
+        evidence: fixtureCheck.stderr.slice(0, 200),
+      });
+    } else {
+      // Then run the actual differential test suite
+      const result = run("npx", ["vitest", "run", "src/differential.test.ts"], {
+        cwd: join(ROOT, "packages/memory"), throwOnError: false,
+      });
+      const passed = result.exitCode === 0;
+      const summaryMatch = result.stdout.match(/Tests\s+(\d+ passed|\d+ failed)/);
+      const failureOutput = `${result.stdout}\n${result.stderr}`.trim();
+      checks.push({
+        id: "phase0.differential_fixtures",
+        status: passed ? "passed" : "failed",
+        evidence: passed
+          ? `${fixtureCheck.stdout.trim()} — ${summaryMatch ? summaryMatch[0] : "all passed"}`
+          : failureOutput.slice(0, 4000),
+      });
+    }
   }
 
   // Build receipt

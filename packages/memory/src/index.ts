@@ -80,3 +80,15 @@ export {
   type MemoryLifecyclePayload,
   type ReinforcementKind,
 } from "./events.ts";
+
+// Zod schemas
+export {
+  LessonFieldsSchema,
+  PlaybookFieldsSchema,
+  MemoryRecordSchema,
+  validateLessonFields,
+  validatePlaybookFields,
+  type LessonFieldsZod,
+  type PlaybookFieldsZod,
+  type MemoryRecordZod,
+} from "./zod-schemas.ts";

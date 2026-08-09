@@ -77,7 +77,11 @@ const WORKSPACE_SCHEMA: string[] = [
     workspace_id TEXT NOT NULL,
     type         TEXT NOT NULL,
     body         TEXT NOT NULL,
-    created_sequence INTEGER NOT NULL
+    created_sequence INTEGER NOT NULL,
+    name         TEXT,
+    fields_json  TEXT,
+    confidence   REAL,
+    source_event_ids TEXT
   )`,
   `CREATE TABLE IF NOT EXISTS memory_stats (
     memory_id           TEXT PRIMARY KEY,
@@ -474,6 +478,27 @@ function migrateV5toV6(db: Database.Database): void {
       created_at          INTEGER NOT NULL,
       updated_at          INTEGER NOT NULL
     )`);
+
+    // Add columns to memories for the complete semantic record (Fix 2).
+    // ALTER TABLE ADD COLUMN is safe on SQLite for existing tables.
+    const memoriesCols = db.prepare(
+      "SELECT COUNT(*) as c FROM pragma_table_info('memories') WHERE name = 'name'",
+    ).get() as { c: number };
+    if (memoriesCols.c === 0) {
+      db.exec("ALTER TABLE memories ADD COLUMN name TEXT");
+      db.exec("ALTER TABLE memories ADD COLUMN fields_json TEXT");
+      db.exec("ALTER TABLE memories ADD COLUMN confidence REAL");
+      db.exec("ALTER TABLE memories ADD COLUMN source_event_ids TEXT");
+    }
+
+    // Reset the memory projection cursor so it rebuilds under schema v2.
+    // A v5 database has cursor schema version 1; the v2 projection declares
+    // schema version 2. Without this reset, catchUp() throws
+    // SchemaVersionMismatchError before replay can proceed.
+    db.prepare("DELETE FROM projection_cursors WHERE projection_name = 'memory'").run();
+    // Clear stale rows from the v1 projection so they don't conflict with
+    // the v2 INSERT OR REPLACE during rebuild.
+    db.exec("DELETE FROM memories");
 
     db.prepare("INSERT OR REPLACE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(6, new Date().toISOString());
   });

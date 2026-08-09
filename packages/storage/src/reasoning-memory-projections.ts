@@ -79,6 +79,8 @@ export interface MemoryCreatedPayload {
   name?: string;
   confidence?: number;
   fields?: Record<string, unknown>;
+  /** Event IDs that caused this memory's creation (provenance). */
+  sourceEventIds?: string[];
 }
 
 export interface MemoryReinforcedPayload {
@@ -99,8 +101,8 @@ export const memoryStatements: readonly StatementDefinition[] = [
   {
     name: "insert-memory",
     sql: `INSERT OR REPLACE INTO memories
-      (memory_id, workspace_id, type, body, created_sequence)
-      VALUES (?, ?, ?, ?, ?)`,
+      (memory_id, workspace_id, type, body, created_sequence, name, fields_json, confidence, source_event_ids)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   },
   {
     name: "insert-memory-stats",
@@ -146,8 +148,19 @@ export function createMemoryProjection(workspaceId: string): ProjectionDefinitio
       switch (event.type) {
         case "memory.created": {
           const p = event.payload as MemoryCreatedPayload;
-          // Insert immutable record
-          tx.exec("insert-memory", p.memoryId, workspaceId, p.type, p.body, event.sequence);
+          // Insert immutable record with full semantic content
+          tx.exec(
+            "insert-memory",
+            p.memoryId,
+            workspaceId,
+            p.type,
+            p.body,
+            event.sequence,
+            p.name ?? null,
+            p.fields ? JSON.stringify(p.fields) : null,
+            p.confidence ?? null,
+            p.sourceEventIds ? JSON.stringify(p.sourceEventIds) : null,
+          );
           // Insert initial stats
           tx.exec(
             "insert-memory-stats",
@@ -212,6 +225,10 @@ export interface MemoryRecord {
   type: string;
   body: string;
   createdSequence: number;
+  name: string | null;
+  fields: Record<string, unknown> | null;
+  confidence: number | null;
+  sourceEventIds: string[] | null;
 }
 
 export interface MemoryStatsRecord {
@@ -231,12 +248,24 @@ export interface MemoryStatsRecord {
 
 export function createMemoryQuery(db: import("better-sqlite3").Database) {
   function rowToRecord(row: Record<string, unknown>): MemoryRecord {
+    let fields: Record<string, unknown> | null = null;
+    if (row.fields_json) {
+      try { fields = JSON.parse(row.fields_json as string); } catch { /* malformed */ }
+    }
+    let sourceEventIds: string[] | null = null;
+    if (row.source_event_ids) {
+      try { sourceEventIds = JSON.parse(row.source_event_ids as string); } catch { /* malformed */ }
+    }
     return {
       memoryId: row.memory_id as string,
       workspaceId: row.workspace_id as string,
       type: row.type as string,
       body: row.body as string,
       createdSequence: row.created_sequence as number,
+      name: (row.name as string | null) ?? null,
+      fields,
+      confidence: (row.confidence as number | null) ?? null,
+      sourceEventIds,
     };
   }
 
