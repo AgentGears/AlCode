@@ -119,59 +119,83 @@ class LocalFilesystem implements FilesystemCapability {
 
   async grep(req: FilesystemGrepRequest): Promise<FilesystemSearchResult[]> {
     const searchDir = req.path ? this.resolvePath(req.path) : this.root;
-    const flags = ["-rn", "--color=never"];
-    if (req.ignoreCase) flags.push("-i");
-    if (!req.isRegex) flags.push("-F");
-    if (req.include) flags.push("--include", req.include);
-    if (req.maxResults) flags.push("-m", String(req.maxResults));
+    const maxResults = req.maxResults ?? 100;
+    const results: FilesystemSearchResult[] = [];
 
-    try {
-      const stdout = execSync(
-        `grep ${flags.join(" ")} -- ${JSON.stringify(req.pattern)} ${JSON.stringify(searchDir)}`,
-        { encoding: "utf-8", maxBuffer: 10 * 1024 * 1024, cwd: this.root },
-      );
-      return stdout
-        .trim()
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => {
-          // Parse from the right: text is after the last colon, line number
-          // is between the last two colons, filepath is everything before.
-          // This handles Windows drive-letter paths (C:\...) which contain colons.
-          const lastColon = line.lastIndexOf(":");
-          const text = line.substring(lastColon + 1);
-          const beforeText = line.substring(0, lastColon);
-          const secondLastColon = beforeText.lastIndexOf(":");
-          const lineNum = parseInt(beforeText.substring(secondLastColon + 1), 10);
-          const filepath = beforeText.substring(0, secondLastColon);
-          return {
-            path: relative(this.root, filepath),
-            line: lineNum,
-            column: 1,
-            text,
-          };
-        });
-    } catch (e) {
-      // grep exits 1 for no matches, which is not an error
-      if ((e as { status?: number }).status === 1) return [];
-      throw e;
+    // Build the regex for matching.
+    const flags = req.ignoreCase ? "i" : "";
+    const source = req.isRegex ? req.pattern : req.pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(source, flags);
+
+    // Build include glob regex.
+    const includeGlob = req.include
+      ? new RegExp("^" + req.include.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$")
+      : null;
+
+    async function walk(dir: string) {
+      const entries = await readdir(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (results.length >= maxResults) return;
+        if (entry.name.startsWith(".")) continue;
+        const fullPath = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          await walk(fullPath);
+        } else {
+          if (includeGlob && !includeGlob.test(entry.name)) continue;
+          try {
+            const content = await readFile(fullPath, "utf-8");
+            const lines = content.split("\n");
+            for (let i = 0; i < lines.length; i++) {
+              if (results.length >= maxResults) break;
+              if (re.test(lines[i]!)) {
+                results.push({
+                  path: fullPath,
+                  line: i + 1,
+                  column: 1,
+                  text: lines[i]!,
+                });
+              }
+            }
+          } catch {
+            // Skip unreadable files (binary, permission).
+          }
+        }
+      }
     }
+
+    await walk(searchDir);
+    return results.map((r) => ({
+      ...r,
+      path: relative(this.root, r.path),
+    }));
   }
 
   async find(req: FilesystemFindRequest): Promise<string[]> {
     const searchDir = this.resolvePath(req.path);
-    try {
-      const stdout = execSync(
-        `find ${JSON.stringify(searchDir)} -name ${JSON.stringify(req.pattern)}` +
-          (!req.includeHidden ? " -not -path '*/.git/*'" : ""),
-        { encoding: "utf-8", maxBuffer: 10 * 1024 * 1024, cwd: this.root },
-      );
-      let results = stdout.trim().split("\n").filter(Boolean);
-      if (req.maxResults) results = results.slice(0, req.maxResults);
-      return results.map((p) => relative(this.root, p));
-    } catch {
-      return [];
+    const results: string[] = [];
+    const pattern = req.pattern
+      .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+      .replace(/\*/g, ".*")
+      .replace(/\?/g, ".");
+    const re = new RegExp(`^${pattern}$`);
+
+    async function walk(dir: string) {
+      const entries = await readdir(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!req.includeHidden && entry.name.startsWith(".")) continue;
+        const fullPath = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          await walk(fullPath);
+        } else if (re.test(entry.name)) {
+          results.push(fullPath);
+        }
+      }
     }
+
+    await walk(searchDir);
+    const sorted = results.sort();
+    const limited = req.maxResults ? sorted.slice(0, req.maxResults) : sorted;
+    return limited.map((p) => relative(this.root, p));
   }
 }
 
