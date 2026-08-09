@@ -83,8 +83,16 @@ jobs:
           node-version: "22.17.0"
           cache: pnpm
 
-      - name: Install
+      - name: Install (Linux/macOS)
+        if: runner.os != 'Windows'
         run: pnpm install --frozen-lockfile
+
+      - name: Install (Windows — skip native builds)
+        # Windows runners lack Visual Studio C++ build tools for native
+      # module compilation (better-sqlite3, fs-ext). Phase 0.1B tests skip
+        # POSIX-locked tests on Windows, so native modules aren't needed.
+        if: runner.os == 'Windows'
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Run Phase 0.1B gate
         env:
