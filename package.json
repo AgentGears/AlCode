@@ -6,12 +6,14 @@
   "license": "MIT",
   "packageManager": "pnpm@10.13.1",
   "engines": {
-    "node": ">=22.17.0"
+    "node": ">=22.17.0",
+    "pnpm": ">=10.13.1"
   },
   "scripts": {
     "gate:0.0": "tsx scripts/gate/gate-0.0.ts",
     "gate:0.1A": "tsx scripts/gate/gate-0.1A.ts",
     "gate:0.2": "tsx scripts/gate/gate-0.2.ts",
+    "gate:0.1B": "tsx scripts/gate/gate-0.1B.ts",
     "pi:verify": "tsx scripts/import-pi.ts verify",
     "pi:import": "tsx scripts/import-pi.ts import",
     "build": "tsc -b",
@@ -27,7 +29,7 @@
     "@types/node": "^22.20.1",
     "fs-ext": "^2.1.1",
     "tsx": "^4.19.2",
-    "typescript": "^5.6.3",
+    "typescript": "5.9.3",
     "vitest": "^2.1.8"
   }
 }
