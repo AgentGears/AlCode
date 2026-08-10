@@ -168,3 +168,16 @@ export {
   canonicalDigestOf,
   canonicalSignature,
 } from "./verification.ts";
+
+// Domain events
+export {
+  REASONING_EVENT_TYPES,
+  type ObjectiveSetPayload,
+  type HypothesisCreatedPayload,
+  type AssumptionRecordedPayload,
+  type AlternativeDeferredPayload,
+  type DecisionRecordedPayload,
+  type EvidenceLinkedPayload,
+  type FalsifierEvaluatedPayload,
+  type VerificationPlannedPayload,
+} from "./events.ts";

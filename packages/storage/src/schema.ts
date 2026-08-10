@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { canonicalStringify } from "@alcode/events";
 
 /** Current schema version. */
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 /** DDL for fresh databases (all tables at current version). */
 const WORKSPACE_SCHEMA: string[] = [
@@ -66,10 +66,22 @@ const WORKSPACE_SCHEMA: string[] = [
   `CREATE TABLE IF NOT EXISTS reasoning_nodes (
     node_id      TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL,
+    session_id   TEXT,
     kind         TEXT NOT NULL,
     label        TEXT NOT NULL,
     data         TEXT,
     confidence   REAL,
+    step         INTEGER,
+    created_sequence INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS reasoning_edges (
+    edge_id      TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    session_id   TEXT,
+    source_node_id TEXT NOT NULL,
+    target_node_id TEXT NOT NULL,
+    kind         TEXT NOT NULL,
+    data         TEXT,
     created_sequence INTEGER NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS memories (
@@ -177,6 +189,9 @@ export function initWorkspaceDb(db: Database.Database): void {
   }
   if (getSchemaVersion(db) < 6) {
     migrateV5toV6(db);
+  }
+  if (getSchemaVersion(db) < 7) {
+    migrateV6toV7(db);
   }
 }
 
@@ -503,6 +518,50 @@ function migrateV5toV6(db: Database.Database): void {
     db.exec("DELETE FROM memories");
 
     db.prepare("INSERT OR REPLACE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(6, new Date().toISOString());
+  });
+
+  migrationTxn();
+}
+
+/**
+ * Migration from schema v6 to v7.
+ * Adds the `reasoning_edges` table and extends `reasoning_nodes` with
+ * `session_id` and `step` columns for the Phase 0.4 reasoning projection v2.
+ * Resets the reasoning projection cursor so it rebuilds under schema v2.
+ */
+function migrateV6toV7(db: Database.Database): void {
+  const migrationTxn = db.transaction(() => {
+    // Add session_id and step to reasoning_nodes if missing
+    const hasSessionId = db.prepare(
+      "SELECT COUNT(*) as c FROM pragma_table_info('reasoning_nodes') WHERE name = 'session_id'",
+    ).get() as { c: number };
+    if (hasSessionId.c === 0) {
+      db.exec("ALTER TABLE reasoning_nodes ADD COLUMN session_id TEXT");
+      db.exec("ALTER TABLE reasoning_nodes ADD COLUMN step INTEGER");
+    }
+
+    // Create reasoning_edges table
+    db.exec(`CREATE TABLE IF NOT EXISTS reasoning_edges (
+      edge_id      TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      session_id   TEXT,
+      source_node_id TEXT NOT NULL,
+      target_node_id TEXT NOT NULL,
+      kind         TEXT NOT NULL,
+      data         TEXT,
+      created_sequence INTEGER NOT NULL
+    )`);
+
+    // Reset the reasoning projection cursor for schema v2 rebuild.
+    // A v6 database has cursor schema version 1; the v2 projection declares
+    // schema version 2. Without this reset, catchUp() throws
+    // SchemaVersionMismatchError before replay can proceed.
+    db.prepare("DELETE FROM projection_cursors WHERE projection_name = 'reasoning'").run();
+    // Clear stale rows from the v1 projection for clean rebuild.
+    db.exec("DELETE FROM reasoning_nodes");
+    db.exec("DELETE FROM reasoning_edges");
+
+    db.prepare("INSERT OR REPLACE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(7, new Date().toISOString());
   });
 
   migrationTxn();
