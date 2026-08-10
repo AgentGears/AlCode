@@ -127,3 +127,44 @@ export {
   type ReasoningEvent,
   type StreamEvent,
 } from "./reducer.ts";
+
+// Critic
+export {
+  BranchCritic,
+  DEFAULT_CRITIC_WEIGHTS,
+  fromState,
+  type CriticWeights,
+  type BranchSignals,
+  type BranchCritique,
+  type WeightedTerm,
+} from "./critic.ts";
+
+// Branching
+export {
+  DeterministicBranchIdFactory,
+  RuleBasedBranchGenerator,
+  GraftPolicy,
+  type BranchIdFactory,
+  type BranchCandidate,
+  type GraftDecision,
+} from "./branching.ts";
+
+// Diagnostics
+export {
+  DiagnosticEngine,
+  GraphView,
+  DETECTOR_VERSION,
+  type DiagnosticFinding,
+} from "./diagnostics.ts";
+
+// Verification
+export {
+  VerificationLinker,
+  indexPendingContracts,
+  resolveContractPayload,
+  resolveContractTrust,
+  matchesPredicate,
+  matchesOutcomeExpression,
+  canonicalDigestOf,
+  canonicalSignature,
+} from "./verification.ts";
