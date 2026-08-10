@@ -1,0 +1,28 @@
+{
+  "description": "Ola reinforcement differential fixtures — recordSeen vs recordUse",
+  "oracle": {
+    "source": "C:/Next-Era/Ola/hooks/lib/strength.js"
+  },
+  "cases": [
+    {
+      "name": "5 recordSeen calls → seen_count=5, used_count=0, last_used=null",
+      "input": { "operation": "seen", "calls": 5 },
+      "expected": { "seen_count": 5, "used_count": 0, "last_used_null": true, "consolidation_count": 0 }
+    },
+    {
+      "name": "1 recordUse → used_count=1, last_used not null",
+      "input": { "operation": "used", "calls": 1 },
+      "expected": { "used_count": 1, "last_used_null": false, "consolidation_count": 0 }
+    },
+    {
+      "name": "5 recordUse → used_count=5, consolidation_count=1",
+      "input": { "operation": "used", "calls": 5 },
+      "expected": { "used_count": 5, "consolidation_count": 1 }
+    },
+    {
+      "name": "5 recordSeen + 1 recordUse → seen_count=5, used_count=1",
+      "input": { "operation": "mixed", "seenCalls": 5, "usedCalls": 1 },
+      "expected": { "seen_count": 5, "used_count": 1, "consolidation_count": 0 }
+    }
+  ]
+}

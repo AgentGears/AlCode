@@ -1,0 +1,35 @@
+{
+  "description": "Ola scoring differential fixtures — exact expected blended scores",
+  "oracle": {
+    "source": "C:/Next-Era/Ola/hooks/lib/retrieval.js",
+    "weights": { "relevance": 0.65, "structural": 0.20, "strength": 0.15 }
+  },
+  "cases": [
+    {
+      "name": "exact match → final=1.0",
+      "input": {
+        "query": "test",
+        "memoryName": "test",
+        "confidence": 0.1,
+        "usedCount": 0,
+        "lastUsed": null,
+        "daysSinceCreation": 0
+      },
+      "expected": { "final": 1.0, "exact_match": true }
+    },
+    {
+      "name": "no relevance, high strength → strength-weighted score",
+      "input": {
+        "query": "xyzzy_no_match",
+        "memoryName": "auth_pattern",
+        "confidence": 0.9,
+        "usedCount": 0,
+        "lastUsed": null,
+        "daysSinceCreation": 0,
+        "tags": ["auth"],
+        "queryTokens": ["xyzzy_no_match"]
+      },
+      "expected": { "final": 0.135, "exact_match": false }
+    }
+  ]
+}

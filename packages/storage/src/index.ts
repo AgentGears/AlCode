@@ -78,7 +78,10 @@ export {
   createMemoryQuery,
   memoryStatements,
   type MemoryCreatedPayload,
+  type MemoryReinforcedPayload,
+  type MemoryLifecycleEventPayload,
   type MemoryRecord,
+  type MemoryStatsRecord,
 } from "./reasoning-memory-projections.ts";
 
 // Secrets (re-exported for convenience):

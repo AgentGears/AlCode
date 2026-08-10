@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { canonicalStringify } from "@alcode/events";
 
 /** Current schema version. */
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 /** DDL for fresh databases (all tables at current version). */
 const WORKSPACE_SCHEMA: string[] = [
@@ -77,7 +77,26 @@ const WORKSPACE_SCHEMA: string[] = [
     workspace_id TEXT NOT NULL,
     type         TEXT NOT NULL,
     body         TEXT NOT NULL,
-    created_sequence INTEGER NOT NULL
+    created_sequence INTEGER NOT NULL,
+    name         TEXT,
+    fields_json  TEXT,
+    confidence   REAL,
+    source_event_ids TEXT,
+    stored_at    INTEGER
+  )`,
+  `CREATE TABLE IF NOT EXISTS memory_stats (
+    memory_id           TEXT PRIMARY KEY,
+    type                TEXT NOT NULL,
+    confidence          REAL NOT NULL,
+    last_seen           INTEGER,
+    last_used           INTEGER,
+    seen_count          INTEGER NOT NULL DEFAULT 0,
+    used_count          INTEGER NOT NULL DEFAULT 0,
+    consolidation_count INTEGER NOT NULL DEFAULT 0,
+    strength            REAL,
+    lifecycle           TEXT NOT NULL DEFAULT 'active',
+    created_at          INTEGER NOT NULL,
+    updated_at          INTEGER NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS transcript_messages (
     event_id     TEXT PRIMARY KEY,
@@ -155,6 +174,9 @@ export function initWorkspaceDb(db: Database.Database): void {
   }
   if (getSchemaVersion(db) < 5) {
     migrateV4toV5(db);
+  }
+  if (getSchemaVersion(db) < 6) {
+    migrateV5toV6(db);
   }
 }
 
@@ -430,6 +452,57 @@ function migrateV4toV5(db: Database.Database): void {
     )`);
 
     db.prepare("INSERT OR REPLACE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(5, new Date().toISOString());
+  });
+
+  migrationTxn();
+}
+
+/**
+ * Migration from schema v5 to v6.
+ * Adds the `memory_stats` table for mutable memory statistics (strength,
+ * usage counters, lifecycle, consolidation count) — the Ola-derived sidecar
+ * that lives alongside the immutable `memories` content table.
+ */
+function migrateV5toV6(db: Database.Database): void {
+  const migrationTxn = db.transaction(() => {
+    db.exec(`CREATE TABLE IF NOT EXISTS memory_stats (
+      memory_id           TEXT PRIMARY KEY,
+      type                TEXT NOT NULL,
+      confidence          REAL NOT NULL,
+      last_seen           INTEGER,
+      last_used           INTEGER,
+      seen_count          INTEGER NOT NULL DEFAULT 0,
+      used_count          INTEGER NOT NULL DEFAULT 0,
+      consolidation_count INTEGER NOT NULL DEFAULT 0,
+      strength            REAL,
+      lifecycle           TEXT NOT NULL DEFAULT 'active',
+      created_at          INTEGER NOT NULL,
+      updated_at          INTEGER NOT NULL
+    )`);
+
+    // Add columns to memories for the complete semantic record (Fix 2).
+    // ALTER TABLE ADD COLUMN is safe on SQLite for existing tables.
+    const memoriesCols = db.prepare(
+      "SELECT COUNT(*) as c FROM pragma_table_info('memories') WHERE name = 'name'",
+    ).get() as { c: number };
+    if (memoriesCols.c === 0) {
+      db.exec("ALTER TABLE memories ADD COLUMN name TEXT");
+      db.exec("ALTER TABLE memories ADD COLUMN fields_json TEXT");
+      db.exec("ALTER TABLE memories ADD COLUMN confidence REAL");
+      db.exec("ALTER TABLE memories ADD COLUMN source_event_ids TEXT");
+      db.exec("ALTER TABLE memories ADD COLUMN stored_at INTEGER");
+    }
+
+    // Reset the memory projection cursor so it rebuilds under schema v2.
+    // A v5 database has cursor schema version 1; the v2 projection declares
+    // schema version 2. Without this reset, catchUp() throws
+    // SchemaVersionMismatchError before replay can proceed.
+    db.prepare("DELETE FROM projection_cursors WHERE projection_name = 'memory'").run();
+    // Clear stale rows from the v1 projection so they don't conflict with
+    // the v2 INSERT OR REPLACE during rebuild.
+    db.exec("DELETE FROM memories");
+
+    db.prepare("INSERT OR REPLACE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(6, new Date().toISOString());
   });
 
   migrationTxn();
