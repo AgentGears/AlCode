@@ -178,12 +178,12 @@ describeLocked("memory projection integration", () => {
     const allRecords = query3.getAll().map((r: {
       type: string; memoryId: string; body: string; name: string | null;
       fields: Record<string, unknown> | null; confidence: number | null;
-      sourceEventIds: string[] | null;
+      sourceEventIds: string[] | null; storedAt: number | null;
     }) => ({
       type: r.type as "lesson" | "playbook",
       memory_id: r.memoryId,
       name: r.name ?? r.memoryId.split("/")[1]!.replace(".md", ""),
-      stored_at: NOW,
+      stored_at: r.storedAt ?? NOW,
       fields: (r.fields ?? { content: r.body }) as Record<string, unknown>,
       ...(r.sourceEventIds ? { sourceEventIds: r.sourceEventIds } : {}),
     })) as unknown as import("./schema.ts").MemoryRecord[];

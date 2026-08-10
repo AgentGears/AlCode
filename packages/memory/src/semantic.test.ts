@@ -27,6 +27,7 @@ import {
   toInternalType,
   type MemoryRecord,
   type MemoryStats,
+  MemoryRecordSchema,
 } from "./index.ts";
 
 // Fixed reference time for deterministic tests: 2026-07-01T00:00:00.000Z
@@ -436,5 +437,68 @@ describe("toInternalType", () => {
 
   it("trajectory → lesson", () => {
     expect(toInternalType("trajectory")).toBe("lesson");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MemoryRecordSchema discriminated union
+// ---------------------------------------------------------------------------
+
+describe("MemoryRecordSchema (discriminated union)", () => {
+  const validLesson = {
+    type: "lesson" as const,
+    memory_id: "lesson/test.md",
+    name: "test",
+    stored_at: NOW,
+    fields: {
+      lesson_name: "test",
+      outcome: "success",
+      stage_anchor: "terminal",
+      retrieval_anchor: "anchor",
+      not_applicable_when: "never",
+      domain: "test",
+      verification_boundary: "tests pass",
+      content: "test content",
+    },
+  };
+
+  const validPlaybook = {
+    type: "playbook" as const,
+    memory_id: "playbook/auth.md",
+    name: "auth",
+    stored_at: NOW,
+    fields: {
+      playbook_name: "auth",
+      status: "active",
+      confidence: "high",
+      retrieval_anchor: "anchor",
+      not_applicable_when: "never",
+      tags: ["security"],
+      evidence_basis: "5 lessons",
+      content: "use oauth",
+    },
+  };
+
+  it("accepts a valid lesson record", () => {
+    expect(() => MemoryRecordSchema.parse(validLesson)).not.toThrow();
+  });
+
+  it("accepts a valid playbook record", () => {
+    expect(() => MemoryRecordSchema.parse(validPlaybook)).not.toThrow();
+  });
+
+  it("rejects type=lesson with playbook fields", () => {
+    const mismatched = { ...validLesson, fields: validPlaybook.fields };
+    expect(() => MemoryRecordSchema.parse(mismatched)).toThrow();
+  });
+
+  it("rejects type=playbook with lesson fields", () => {
+    const mismatched = { ...validPlaybook, fields: validLesson.fields };
+    expect(() => MemoryRecordSchema.parse(mismatched)).toThrow();
+  });
+
+  it("rejects an unknown type", () => {
+    const unknown = { ...validLesson, type: "unknown" };
+    expect(() => MemoryRecordSchema.parse(unknown)).toThrow();
   });
 });

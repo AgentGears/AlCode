@@ -101,8 +101,8 @@ export const memoryStatements: readonly StatementDefinition[] = [
   {
     name: "insert-memory",
     sql: `INSERT OR REPLACE INTO memories
-      (memory_id, workspace_id, type, body, created_sequence, name, fields_json, confidence, source_event_ids)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (memory_id, workspace_id, type, body, created_sequence, name, fields_json, confidence, source_event_ids, stored_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   },
   {
     name: "insert-memory-stats",
@@ -160,6 +160,7 @@ export function createMemoryProjection(workspaceId: string): ProjectionDefinitio
             p.fields ? JSON.stringify(p.fields) : null,
             p.confidence ?? null,
             p.sourceEventIds ? JSON.stringify(p.sourceEventIds) : null,
+            eventTime,
           );
           // Insert initial stats
           tx.exec(
@@ -229,6 +230,7 @@ export interface MemoryRecord {
   fields: Record<string, unknown> | null;
   confidence: number | null;
   sourceEventIds: string[] | null;
+  storedAt: number | null;
 }
 
 export interface MemoryStatsRecord {
@@ -266,6 +268,7 @@ export function createMemoryQuery(db: import("better-sqlite3").Database) {
       fields,
       confidence: (row.confidence as number | null) ?? null,
       sourceEventIds,
+      storedAt: (row.stored_at as number | null) ?? null,
     };
   }
 

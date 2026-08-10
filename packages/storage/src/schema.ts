@@ -81,7 +81,8 @@ const WORKSPACE_SCHEMA: string[] = [
     name         TEXT,
     fields_json  TEXT,
     confidence   REAL,
-    source_event_ids TEXT
+    source_event_ids TEXT,
+    stored_at    INTEGER
   )`,
   `CREATE TABLE IF NOT EXISTS memory_stats (
     memory_id           TEXT PRIMARY KEY,
@@ -489,6 +490,7 @@ function migrateV5toV6(db: Database.Database): void {
       db.exec("ALTER TABLE memories ADD COLUMN fields_json TEXT");
       db.exec("ALTER TABLE memories ADD COLUMN confidence REAL");
       db.exec("ALTER TABLE memories ADD COLUMN source_event_ids TEXT");
+      db.exec("ALTER TABLE memories ADD COLUMN stored_at INTEGER");
     }
 
     // Reset the memory projection cursor so it rebuilds under schema v2.

@@ -38,17 +38,29 @@ export const PlaybookFieldsSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
-// MemoryRecord schema (immutable record)
+// MemoryRecord schema (immutable record) — discriminated union on `type`
 // ---------------------------------------------------------------------------
 
-export const MemoryRecordSchema = z.object({
-  type: z.enum(["lesson", "playbook"]),
+const LessonRecordSchema = z.object({
+  type: z.literal("lesson"),
   memory_id: z.string(),
   name: z.string(),
-  fields: z.union([LessonFieldsSchema, PlaybookFieldsSchema]),
+  fields: LessonFieldsSchema,
   stored_at: z.number(),
   sourceEventIds: z.array(z.string()).optional(),
 });
+
+const PlaybookRecordSchema = z.object({
+  type: z.literal("playbook"),
+  memory_id: z.string(),
+  name: z.string(),
+  fields: PlaybookFieldsSchema,
+  stored_at: z.number(),
+  sourceEventIds: z.array(z.string()).optional(),
+});
+
+/** Discriminated union: type=lesson requires LessonFields, type=playbook requires PlaybookFields. */
+export const MemoryRecordSchema = z.discriminatedUnion("type", [LessonRecordSchema, PlaybookRecordSchema]);
 
 // ---------------------------------------------------------------------------
 // Exports
