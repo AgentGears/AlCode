@@ -1,0 +1,39 @@
+{
+  "description": "Falsifier path: satisfied≠refuted asymmetry",
+  "cases": [
+    {
+      "name": "satisfied falsifier auto-creates CONTRADICTS edge",
+      "sessionId": "fals",
+      "setupEvents": [
+        { "sequence": 1, "type": "objective", "payload": { "statement": "obj" } },
+        { "sequence": 2, "type": "hypothesis", "payload": { "claim": "hyp", "falsifier": "fails", "objectiveId": "event:fals:1:objective" } }
+      ],
+      "evalEvent": {
+        "sequence": 4, "type": "falsifier_evaluation",
+        "payload": {
+          "state": "satisfied", "falsifierId": "event:fals:2:falsifier",
+          "evidenceNodeIds": ["event:fals:3:observation"], "explanation": "test"
+        }
+      },
+      "evidenceNode": { "sequence": 3, "kind": "observation", "label": "obs" },
+      "expected": { "contradictsEdgeCount": 1, "supportsEdgeCount": 0 }
+    },
+    {
+      "name": "refuted falsifier does NOT auto-create SUPPORTS edge",
+      "sessionId": "fals2",
+      "setupEvents": [
+        { "sequence": 1, "type": "objective", "payload": { "statement": "obj" } },
+        { "sequence": 2, "type": "hypothesis", "payload": { "claim": "hyp", "falsifier": "fails", "objectiveId": "event:fals2:1:objective" } }
+      ],
+      "evalEvent": {
+        "sequence": 4, "type": "falsifier_evaluation",
+        "payload": {
+          "state": "refuted", "falsifierId": "event:fals2:2:falsifier",
+          "evidenceNodeIds": ["event:fals2:3:observation"], "explanation": "test"
+        }
+      },
+      "evidenceNode": { "sequence": 3, "kind": "observation", "label": "obs" },
+      "expected": { "contradictsEdgeCount": 0, "supportsEdgeCount": 0 }
+    }
+  ]
+}

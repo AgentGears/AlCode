@@ -1,0 +1,20 @@
+{
+  "description": "Event-prefix reconstruction: each committed prefix produces a valid subgraph",
+  "cases": [
+    {
+      "name": "prefix of 1 event = just objective",
+      "events": [{ "sequence": 1, "type": "objective", "payload": { "statement": "obj" } }],
+      "sessionId": "prefix",
+      "expected": { "nodeCount": 1, "edgeCount": 0 }
+    },
+    {
+      "name": "prefix of 2 events = objective + hypothesis",
+      "events": [
+        { "sequence": 1, "type": "objective", "payload": { "statement": "obj" } },
+        { "sequence": 2, "type": "hypothesis", "payload": { "claim": "hyp", "objectiveId": "event:prefix:1:objective" } }
+      ],
+      "sessionId": "prefix",
+      "expected": { "nodeCount": 2, "edgeCount": 1 }
+    }
+  ]
+}
