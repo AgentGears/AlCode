@@ -76,3 +76,41 @@ export type {
   ReasoningTransitionIntent,
   ReasoningBatchIntent,
 } from "./operations.ts";
+
+// Graph
+export {
+  GraphValidationError,
+  createReasoningGraph,
+  addNode,
+  addEdge,
+  getNode,
+  getEdge,
+  getNodesByKind,
+  getEdgesByKind,
+  getIncomingEdges,
+  getOutgoingEdges,
+  validateCognitiveGraph,
+  validateSingleLoopGraph,
+  graphToJSON,
+  graphFromJSON,
+  getSupersededIds,
+  isNodeActive,
+  extractSequence,
+  type ReasoningGraph as ReasoningGraphType,
+  type GraphJSON,
+} from "./graph.ts";
+
+// Cognitive operations
+export {
+  ReasoningValidationError,
+  set_objective,
+  commit_hypothesis,
+  record_assumption,
+  defer_alternative,
+  record_decision,
+  link_evidence,
+  evaluate_falsifier,
+  plan_verification,
+  open_investigation,
+  canonicalInputDigest,
+} from "./cognitive-operations.ts";
