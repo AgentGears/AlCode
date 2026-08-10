@@ -81,6 +81,15 @@ importers:
         specifier: ^13.0.3
         version: 13.0.3
 
+  packages/reasoning:
+    dependencies:
+      '@alcode/agent-core':
+        specifier: workspace:*
+        version: link:../agent-core
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
+
   packages/secrets: {}
 
   packages/storage:
