@@ -114,3 +114,16 @@ export {
   open_investigation,
   canonicalInputDigest,
 } from "./cognitive-operations.ts";
+
+// Reducer
+export {
+  createReductionIndex,
+  reduceEvent,
+  reduceStream,
+  deriveNodeId,
+  deriveEdgeId,
+  type ReductionIndex,
+  type ReasoningEventType,
+  type ReasoningEvent,
+  type StreamEvent,
+} from "./reducer.ts";
