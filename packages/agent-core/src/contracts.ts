@@ -97,6 +97,8 @@ export interface AgentToolResult<TDetails = unknown> {
 export interface ToolExecutionContext {
   signal?: AbortSignal;
   workingDirectory?: string;
+  /** Provider/model tool-call identity. Host proxies must preserve this end-to-end. */
+  toolCallId?: string;
 }
 
 export interface AgentTool<TInput = Record<string, unknown>, TResult = unknown> {
