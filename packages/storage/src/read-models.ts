@@ -1,4 +1,12 @@
 import type { PersistedDomainEvent } from "@alcode/events";
+import {
+  isTranscriptEventType,
+  reduceTranscript,
+  type TranscriptEventRecord,
+  type TranscriptMessage,
+  type TranscriptFidelity,
+  type TranscriptCompleteness,
+} from "@alcode/transcript";
 import type {
   EffectStatus,
   ExecutionOutcome,
@@ -13,8 +21,16 @@ export interface TranscriptReadRecord {
   eventId: string;
   sequence: number;
   sessionId: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "toolResult";
   body: string;
+}
+
+export interface TranscriptSnapshot {
+  sourceEventSequence: number;
+  messages: TranscriptMessage[];
+  status: TranscriptCompleteness;
+  pendingToolCallIds: string[];
+  fidelity: TranscriptFidelity;
 }
 
 export interface WorkspaceReadModels {
@@ -24,6 +40,7 @@ export interface WorkspaceReadModels {
   getMemoryEvents(): Promise<PersistedDomainEvent<string, unknown>[]>;
   getOperations(sessionId?: string): Promise<OperationRecord[]>;
   getTranscript(sessionId: string): Promise<TranscriptReadRecord[]>;
+  getTranscriptSnapshot(sessionId: string): Promise<TranscriptSnapshot>;
 }
 
 const REASONING_TYPES = new Set([
@@ -114,13 +131,12 @@ function reduceOperations(events: readonly PersistedDomainEvent<string, unknown>
 }
 
 export function createWorkspaceReadModels(store: WorkspaceEventStore): WorkspaceReadModels {
-  async function getAllEvents(): Promise<PersistedDomainEvent<string, unknown>[]> {
-    // Snapshot the canonical head first, then read with `.all()`-backed bounded
-    // batches. Unlike the async replay iterator, this never leaves a SQLite
-    // statement open across an await/yield boundary, so Host writes may safely
-    // proceed on the single connection while read-model snapshots are polled.
+  async function getEventsThroughStableHead(): Promise<{
+    head: number;
+    events: PersistedDomainEvent<string, unknown>[];
+  }> {
     const head = await store.headSequence();
-    if (head === 0) return [];
+    if (head === 0) return { head, events: [] };
 
     const events: PersistedDomainEvent<string, unknown>[] = [];
     let cursor = 0;
@@ -132,7 +148,11 @@ export function createWorkspaceReadModels(store: WorkspaceEventStore): Workspace
       events.push(...batch);
       cursor = batch[batch.length - 1]!.sequence;
     }
-    return events;
+    return { head, events };
+  }
+
+  async function getAllEvents(): Promise<PersistedDomainEvent<string, unknown>[]> {
+    return (await getEventsThroughStableHead()).events;
   }
 
   return Object.freeze({
@@ -161,17 +181,51 @@ export function createWorkspaceReadModels(store: WorkspaceEventStore): Workspace
       const result: TranscriptReadRecord[] = [];
       for (const event of await getAllEvents()) {
         if (event.sessionId !== sessionId) continue;
-        if (event.type !== "user.message.appended" && event.type !== "assistant.message.appended") continue;
+        if (!isTranscriptEventType(event.type)) continue;
         const payload = asRecord(event.payload);
-        result.push({
-          eventId: event.eventId,
-          sequence: event.sequence,
-          sessionId,
-          role: event.type === "user.message.appended" ? "user" : "assistant",
-          body: String(payload.text ?? ""),
-        });
+        let role: TranscriptReadRecord["role"];
+        let body: string;
+        if (event.type === "user.message.appended") {
+          role = "user";
+          body = String(payload.text ?? "");
+        } else if (event.type === "assistant.message.appended") {
+          role = "assistant";
+          body = String(payload.text ?? "");
+        } else {
+          role = "toolResult";
+          const content = Array.isArray(payload.content) ? payload.content : [];
+          body = content
+            .filter((block): block is { type: string; text: string } => {
+              return typeof block === "object" && block !== null && (block as { type?: unknown }).type === "text" && typeof (block as { text?: unknown }).text === "string";
+            })
+            .map((block) => block.text)
+            .join("");
+        }
+        result.push({ eventId: event.eventId, sequence: event.sequence, sessionId, role, body });
       }
       return result;
+    },
+
+    async getTranscriptSnapshot(sessionId: string) {
+      const { head, events } = await getEventsThroughStableHead();
+      const transcriptEvents: TranscriptEventRecord[] = events
+        .filter((event) => event.sessionId === sessionId && isTranscriptEventType(event.type))
+        .map((event) => ({
+          eventId: event.eventId,
+          sequence: event.sequence,
+          type: event.type as TranscriptEventRecord["type"],
+          payload: event.payload,
+          occurredAt: event.occurredAt,
+          ...(event.operationId !== undefined ? { operationId: event.operationId } : {}),
+        }));
+      const reduced = reduceTranscript(transcriptEvents);
+      return {
+        sourceEventSequence: head,
+        messages: reduced.messages,
+        status: reduced.status,
+        pendingToolCallIds: reduced.pendingToolCallIds,
+        fidelity: reduced.fidelity,
+      };
     },
   });
 }
