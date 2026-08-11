@@ -44,14 +44,25 @@ function vitestCheck(
   id: string,
   file: string,
   testName?: string,
-): void {
+): GateCheck {
   const args = ["vitest", "run", file];
   if (testName) args.push("-t", testName);
   const result = run("npx", args, { cwd: ROOT, throwOnError: false });
-  checks.push({
+  const check: GateCheck = {
     id,
     status: result.exitCode === 0 ? "passed" : "failed",
     evidence: evidence(result),
+  };
+  checks.push(check);
+  return check;
+}
+
+function aliasCheck(checks: GateCheck[], id: string, sources: readonly GateCheck[], evidenceText: string): void {
+  const passed = sources.every((source) => source.status === "passed");
+  checks.push({
+    id,
+    status: passed ? "passed" : "failed",
+    evidence: passed ? evidenceText : `depends on: ${sources.map((source) => `${source.id}=${source.status}`).join(", ")}`,
   });
 }
 
@@ -105,13 +116,25 @@ async function main(): Promise<void> {
   const hostIntegration = "packages/host-runtime/src/host-runtime.integration.test.ts";
   vitestCheck(checks, "host.permission_before_execution", hostIntegration, "denies a mutating capability");
   vitestCheck(checks, "host.operation_visibility_before_action", hostIntegration, "makes operation + action canonical");
-  vitestCheck(checks, "cognition.open_investigation_batch", hostIntegration, "resolves open_investigation symbolic references");
+  const reasoning = vitestCheck(
+    checks,
+    "cognition.open_investigation_batch",
+    hostIntegration,
+    "resolves open_investigation symbolic references",
+  );
+  aliasCheck(checks, "cognition.reasoning_roundtrip", [reasoning], "canonical reasoning intent → event batch → projection/orientation roundtrip");
 
   const cognitionIntegration = "packages/host-runtime/src/cognition-integration.test.ts";
   vitestCheck(checks, "cognition.memory_roundtrip", cognitionIntegration, "binds remember");
-  vitestCheck(checks, "cognition.verification_trusted", cognitionIntegration, "unique trusted verification");
-  vitestCheck(checks, "cognition.verification_untrusted", cognitionIntegration, "untrusted verification");
-  vitestCheck(checks, "cognition.verification_ambiguous", cognitionIntegration, "ambiguous prospective match");
+  const verificationTrusted = vitestCheck(checks, "cognition.verification_trusted", cognitionIntegration, "unique trusted verification");
+  const verificationUntrusted = vitestCheck(checks, "cognition.verification_untrusted", cognitionIntegration, "untrusted verification");
+  const verificationAmbiguous = vitestCheck(checks, "cognition.verification_ambiguous", cognitionIntegration, "ambiguous prospective match");
+  aliasCheck(
+    checks,
+    "cognition.verification_roundtrip",
+    [verificationTrusted, verificationUntrusted, verificationAmbiguous],
+    "trusted/untrusted/ambiguous verification semantics persist through canonical Host events",
+  );
 
   // 4. Recovery + bounded durable work.
   const recoveryIntegration = "packages/host-runtime/src/recovery.integration.test.ts";
@@ -152,9 +175,11 @@ async function main(): Promise<void> {
 
   // 7. Structural ownership/exclusion boundaries.
   const boundaries = "packages/host-runtime/src/boundaries.test.ts";
-  vitestCheck(checks, "boundary.extension_is_thin", boundaries, "keeps the cognition extension thin");
-  vitestCheck(checks, "boundary.agent_has_no_storage", boundaries, "keeps the replaceable Agent worker free");
+  const extensionBoundary = vitestCheck(checks, "boundary.extension_is_thin", boundaries, "keeps the cognition extension thin");
+  const agentBoundary = vitestCheck(checks, "boundary.agent_has_no_storage", boundaries, "keeps the replaceable Agent worker free");
+  aliasCheck(checks, "boundary.agent_has_no_workspace_authority", [agentBoundary], "Agent worker imports neither workspace nor Host durable authority");
   vitestCheck(checks, "boundary.no_context_compiler", boundaries, "does not introduce Phase 0.6/0.7 context compilers");
+  void extensionBoundary;
 
   const receipt = buildReceipt({
     gate: "0.5",
