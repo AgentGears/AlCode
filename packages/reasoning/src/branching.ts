@@ -91,17 +91,19 @@ export interface GraftPolicyOptions {
 
 /**
  * Scores and selects branch candidates for grafting.
+ * Matches Ouroboros branching.py GraftPolicy exactly.
  *
- * scoreCandidate(c) =
- *   confidence
- *   + verificationValue
- *   + rootCauseMatchBonus    (if c targets the given rootCause)
- *   - complexityPenalty * plan.length
- *   - similarityPenalty      (if another live candidate shares the label)
+ * scoreCandidate =
+ *   candidate.confidence
+ * + candidate.verification_value
+ * + 0.10 if candidate.source == verdict.root_cause
+ * - 0.03 × plan.length
+ * - 0.10 if candidate.title == active_branch.label
+ * rounded to 12 decimals
  *
- * select() filters viable candidates (confidence >= minimumConfidence),
- * sorts by (-score, -verificationValue, plan.length, branchId), and picks
- * the first. Returns a GraftDecision naming the winner and the rejected IDs.
+ * select() filters viable (confidence >= minimumConfidence), raises if none,
+ * sorts by (-score, -verificationValue, plan.length, branchId), picks first.
+ * Rejected = remaining viable ranked candidates only (not all inputs).
  */
 export class GraftPolicy {
   readonly minimumConfidence: number;
@@ -111,133 +113,95 @@ export class GraftPolicy {
 
   constructor(options?: GraftPolicyOptions) {
     this.minimumConfidence = options?.minimumConfidence ?? 0.05;
-    this.rootCauseMatchBonus = options?.rootCauseMatchBonus ?? 0.1;
+    this.rootCauseMatchBonus = options?.rootCauseMatchBonus ?? 0.10;
     this.complexityPenaltyPerStep = options?.complexityPenaltyPerStep ?? 0.03;
-    this.similarityPenalty = options?.similarityPenalty ?? 0.1;
+    this.similarityPenalty = options?.similarityPenalty ?? 0.10;
   }
 
   /**
-   * Score a single candidate.
+   * Score a single candidate. Matches Ouroboros GraftPolicy.score_candidate.
    *
-   * @param candidate   the candidate
-   * @param rootCause   the diagnosed root cause, used for the match bonus
-   * @param sameLabel   true if another live candidate shares this candidate's
-   *                    title/label (the similarity penalty applies)
+   * @param candidate       the candidate
+   * @param rootCause       the diagnosed root cause (string value)
+   * @param activeLabel     the active branch's label for similarity penalty
    */
   scoreCandidate(
     candidate: BranchCandidate,
-    rootCause?: RootCauseType,
-    sameLabel = false,
+    rootCause?: string,
+    activeLabel?: string,
   ): number {
-    let score = candidate.confidence + candidate.verificationValue;
-    if (rootCause !== undefined && candidateMatchesRootCause(candidate, rootCause)) {
-      score += this.rootCauseMatchBonus;
-    }
-    score -= this.complexityPenaltyPerStep * candidate.plan.length;
-    if (sameLabel) score -= this.similarityPenalty;
-    return score;
+    const root_cause_match_bonus =
+      rootCause !== undefined && candidate.source === rootCause ? this.rootCauseMatchBonus : 0.0;
+    const complexity_penalty = this.complexityPenaltyPerStep * candidate.plan.length;
+    const similarity_penalty =
+      activeLabel !== undefined && candidate.title === activeLabel ? this.similarityPenalty : 0.0;
+    return round12(
+      candidate.confidence
+      + candidate.verificationValue
+      + root_cause_match_bonus
+      - complexity_penalty
+      - similarity_penalty,
+    );
   }
 
   /**
-   * Select the best viable candidate to graft from.
+   * Select the best viable candidate. Matches Ouroboros GraftPolicy.select.
+   * Raises if no viable candidate exists.
    *
-   * @param candidates the full candidate list
-   * @param rootCause  the diagnosed root cause for scoring
+   * @param candidates   the full candidate list
+   * @param rootCause    the diagnosed root cause (string value)
+   * @param activeLabel  the active branch's label
+   * @param critique     the critic recommendation for the rationale
    */
   select(
     candidates: readonly BranchCandidate[],
-    rootCause?: RootCauseType,
+    rootCause?: string,
+    activeLabel?: string,
+    critique?: { recommendation: string },
   ): GraftDecision {
-    if (candidates.length === 0) {
-      return {
-        selectedBranchId: null,
-        rejectedBranchIds: [],
-        rationale: "no candidates available",
-        confidence: 0,
-        score: 0,
-      };
+    const viable = candidates.filter((c) => c.confidence >= this.minimumConfidence);
+    if (viable.length === 0) {
+      throw new Error("no viable branch candidates available for grafting");
     }
 
-    // Determine duplicate labels so the similarity penalty applies.
-    const labelCounts = new Map<string, number>();
-    for (const c of candidates) {
-      labelCounts.set(c.title, (labelCounts.get(c.title) ?? 0) + 1);
-    }
+    const scored = viable.map((c) => ({
+      candidate: c,
+      score: this.scoreCandidate(c, rootCause, activeLabel),
+    }));
 
-    const scored = candidates.map((c) => {
-      const sameLabel = (labelCounts.get(c.title) ?? 0) > 1;
-      const score = this.scoreCandidate(c, rootCause, sameLabel);
-      return { candidate: c, score };
+    scored.sort((a, b) => {
+      if (a.score !== b.score) return b.score - a.score; // -score
+      if (a.candidate.verificationValue !== b.candidate.verificationValue)
+        return b.candidate.verificationValue - a.candidate.verificationValue;
+      if (a.candidate.plan.length !== b.candidate.plan.length)
+        return a.candidate.plan.length - b.candidate.plan.length; // shorter plan first
+      return a.candidate.branchId.localeCompare(b.candidate.branchId);
     });
 
-    // Viable: confidence >= minimumConfidence.
-    const viable = scored.filter((s) => s.candidate.confidence >= this.minimumConfidence);
+    const selected = scored[0]!;
+    const rejectedIds = scored.slice(1).map((s) => s.candidate.branchId);
 
-    const sortKey = (a: { candidate: BranchCandidate; score: number }) => [
-      -a.score,
-      -a.candidate.verificationValue,
-      a.candidate.plan.length,
-      a.candidate.branchId,
-    ] as const;
-
-    const ranked = viable.sort((a, b) => compareArrays(sortKey(a), sortKey(b)));
-
-    if (ranked.length === 0) {
-      return {
-        selectedBranchId: null,
-        rejectedBranchIds: candidates.map((c) => c.branchId),
-        rationale: `no candidate met minimumConfidence ${this.minimumConfidence}`,
-        confidence: 0,
-        score: 0,
-      };
-    }
-
-    const winner = ranked[0]!;
-    // Rejected = every input candidate except the winner, regardless of
-    // whether it was viable. This gives the caller a complete picture of
-    // what was generated and not selected.
-    const rejected = candidates
-      .filter((c) => c.branchId !== winner.candidate.branchId)
-      .map((c) => c.branchId);
+    // Exact Ouroboros rationale format
+    const rec = critique?.recommendation ?? "unknown";
+    const rationale =
+      `Selected ${selected.candidate.title} after ${rootCause ?? "unknown"} failure: ` +
+      `score=${selected.score.toFixed(3)}, confidence=${selected.candidate.confidence.toFixed(2)}, ` +
+      `verification_value=${selected.candidate.verificationValue.toFixed(2)}. ` +
+      `Critic recommendation=${rec}.`;
 
     return {
-      selectedBranchId: winner.candidate.branchId,
-      rejectedBranchIds: rejected,
-      rationale: `highest score ${winner.score.toFixed(4)} (confidence ${winner.candidate.confidence}, verification ${winner.candidate.verificationValue})`,
-      confidence: winner.candidate.confidence,
-      score: winner.score,
+      selectedBranchId: selected.candidate.branchId,
+      rejectedBranchIds: rejectedIds,
+      rationale,
+      confidence: selected.candidate.confidence,
+      score: selected.score,
     };
   }
 }
 
-function compareArrays(a: readonly (number | string)[], b: readonly (number | string)[]): number {
-  const len = Math.min(a.length, b.length);
-  for (let i = 0; i < len; i++) {
-    const ai = a[i]!;
-    const bi = b[i]!;
-    if (ai < bi) return -1;
-    if (ai > bi) return 1;
-  }
-  return 0;
-}
-
-/**
- * A candidate "matches" a root cause when its hypothesis/plan text references
- * the root-cause vocabulary. This is intentionally conservative: only the
- * rule-based candidates produced for that exact root cause match.
- */
-function candidateMatchesRootCause(candidate: BranchCandidate, rootCause: RootCauseType): boolean {
-  const rootCauseWords: Record<RootCauseType, string[]> = {
-    [RootCause.GOAL]: ["criteria", "goal", "subgoal", "objective", "success"],
-    [RootCause.PLAN]: ["hypothesis", "assumption", "dependency", "fixture", "plan", "step"],
-    [RootCause.EXECUTION]: ["error", "exception", "precondition", "execute", "stack"],
-    [RootCause.ENVIRONMENT]: ["runtime", "environment", "version", "escalat", "config"],
-    [RootCause.UNKNOWN]: [],
-  };
-  const words = rootCauseWords[rootCause];
-  if (words.length === 0) return false;
-  const hay = `${candidate.hypothesis} ${candidate.title} ${candidate.plan.join(" ")}`.toLowerCase();
-  return words.some((w) => hay.includes(w));
+function round12(x: number): number {
+  if (!Number.isFinite(x)) return 0;
+  return Math.round((x + Number.EPSILON) * 1e12) / 1e12;
 }
 
 // ---------------------------------------------------------------------------

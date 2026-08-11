@@ -177,11 +177,17 @@ export class BranchCritic {
 
     if (Object.keys(positiveTerms).length > 0) {
       const strongest = Object.entries(positiveTerms).sort(([, a], [, b]) => b - a)[0]!;
-      reasons.push(`strongest positive signal: ${strongest[0]} (${strongest[1].toFixed(3)})`);
+      // Ouroboros formats with explicit +: {value:+.3f}
+      const val = strongest[1];
+      const sign = val >= 0 ? "+" : "";
+      reasons.push(`strongest positive signal: ${strongest[0]} (${sign}${val.toFixed(3)})`);
     }
     if (Object.keys(negativeTerms).length > 0) {
       const weakest = Object.entries(negativeTerms).sort(([, a], [, b]) => a - b)[0]!;
-      reasons.push(`strongest penalty signal: ${weakest[0]} (${weakest[1].toFixed(3)})`);
+      // Ouroboros formats with explicit +: {value:+.3f}
+      const val = weakest[1];
+      const sign = val >= 0 ? "+" : "";
+      reasons.push(`strongest penalty signal: ${weakest[0]} (${sign}${val.toFixed(3)})`);
     }
     if (Object.keys(positiveTerms).length === 0 && Object.keys(negativeTerms).length === 0) {
       reasons.push("no meaningful branch-quality signal was available");
@@ -197,11 +203,26 @@ export class BranchCritic {
 // ---------------------------------------------------------------------------
 
 export function fromMapping(data: Record<string, unknown>): BranchSignals {
-  const allowed = ["evidenceScore", "verificationScore", "progressScore", "uncertaintyPenalty", "failurePenalty", "costPenalty"] as const;
+  // Accept both snake_case (Ouroboros source) and camelCase keys
+  const keyMap: Record<string, keyof BranchSignals> = {
+    evidence_score: "evidenceScore",
+    verification_score: "verificationScore",
+    progress_score: "progressScore",
+    uncertainty_penalty: "uncertaintyPenalty",
+    failure_penalty: "failurePenalty",
+    cost_penalty: "costPenalty",
+    // camelCase aliases
+    evidenceScore: "evidenceScore",
+    verificationScore: "verificationScore",
+    progressScore: "progressScore",
+    uncertaintyPenalty: "uncertaintyPenalty",
+    failurePenalty: "failurePenalty",
+    costPenalty: "costPenalty",
+  };
   const signals: Partial<BranchSignals> = {};
-  for (const key of allowed) {
-    if (key in data) {
-      signals[key] = Number(data[key]);
+  for (const [srcKey, destKey] of Object.entries(keyMap)) {
+    if (srcKey in data) {
+      (signals as Record<string, unknown>)[destKey] = Number(data[srcKey]);
     }
   }
   let notes = (data.notes as string | string[] | undefined) ?? [];

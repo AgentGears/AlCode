@@ -301,20 +301,18 @@ describe("branching: GraftPolicy", () => {
     const strong = makeCandidate("strong", 0.7, 0.5, ["x"]);
     const decision = p.select([weak, strong]);
     expect(decision.selectedBranchId).toBe("strong");
-    expect(decision.rejectedBranchIds).toEqual(["weak"]);
+    // Only viable ranked candidates are in rejected — weak is filtered out
+    expect(decision.rejectedBranchIds).toEqual([]);
   });
 
-  it("returns null selection when no candidate is viable", () => {
+  it("raises when no candidate is viable (matches Ouroboros)", () => {
     const p = new GraftPolicy({ minimumConfidence: 0.9 });
-    const decision = p.select([makeCandidate("a", 0.5, 0.5, ["x"])]);
-    expect(decision.selectedBranchId).toBeNull();
-    expect(decision.rejectedBranchIds).toEqual(["a"]);
+    expect(() => p.select([makeCandidate("a", 0.5, 0.5, ["x"])])).toThrow("no viable branch candidates");
   });
 
-  it("returns null selection on empty input", () => {
+  it("raises on empty input (matches Ouroboros)", () => {
     const p = new GraftPolicy();
-    const decision = p.select([]);
-    expect(decision.selectedBranchId).toBeNull();
+    expect(() => p.select([])).toThrow("no viable branch candidates");
   });
 
   it("tie-breaks by verificationValue then plan length then branchId", () => {
