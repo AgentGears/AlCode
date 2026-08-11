@@ -1,10 +1,10 @@
 # ALCODE Roadmap — Architecture Orientation
 
-Status: **active; Phases 0.0 through 0.5 closed**. Phase 0.5 closed in merge
-commit `9b06f4a` with `gate:0.5` green. Phase 0.6 is the next roadmap unit and
-has **not started**. This document orients the architecture and sequencing; the
-executable specification with authoritative gate definitions lives in
-[`phase-0-spec.md`](./phase-0-spec.md).
+Status: **active; Phases 0.0 through 0.6 closed**. Phase 0.6 closed in merge
+commit `98c764c` with `gate:0.6` green. Phase 0.7 is the next roadmap unit; its
+plan is currently **DRAFT / NOT AUTHORIZED**. This document orients the
+architecture and sequencing; the executable specification with authoritative
+gate definitions lives in [`phase-0-spec.md`](./phase-0-spec.md).
 
 ## North star
 
@@ -13,7 +13,7 @@ mediates environmental capabilities, owns execution policy and canonical state,
 schedules bounded durable work, and exposes a consistent workspace contract
 across execution environments.
 
-The governing ownership model is now implemented through Phase 0.5:
+The governing ownership model is implemented through Phase 0.6:
 
 ```text
 Experience Plane
@@ -31,6 +31,7 @@ CLI / Desktop / Web / API
 │ capability brokerage               │
 │ durable persistence / recovery     │
 │ bounded durable work               │
+│ transcript/context authority       │
 │ completion authority               │
 └──────────────┬──────────────┬──────┘
                │              │
@@ -46,45 +47,49 @@ CLI / Desktop / Web / API
 
                     DURABLE STATE
               canonical events + projections
-                     │             │
-                     ▼             ▼
-                  memory        reasoning
-                  engine         engine
+              │          │            │
+              ▼          ▼            ▼
+          transcript   memory      reasoning
+              │        engine       engine
+              └──────────┬────────────┘
+                         ▼
+                Host context strategy
+                verbatim-v1 (closed)
+                graph-v1 (draft 0.7)
 ```
 
 The load-bearing architectural shift is complete: durable execution and
 canonical state are Host authority; the Agent is a replaceable reasoning
 process. Memory and reasoning are semantic engines behind Host-owned admission,
-not independent state-owning runtimes. ADR 0005 freezes these ownership
-boundaries.
+not independent state-owning runtimes. Phase 0.6 additionally proves that model
+conversation continuity is reconstructable from canonical events rather than
+old Agent process memory. ADR 0005 continues to govern ownership.
 
 ---
 
 ## Current position
 
 ```text
-0.0   Architecture foundation            CLOSED
-0.1A  Minimal owned agent                CLOSED
-0.1B  Capability/provider layer          CLOSED
-0.2   Durable event/recovery spine       CLOSED
-0.3   Memory semantic engine             CLOSED
-0.4   Reasoning semantic engine          CLOSED
-0.5   Host + cognition integration       CLOSED
-                                              │
-                                              ▼
-0.6   Durable verbatim context reconstruction NEXT — NOT STARTED
-                                              │
-                                              ▼
-0.7   Graph-distilled context strategy   PLANNED
-                                              │
-                              ┌───────────────┴───────────────┐
-                              ▼                               ▼
-0.8   Application protocol + React UI    PLANNED     0.9 External adapters PLANNED
+0.0   Architecture foundation                 CLOSED
+0.1A  Minimal owned agent                     CLOSED
+0.1B  Capability/provider layer               CLOSED
+0.2   Durable event/recovery spine            CLOSED
+0.3   Memory semantic engine                  CLOSED
+0.4   Reasoning semantic engine               CLOSED
+0.5   Host + cognition integration            CLOSED
+0.6   Durable verbatim context reconstruction CLOSED
+                                                 │
+                                                 ▼
+0.7   Graph-distilled context strategy         DRAFT — NOT AUTHORIZED
+                                                 │
+                              ┌──────────────────┴──────────────────┐
+                              ▼                                     ▼
+0.8   Application protocol + React UI          PLANNED     0.9 External adapters PLANNED
 ```
 
 The completed foundation must not be reopened absent concrete defect evidence.
-The next phase does not start automatically; it requires its own frozen plan
-and authorization.
+A draft successor plan does not start the phase; it must be reviewed, frozen,
+and explicitly authorized before implementation.
 
 ---
 
@@ -172,7 +177,7 @@ include:
 - bounded event-sourced `memory.consolidation` work with retry-safe semantic
   idempotency.
 
-The signature proof is now executable:
+The signature proof is executable:
 
 ```text
 kill Agent A while Host-owned work is in flight
@@ -190,59 +195,104 @@ indeterminate/pending recovery doctrine and does not automatically retry.
 **Gate:** `gate:0.5`, composing `gate:0.4`. Frozen plan and closure evidence:
 [`phase-0.5-plan.md`](./phase-0.5-plan.md).
 
+### 0.6 — Durable verbatim context reconstruction — CLOSED
+
+Established the safe provider-visible context baseline from canonical durable
+state. The completed surfaces include:
+
+- `@alcode/transcript` with rich user/assistant/tool-result semantics,
+  deterministic reduction, completeness/fidelity classification, and semantic
+  transition validation;
+- serialized Host transcript admission with durable `transcript.admitted` ACK;
+- the invariant `no transcript ACK ⇒ no next model request`;
+- end-to-end provider `toolCallId` identity through Host capability execution
+  and the corresponding tool result;
+- stable-head `TranscriptSnapshot` reconstruction and Host-owned
+  `verbatim-v1` compilation;
+- explicit `complete | incomplete` and `exact | legacy_text_only` state;
+- fail-closed orphaned-tool-call continuation without replay or fabricated
+  results;
+- replacement Agent hydration from Host-provided durable history;
+- pinned pi `convertToLlm` parity for the shared text/tool vocabulary;
+- transcript projection rebuild and Host+Agent close/reopen continuity proof.
+
+The signature proof is executable:
+
+```text
+canonical rich conversation + tool result
+→ destroy Agent A and Host A
+→ reopen Host B
+→ reconstruct verbatim-v1 from canonical events
+→ hydrate empty Agent B
+→ next ModelRequest contains the same durable prefix
+→ continue
+```
+
+Schema remains v7. Graph selection, memory/reasoning injection, compaction,
+provider-specific transforms, and 0.8 dispatch policy were not pulled into the
+phase.
+
+**Gate:** `gate:0.6`, composing `gate:0.5`. Frozen/completed plan:
+[`phase-0.6-plan.md`](./phase-0.6-plan.md).
+
+**Closure:** PR #12 source head `303a0c4` merged as `98c764c`; post-merge CI run
+`31542403984` completed successfully.
+
 ---
 
 ## Next roadmap unit
 
-### 0.6 — Durable verbatim context reconstruction — NEXT / NOT STARTED
+### 0.7 — Graph-distilled context strategy — DRAFT / NOT AUTHORIZED
 
-The next architectural problem is model-visible conversational continuity.
-Phase 0.5 proved that durable cognition survives Agent replacement; Phase 0.6
-must make the provider-facing conversation reconstructable from canonical
-durable state rather than ephemeral Agent memory.
+The next architectural problem is selective context. Phase 0.6 answers
+"what did the model previously see?"; Phase 0.7 is intended to answer
+"what should the model see for this new task?" without moving context authority
+into the Agent.
 
-Target boundary:
+The current draft proposes:
 
 ```text
-canonical transcript/events
+one stable canonical source cut
+        +
+bounded Host-observed workspace snapshot
+        +
+current canonical user request
         ↓
-Host-owned verbatim reconstruction
+Host-owned graph-v1 compiler
         ↓
-provider-compatible message sequence
-        ↓ Agent Protocol / model boundary
-replacement Agent
+required facts + deterministic optional selection
+        ↓
+canonical projection receipt
+        ↓
+Agent Protocol context update
+        ↓
+disposable replacement Agent context
 ```
 
-pi remains the behavioral parity reference for verbatim conversion. The phase
-should prove ordering, role/content fidelity, tool-call/result pairing,
-restart reconstruction, and continuation from durability alone.
+`verbatim-v1` remains both the safety fallback and product default. The draft
+uses existing reasoning semantics and the closed memory ranking function; merely
+selecting a memory for context must not reinforce it. Required state is never
+silently dropped to meet a graph budget: if it cannot fit safely, graph mode
+falls back to verbatim.
 
-**Not 0.6:** graph-distilled selection, semantic compression, token-budget
-optimization, compaction strategy, or making graph context default. Those
-belong to 0.7.
+The draft also proposes a canonical `context.projection_compiled` receipt,
+summary materialization into the existing `projection_receipts` table, and a
+pre-registered A/B harness. Phase 0.7 closure would not promote graph mode to
+default; default promotion remains a separate evidence-based decision.
 
-**Gate:** `gate:0.6` after the phase is planned, authorized, and implemented.
-See [`phase-0-spec.md`](./phase-0-spec.md) §0.6.
+See [`phase-0.7-plan.md`](./phase-0.7-plan.md). The document is **not frozen** and
+implementation is **not authorized**.
 
 ---
 
 ## Later roadmap
-
-### 0.7 — Graph-distilled context strategy
-
-Introduce graph-distilled context behind a toggle with required inclusions,
-projection receipts, fail-safe verbatim fallback, and preregistered evaluation.
-The graph strategy remains non-default until measured evidence justifies it.
-
-Both 0.6 verbatim and 0.7 graph context are Host-selected strategies; neither
-moves canonical state ownership into the Agent.
 
 ### 0.8 — Application Protocol + React experience
 
 Define the application transport contract before the UI, then build the React
 experience as a client of ordered Host events. This phase also owns the
 product-level `START_NOW`, `GUIDE`, and `QUEUE` admission semantics rather than
-smuggling them into the 0.5 Agent Protocol.
+smuggling them into the Agent Protocol/context compiler.
 
 ### 0.9 — External adapters
 
@@ -263,13 +313,17 @@ workspace identity != transport != location
 
 SSH, WSL, Docker, remote-server backends, browser capability, and other remote
 execution mechanisms remain deferred until a product requirement activates
-them. They are not Phase 0.6 prerequisites.
+them. They are not Phase 0.7 prerequisites.
+
+The Phase 0.7 draft proposes only a bounded, read-only Host workspace-context
+snapshot port; it does not promote a remote workspace backend or give the
+context compiler arbitrary filesystem/terminal authority.
 
 ---
 
 ## Ownership checkpoint — completed
 
-The pre-semantic-port checkpoint is no longer pending. ADR 0005 froze:
+ADR 0005 freezes:
 
 - Host ↔ Agent
 - Host ↔ Capability
@@ -277,7 +331,8 @@ The pre-semantic-port checkpoint is no longer pending. ADR 0005 froze:
 - Host ↔ Memory engine
 - Host ↔ Reasoning engine
 
-Phase 0.5 then exercised those boundaries in production code and gates.
+Phase 0.5 exercised those boundaries in production code and gates; Phase 0.6
+extended the same ownership model to durable transcript/context reconstruction.
 Still intentionally unfrozen/deferred:
 
 - public/remote wire encoding;
@@ -295,6 +350,9 @@ Do not promote attractive reference-system features merely because they exist.
 Keep them deferred unless activated by an authorized phase or concrete product
 requirement:
 
+- making graph context the product default before measured promotion;
+- LLM summarization/compaction;
+- provider-specific context transforms/tokenizers;
 - full workflow product;
 - recurring automation UI;
 - subagent worktree isolation;
@@ -315,8 +373,10 @@ The backlog remains trigger-based rather than calendar-based.
 - **This file** (`docs/roadmap.md`): current architecture orientation and sequencing.
 - [`docs/phase-0-spec.md`](./phase-0-spec.md): executable specification with
   authoritative gate definitions and historical phase contracts.
-- [`docs/phase-0.5-plan.md`](./phase-0.5-plan.md): completed frozen 0.5 contract
+- [`docs/phase-0.6-plan.md`](./phase-0.6-plan.md): completed frozen 0.6 contract
   and closure evidence.
+- [`docs/phase-0.7-plan.md`](./phase-0.7-plan.md): current **draft** successor
+  plan; not frozen and not authorized.
 - [`docs/constitution.md`](./constitution.md): the 10 frozen principles.
 - [`docs/rules.md`](./rules.md): hard rules.
 - [`docs/backlog.md`](./backlog.md): trigger-based deferred work.
