@@ -131,10 +131,11 @@ describeLocked("Phase 0.6 Host + Agent verbatim restart", () => {
     expect(prefix.status).toBe("complete");
     expect(prefix.fidelity).toBe("exact");
     expect(prefix.messages.map((message) => message.role)).toEqual(["user", "assistant", "toolResult", "assistant"]);
-    expect(prefix.messages[1]).toMatchObject({
-      role: "assistant",
-      content: expect.arrayContaining([{ type: "toolCall", id: "T1", name: "inspect" }]),
-    });
+    const firstAssistant = prefix.messages[1];
+    expect(firstAssistant?.role).toBe("assistant");
+    if (firstAssistant?.role !== "assistant") throw new Error("missing first assistant message");
+    const toolCall = firstAssistant.content.find((block) => block.type === "toolCall");
+    expect(toolCall).toEqual({ type: "toolCall", id: "T1", name: "inspect", arguments: { path: "README.md" } });
     expect(prefix.messages[2]).toMatchObject({ role: "toolResult", toolCallId: "T1", toolName: "inspect" });
     expect(inspectExecutions).toBe(1);
 
