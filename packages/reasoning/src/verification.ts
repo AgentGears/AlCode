@@ -572,19 +572,14 @@ export function matchesPredicate(
 
 /**
  * Normalize a value to a canonical digest for digest_equals comparisons.
- * Strings are hashed directly; objects are JSON-stringified with sorted keys
- * first. Uses the same simple hash as canonicalInputDigest for consistency
- * within Phase 0.4.
+ * Strings are hashed directly; objects are JSON-stringified with recursively
+ * sorted keys (matching Python json.dumps(sort_keys=True, separators=(",",":"))).
+ * Uses SHA-256 truncated to 16 hex chars, matching Ouroboros verification.py.
  */
 export function canonicalDigestOf(value: unknown): string {
+  const { createHash } = require("node:crypto");
   const text = typeof value === "string" ? value : stableStringify(value);
-  let hash = 0;
-  for (let i = 0; i < text.length; i++) {
-    const char = text.charCodeAt(i);
-    hash = (hash << 5) - hash + char;
-    hash |= 0;
-  }
-  return Math.abs(hash).toString(16).padStart(8, "0").slice(0, 16);
+  return createHash("sha256").update(text, "utf8").digest("hex").slice(0, 16);
 }
 
 /** Stable JSON stringify — object keys sorted at every depth. */
