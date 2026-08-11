@@ -73,15 +73,17 @@ export function createReasoningProjection(workspaceId: string): ProjectionDefini
       let edgeOrdinal = 0;
 
       switch (event.type) {
-        // Legacy Phase 0.2 objective.set
+        // Legacy Phase 0.2 objective.set — derive node ID like the reducer
+        // so both representations agree on identity.
         case "objective.set": {
           const p = event.payload as ObjectiveSetPayload;
+          const derivedId = deriveReasoningNodeId(sessionId, seq, "objective");
           tx.exec(
             "insert-reasoning-node",
-            p.nodeId,
+            derivedId,
             workspaceId,
             sessionId,
-            p.kind ?? "objective",
+            "objective",
             p.label ?? p.statement ?? "",
             p.data !== undefined ? JSON.stringify(p.data) : null,
             p.confidence ?? null,
@@ -91,7 +93,7 @@ export function createReasoningProjection(workspaceId: string): ProjectionDefini
           break;
         }
 
-        // Phase 0.4 cognitive events
+        // Phase 0.4 cognitive events — accept both dotted canonical and undotted
         case "objective": {
           const p = event.payload as Record<string, unknown>;
           const nodeId = deriveReasoningNodeId(sessionId, seq, "objective");
@@ -100,7 +102,8 @@ export function createReasoningProjection(workspaceId: string): ProjectionDefini
           break;
         }
 
-        case "hypothesis": {
+        case "hypothesis":
+        case "hypothesis.created": {
           const p = event.payload as Record<string, unknown>;
           const nodeId = deriveReasoningNodeId(sessionId, seq, "hypothesis");
           tx.exec("insert-reasoning-node", nodeId, workspaceId, sessionId, "hypothesis",
@@ -136,7 +139,8 @@ export function createReasoningProjection(workspaceId: string): ProjectionDefini
           break;
         }
 
-        case "assumption": {
+        case "assumption":
+        case "assumption.recorded": {
           const p = event.payload as Record<string, unknown>;
           const nodeId = deriveReasoningNodeId(sessionId, seq, "assumption");
           tx.exec("insert-reasoning-node", nodeId, workspaceId, sessionId, "assumption",
@@ -160,7 +164,8 @@ export function createReasoningProjection(workspaceId: string): ProjectionDefini
           break;
         }
 
-        case "alternative": {
+        case "alternative":
+        case "alternative.deferred": {
           const p = event.payload as Record<string, unknown>;
           const nodeId = deriveReasoningNodeId(sessionId, seq, "alternative");
           tx.exec("insert-reasoning-node", nodeId, workspaceId, sessionId, "alternative",
@@ -175,7 +180,8 @@ export function createReasoningProjection(workspaceId: string): ProjectionDefini
           break;
         }
 
-        case "decision": {
+        case "decision":
+        case "decision.recorded": {
           const p = event.payload as Record<string, unknown>;
           const nodeId = deriveReasoningNodeId(sessionId, seq, "decision");
           tx.exec("insert-reasoning-node", nodeId, workspaceId, sessionId, "decision",
@@ -199,7 +205,8 @@ export function createReasoningProjection(workspaceId: string): ProjectionDefini
           break;
         }
 
-        case "link_evidence": {
+        case "link_evidence":
+        case "evidence.linked": {
           const p = event.payload as Record<string, unknown>;
           const evidenceId = p.evidenceId as string;
           const targetId = p.targetId as string;
@@ -212,7 +219,8 @@ export function createReasoningProjection(workspaceId: string): ProjectionDefini
           break;
         }
 
-        case "verification_contract": {
+        case "verification_contract":
+        case "verification.planned": {
           const p = event.payload as Record<string, unknown>;
           const nodeId = deriveReasoningNodeId(sessionId, seq, "verification_contract");
           tx.exec("insert-reasoning-node", nodeId, workspaceId, sessionId, "verification_contract",
@@ -227,7 +235,8 @@ export function createReasoningProjection(workspaceId: string): ProjectionDefini
           break;
         }
 
-        case "falsifier_evaluation": {
+        case "falsifier_evaluation":
+        case "falsifier.evaluated": {
           const p = event.payload as Record<string, unknown>;
           const nodeId = deriveReasoningNodeId(sessionId, seq, "falsifier_evaluation");
           tx.exec("insert-reasoning-node", nodeId, workspaceId, sessionId, "falsifier_evaluation",
@@ -250,12 +259,19 @@ export function createReasoningProjection(workspaceId: string): ProjectionDefini
           }
 
           // Satisfied falsifier → CONTRADICTS hypothesis (asymmetry)
-          if (p.state === "satisfied" && falsifierId) {
-            // The forHypothesisId is on the falsifier node; we can't look it
-            // up in the projection, so we store the contradicts edges from the
-            // payload's evidenceNodeIds to the falsifier's hypothesis.
-            // In practice the reducer handles this; the projection stores what
-            // the event carries.
+          // The forHypothesisId is carried in the event payload (extracted by
+          // evaluate_falsifier from the falsifier node) so the projection can
+          // create the auto-derived CONTRADICTS edges without a node lookup.
+          if (p.state === "satisfied" && falsifierId && evidenceIds) {
+            const forHypId = p.forHypothesisId as string | undefined;
+            if (forHypId) {
+              for (const evId of evidenceIds) {
+                tx.exec("insert-reasoning-edge",
+                  deriveReasoningEdgeId(sessionId, seq, "contradicts", edgeOrdinal++),
+                  workspaceId, sessionId, evId, forHypId, "contradicts",
+                  JSON.stringify({ auto_derived: true }), seq);
+              }
+            }
           }
           break;
         }

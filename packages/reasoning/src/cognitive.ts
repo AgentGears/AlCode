@@ -81,6 +81,8 @@ export interface FalsifierEvaluationPayload {
   explanation: string;
   falsifierId: string;
   evidenceNodeIds: string[];
+  /** The hypothesis this falsifier targets (for projection CONTRADICTS derivation). */
+  forHypothesisId: string | null;
 }
 
 // ---------------------------------------------------------------------------

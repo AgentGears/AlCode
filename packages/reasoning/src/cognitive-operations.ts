@@ -343,6 +343,10 @@ export function evaluate_falsifier(
     );
   }
 
+ // Extract forHypothesisId from the falsifier node so the projection
+  // (which can't look up existing nodes) has access to it.
+  const forHypothesisId = (falsifier.data.forHypothesisId as string | undefined) ?? null;
+
   return {
     type: "falsifier_evaluation",
     payload: {
@@ -352,6 +356,7 @@ export function evaluate_falsifier(
       explanation: options?.explanation ?? "",
       falsifierId,
       evidenceNodeIds,
+      forHypothesisId,
     },
   };
 }
