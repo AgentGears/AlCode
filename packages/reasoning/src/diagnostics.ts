@@ -153,6 +153,11 @@ export class GraphView {
     return !this.supersededIds().has(nodeId);
   }
 
+  /** Return all nodes in the graph (read-only accessor for detectors). */
+  allNodes(): ReasoningNode[] {
+    return [...this.graph.nodes.values()];
+  }
+
   activeNodes(kind: string): ReasoningNode[] {
     return getNodesByKind(this.graph, kind as NK).filter((n) => this.isActive(n.id));
   }
@@ -393,12 +398,9 @@ export class DiagnosticEngine {
       }
       if (evidenceNodes.length === 0) continue;
 
-      const allActions = getNodesByKind(view.node("")?.kind ? undefined as never : undefined as never, undefined as never);
-      // Get ACTION nodes directly from the graph
-      const mutations = [...view.node("")?.kind ? [] : []];
-      // Proper way: iterate graph nodes
+      // Find mutation ACTION nodes (tool_name in {Edit, Write})
       const actionMutations: ReasoningNode[] = [];
-      for (const n of (view as unknown as { graph: ReasoningGraph }).graph.nodes.values()) {
+      for (const n of view.allNodes()) {
         if (n.kind === NK.ACTION && MUTATION_TOOLS.has(n.data.tool_name as string)) actionMutations.push(n);
       }
       if (actionMutations.length === 0) continue;
@@ -413,7 +415,7 @@ export class DiagnosticEngine {
 
       let reverified = evidenceNodes.some(
         (ev) => seqFromId(ev.id) > latestMutSeq && ev.data.verification_command && ev.data.success !== false);
-      for (const n of (view as unknown as { graph: ReasoningGraph }).graph.nodes.values()) {
+      for (const n of view.allNodes()) {
         if (n.kind === NK.ACTION_RESULT && seqFromId(n.id) > latestMutSeq && n.data.verification_command && n.data.success !== false) {
           reverified = true; break;
         }

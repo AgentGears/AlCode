@@ -73,17 +73,18 @@ export function createReasoningProjection(workspaceId: string): ProjectionDefini
       let edgeOrdinal = 0;
 
       switch (event.type) {
-        // Legacy Phase 0.2 objective.set — derive node ID like the reducer
-        // so both representations agree on identity.
+        // Legacy Phase 0.2 objective.set — preserve payload.nodeId when it
+        // exists (backward compat with Phase 0.2 vertical test); derive
+        // event:{session}:{seq}:objective only when nodeId is absent.
         case "objective.set": {
           const p = event.payload as ObjectiveSetPayload;
-          const derivedId = deriveReasoningNodeId(sessionId, seq, "objective");
+          const nodeId = p.nodeId ?? deriveReasoningNodeId(sessionId, seq, "objective");
           tx.exec(
             "insert-reasoning-node",
-            derivedId,
+            nodeId,
             workspaceId,
             sessionId,
-            "objective",
+            p.kind ?? "objective",
             p.label ?? p.statement ?? "",
             p.data !== undefined ? JSON.stringify(p.data) : null,
             p.confidence ?? null,

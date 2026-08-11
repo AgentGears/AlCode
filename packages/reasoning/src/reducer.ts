@@ -197,11 +197,13 @@ export function reduceEvent(
 // ---------------------------------------------------------------------------
 
 function reduceObjective(ctx: ReductionContext, payload: Record<string, unknown>): void {
-  const nodeId = deriveNodeId(ctx.sessionId, ctx.sequence, NK.OBJECTIVE);
+  // Legacy Phase 0.2 objective.set: if payload.nodeId exists, use it.
+  // Phase 0.4 semantic objective: derive event:{session}:{seq}:objective.
+  const nodeId = (payload.nodeId as string | undefined) ?? deriveNodeId(ctx.sessionId, ctx.sequence, NK.OBJECTIVE);
   const node: ReasoningNode = {
     id: nodeId,
     kind: NK.OBJECTIVE,
-    label: (payload.statement as string) ?? "",
+    label: (payload.statement as string) ?? (payload.label as string) ?? "",
     data: { ...payload },
     confidence: null,
     step: null,

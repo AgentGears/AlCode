@@ -130,6 +130,8 @@ export interface PendingContractIndex {
   bySignature: Map<string, string[]>;
   /** All pending (unconsumed) contract node ids, in insertion order. */
   pending: string[];
+  /** Per-contract trust resolution (TRUSTED/UNTRUSTED). */
+  trustByContract: Map<string, string>;
 }
 
 /**
@@ -143,6 +145,7 @@ export function indexPendingContracts(
   const byDigest = new Map<string, string[]>();
   const bySignature = new Map<string, string[]>();
   const pending: string[] = [];
+  const trustByContract = new Map<string, string>();
 
   for (const node of graph.nodes.values()) {
     if (node.kind !== NK.VERIFICATION_CONTRACT) continue;
@@ -152,22 +155,20 @@ export function indexPendingContracts(
 
     pending.push(node.id);
 
+    // Resolve trust for this contract (pipeline/trusted data flags)
+    const trust = resolveContractTrust(graph, node.id);
+    trustByContract.set(node.id, trust);
+
     const dKey = digestKey(payload.operationMatcher.toolName, payload.operationMatcher.inputDigest);
     pushIndexed(byDigest, dKey, node.id);
 
-    // Structured signature indexing is opt-in: only contracts that declare
-    // a `signature` (or `signatureKey`) in their data are matched at the
-    // structured level. Contracts that persist only the digest are matched
-    // at the digest level (level 2) and fall through to unmatched (level 4)
-    // when the digest differs — they never match a different command via the
-    // signature level, which would be too loose.
     const sig = node.data.signature ?? node.data.signatureKey;
     if (typeof sig === "string" && sig.length > 0) {
       pushIndexed(bySignature, signatureKey(sig), node.id);
     }
   }
 
-  return { byDigest, bySignature, pending };
+  return { byDigest, bySignature, pending, trustByContract };
 }
 
 function pushIndexed(map: Map<string, string[]>, key: string, value: string): void {
@@ -226,12 +227,8 @@ export class VerificationLinker {
     actionSeq: number,
     actionSignature?: string,
   ): MatchResult {
-    void actionSeq; // reserved for future tie-breaking; consumed contracts are already filtered.
+    void actionSeq;
 
-    // Level 1: correlation_id is reserved and not propagated in Phase 0.4.
-    // (No correlation_id channel exists; fall through.)
-
-    // Level 2: exact digest match.
     const dKey = digestKey(toolName, inputDigest);
     const digestMatches = (pendingContracts.byDigest.get(dKey) ?? []).filter(
       (id) => !consumedContracts.has(id),
@@ -241,7 +238,7 @@ export class VerificationLinker {
       return {
         status: MatchStatus.EXACT,
         method: MatchMethod.DIGEST,
-        outcomeTrust: trustFor(contractId),
+        outcomeTrust: pendingContracts.trustByContract.get(contractId) ?? OutcomeTrust.TRUSTED,
         contractId,
         reason: `unique exact digest match for ${dKey}`,
       };
@@ -258,7 +255,7 @@ export class VerificationLinker {
         return {
           status: MatchStatus.STRUCTURED,
           method: MatchMethod.SIGNATURE,
-          outcomeTrust: trustFor(contractId),
+          outcomeTrust: pendingContracts.trustByContract.get(contractId) ?? OutcomeTrust.TRUSTED,
           contractId,
           reason: `digest ambiguous (${digestMatches.length}); unique signature match`,
         };
@@ -280,7 +277,7 @@ export class VerificationLinker {
         return {
           status: MatchStatus.STRUCTURED,
           method: MatchMethod.SIGNATURE,
-          outcomeTrust: trustFor(contractId),
+          outcomeTrust: pendingContracts.trustByContract.get(contractId) ?? OutcomeTrust.TRUSTED,
           contractId,
           reason: `unique signature match for ${actionSignature}`,
         };

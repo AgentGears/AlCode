@@ -100,7 +100,7 @@ describeLocked("reasoning projection integration proofs", () => {
         type: "hypothesis.created",
         payload: {
           claim: "null pointer", falsifier: "no crash",
-          objectiveId: `event:${sid}:1:objective`,
+          objectiveId: "n1",
         },
         payloadSchemaVersion: 1,
         producer: { kind: "runtime", component: "test" },
