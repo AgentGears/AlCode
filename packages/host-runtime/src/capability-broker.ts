@@ -116,7 +116,6 @@ export class CapabilityBroker {
       return { outcome: "denied", error: authorization.reason };
     }
 
-    // Prospective verification happens before environmental execution.
     const verificationPlan = await this.cognition.matchVerification(
       request.sessionId as string,
       request.toolName,
@@ -175,7 +174,6 @@ export class CapabilityBroker {
     if (!actionEvent) throw new Error("action.recorded was not persisted");
     const actionId = `event:${request.sessionId as string}:${actionEvent.sequence}:action`;
 
-    // Load-bearing barrier: the operation/action are durable and projected before execution.
     this.catchUpBarriers();
 
     let execution: HostCapabilityResult;
@@ -256,7 +254,8 @@ export class CapabilityBroker {
           hypothesisId: verification.hypothesisId,
           matchStatus: verification.match.status,
           matchMethod: verification.match.method,
-          outcomeTrust: verification.match.outcomeTrust,
+          // Unknown trust values fail closed rather than upgrading evidence.
+          outcomeTrust: verification.match.outcomeTrust === "trusted" ? "trusted" : "untrusted",
           outcome: verification.outcome,
         };
         drafts.push({
