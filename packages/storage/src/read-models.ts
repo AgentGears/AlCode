@@ -115,8 +115,23 @@ function reduceOperations(events: readonly PersistedDomainEvent<string, unknown>
 
 export function createWorkspaceReadModels(store: WorkspaceEventStore): WorkspaceReadModels {
   async function getAllEvents(): Promise<PersistedDomainEvent<string, unknown>[]> {
+    // Snapshot the canonical head first, then read with `.all()`-backed bounded
+    // batches. Unlike the async replay iterator, this never leaves a SQLite
+    // statement open across an await/yield boundary, so Host writes may safely
+    // proceed on the single connection while read-model snapshots are polled.
+    const head = await store.headSequence();
+    if (head === 0) return [];
+
     const events: PersistedDomainEvent<string, unknown>[] = [];
-    for await (const event of store.replay()) events.push(event);
+    let cursor = 0;
+    const batchSize = 512;
+    while (cursor < head) {
+      const batch = store.getVerifiedEvents(cursor, batchSize)
+        .filter((event) => event.sequence <= head);
+      if (batch.length === 0) break;
+      events.push(...batch);
+      cursor = batch[batch.length - 1]!.sequence;
+    }
     return events;
   }
 
