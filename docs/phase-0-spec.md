@@ -1,16 +1,17 @@
 # ALCODE — Phase 0 Specification (executable)
 
-Status: **active; Phases 0.0, 0.1A, 0.1B, 0.2, 0.3, 0.4, and 0.5 closed**.
-Phase 0.5 closed in merge commit `9b06f4a` with `pnpm gate:0.5` green. Phase
-0.6 is the next roadmap unit and has **not started**. See `docs/roadmap.md` for
-architecture orientation.
+Status: **active; Phases 0.0, 0.1A, 0.1B, 0.2, 0.3, 0.4, 0.5, and 0.6 closed**.
+Phase 0.6 closed in merge commit `98c764c` with `pnpm gate:0.6` green. Phase
+0.7 is the next roadmap unit; its plan is **DRAFT / NOT FROZEN / NOT
+AUTHORIZED**. See `docs/roadmap.md` for architecture orientation.
 
-This is the executable build order. Each phase has an objective, scope,
-explicit exclusions, required evidence, and an **executable exit gate**
+This is the executable build order. Each implemented phase has an objective,
+scope, explicit exclusions, required evidence, and an **executable exit gate**
 (`pnpm gate:X.Y`). A phase is complete when its frozen gate emits
 `status: "passed"`; documentation does not substitute for executable evidence.
 Closed-phase sections below record the as-built contract rather than reopening
-their implementation plans.
+their implementation plans. Draft successor sections are planning material,
+not acceptance criteria until explicitly frozen.
 
 References:
 - Constitution (10 principles, frozen): `docs/constitution.md`
@@ -19,6 +20,8 @@ References:
 - Event contract (envelope, producer, identity, versioning): `docs/event-contract.md`
 - Runtime ownership boundaries: `docs/adr/0005-runtime-ownership-boundaries.md`
 - Phase 0.5 frozen/completed plan: `docs/phase-0.5-plan.md`
+- Phase 0.6 frozen/completed plan: `docs/phase-0.6-plan.md`
+- Phase 0.7 draft plan: `docs/phase-0.7-plan.md`
 - Non-goals: `docs/non-goals.md`
 - Backlog: `docs/backlog.md`
 
@@ -57,27 +60,29 @@ command emits `status: "passed"`.
 ```text
 alcode/
 ├── packages/
-│   ├── agent-core/        ← owned minimal Agent loop (0.1A)
-│   ├── agent-protocol/    ← Host ↔ Agent semantic protocol + local IPC (0.5)
+│   ├── agent-core/        ← owned minimal Agent loop + durable-prefix seam
+│   ├── agent-protocol/    ← Host ↔ Agent semantic protocol + local IPC
 │   ├── ai/                ← provider adapters (0.1B)
 │   ├── coding-agent/      ← app layer, tools, capabilities, worker/CLI seams
-│   ├── cognition-runtime/ ← orientation/recall/verification/completion policy (0.5)
+│   ├── cognition-runtime/ ← orientation/recall/verification/completion policy
 │   ├── events/            ← canonical event envelope/contracts
-│   ├── host-runtime/      ← Host control plane (0.5)
+│   ├── host-runtime/      ← Host control plane + transcript/context authority
 │   ├── memory/            ← Ola-derived memory semantics (0.3)
 │   ├── reasoning/         ← Ouroboros-derived reasoning semantics (0.4)
 │   ├── secrets/           ← pre-persistence secret admission/redaction
 │   ├── storage/           ← locked event store + projections/read models
 │   ├── test-provider/     ← deterministic offline provider
+│   ├── transcript/        ← durable conversational semantics (0.6)
 │   └── workspace/         ← repository/workspace identity + ownership
 ├── extensions/
-│   └── cognition/         ← thin Agent-side protocol adapter (0.5)
+│   └── cognition/         ← thin Agent-side protocol adapter
 ├── docs/
 ├── scripts/gate/
 └── .github/workflows/ci.yml
 ```
 
-`packages/web` is planned for 0.8; it does not exist yet.
+`packages/context` is proposed by the Phase 0.7 draft and does not exist yet.
+`packages/web` is planned for 0.8 and does not exist yet.
 
 ### Ownership/dependency direction
 
@@ -98,6 +103,7 @@ cognition-extension
 host-runtime
   ├─ agent-protocol
   ├─ cognition-runtime
+  ├─ transcript
   ├─ storage
   ├─ memory
   ├─ reasoning
@@ -109,9 +115,10 @@ cognition-runtime
 ```
 
 The Agent worker and cognition extension do not own storage, workspace locks,
-canonical admission, environmental process lifecycle, or final completion.
-Memory and reasoning remain semantic engines; Host/storage own canonical state
-and persistence. See ADR 0005.
+canonical admission, environmental process lifecycle, transcript authority,
+context strategy, or final completion. Memory/reasoning/transcript remain
+semantic domains; Host/storage own canonical state and persistence. See ADR
+0005 and the closed Phase 0.6 plan.
 
 ## Storage layout
 
@@ -130,6 +137,7 @@ and persistence. See ADR 0005.
         ├── reasoning_edges
         ├── memories
         ├── memory_stats
+        ├── transcript_messages
         ├── artifacts
         ├── projection_receipts
         └── schema_migrations
@@ -139,7 +147,7 @@ The event log is canonical. Projection cursors never advance beyond the event
 head; derived projections are rebuildable. Workspace ownership is one writer
 through the process-held OS lock. Possibly-mutating interrupted operations use
 the explicit Phase 0.2 uncertainty/reconciliation state machine and are not
-automatically retried.
+automatically retried. Schema remains v7 after Phase 0.6.
 
 ---
 
@@ -371,87 +379,140 @@ successfully.
 
 ---
 
-## Phase 0.6 — Durable verbatim context reconstruction — NOT STARTED
+## Phase 0.6 — Durable verbatim context reconstruction — CLOSED
 
 **Objective:** establish the safe model-context baseline: reconstruct the
-provider-facing conversation from canonical durable transcript/events so a
-replacement Host/Agent does not depend on an earlier process's in-memory
-message history.
+provider-visible conversational prefix from canonical durable transcript state
+so replacement Host/Agent processes do not depend on earlier in-memory history.
 
-**Inputs:** 0.1A/pi native conversion behavior as parity oracle; 0.2 durable
-transcript/event state; 0.5 Host/Agent protocol and replaceable runtime.
+The frozen implementation contract is recorded in
+`docs/phase-0.6-plan.md`.
 
-**Implementation scope:**
-- Implement the verbatim projection equivalent of pi `convertToLlm`:
-  `messages + tool calls + tool results → provider-compatible context`, sourced
-  from durable canonical state / transcript projection.
-- Preserve deterministic ordering, roles, content, tool-call/result pairing,
-  and provider-visible semantics across close/reopen and Agent replacement.
-- Keep the reconstruction behind the Host/control boundary; the Agent does not
-  become the canonical transcript owner.
+**As built:**
 
-**Explicit exclusions:** graph-distilled selection, graph receipts, semantic
-compression, and graph-default decisions (0.7).
+- `@alcode/transcript` owns rich transcript payload/message semantics,
+  deterministic reduction, pre-append transition validation, completeness, and
+  fidelity classification;
+- canonical transcript vocabulary now includes `user.message.appended`,
+  `assistant.message.appended`, and `tool.result.appended`;
+- assistant/tool-result admissions use a serialized Host validation + append +
+  critical projection barrier and return `transcript.admitted` only after
+  durable acceptance;
+- the Agent loop awaits transcript admission so `no transcript ACK ⇒ no next
+  model request`;
+- the provider/model `toolCallId` is preserved through `ToolExecutionContext`,
+  capability request/result correlation, and the durable tool result while
+  `operationId` remains separate Host execution identity;
+- stable-head `TranscriptSnapshot` reconstructs exact or legacy text history
+  with `complete | incomplete` and `exact | legacy_text_only` state;
+- Host `compileVerbatimContext()` emits `verbatim-v1`; incomplete history blocks
+  continuation without replay, fabricated tool results, or pending-input policy;
+- `durable_transcript_v1` capability negotiation prevents the Host from
+  claiming exact 0.6 semantics for a supervised worker that does not support
+  the contract;
+- replacement Agent history is disposable and hydrated from Host-provided
+  canonical reconstruction;
+- pinned pi v0.81.1 `convertToLlm` source is byte-faithful and used as the
+  shared-message parity oracle;
+- textual transcript projection rebuild, stable source sequence, duplicate
+  delivery, Host+Agent close/reopen, and ownership boundaries are executable
+  gate evidence;
+- schema remains v7; exact context authority remains canonical events rather
+  than the intentionally simpler `transcript_messages` table.
 
-**Deliverables:** verbatim context compiler/reconstructor and the baseline
-`verbatim` projection strategy.
+**Signature proof:**
 
-**Required tests:** parity corpus against pi's native conversion plus durable
-restart/replacement reconstruction evidence. The same canonical history must
-produce the same provider-visible message sequence independent of the prior
-Agent process.
+```text
+canonical U1 → Assistant(T1) → ToolResult(T1)
+→ destroy Agent A and Host A
+→ reopen Host B
+→ reconstruct verbatim-v1 from canonical events only
+→ hydrate empty Agent B
+→ admit U2
+→ next ModelRequest contains the same complete durable prefix + U2
+→ continue
+```
 
-**Exit gate:** `pnpm gate:0.6` emits `status: "passed"` (token-identical where
-possible, otherwise behaviorally equivalent under the frozen parity corpus;
-durable reconstruction/restart proof passes).
+**Explicit exclusions retained:** graph/context relevance selection;
+reasoning/memory injection; graph projection receipts; graph A/B evaluation;
+compaction/summarization; provider-specific transforms/tokenizers; durable
+system-prompt/tool-definition/provider restoration; 0.8 pending-input dispatch
+semantics; UI; remote Agent transport; multi-agent/subagents.
 
-**Failure/rollback rule:** verbatim is the safety fallback for 0.7 and must be
-correct before the graph strategy can ship.
+**Exit gate:** `pnpm gate:0.6` composes `gate:0.5` and proves the pinned pi
+oracle, rich transcript semantics, pre-append validation, durable admission ACK
+barrier, end-to-end tool-call identity, stable-head reconstruction,
+close/reopen/replacement continuity, legacy fidelity, incomplete-history
+fail-closed behavior, projection rebuild, and context ownership boundaries.
 
-**Dependencies:** 0.5.
+**Closure:** PR #12 source head
+`303a0c4cb528a63952befcdd86e83548f8378327` merged as
+`98c764c60f95fe45c7976661bedda30a287c5c20`; post-merge CI run `31542403984`
+completed successfully with Phase 0.6 job `93947566591` green.
 
-**Status:** NOT STARTED; implementation requires a separately frozen plan and
-explicit authorization.
+**Status:** CLOSED.
 
 ---
 
-## Phase 0.7 — Graph context compiler and experiment framework
+## Phase 0.7 — Graph-distilled context compiler and experiment framework — DRAFT
 
-**Objective:** Projection B (graph-distilled) as a measured experiment with
-receipts and fail-safe fallback. **Not default until it wins on pre-registered
-objective evaluation.**
+**Status:** DRAFT — NOT FROZEN — NOT AUTHORIZED. The current proposal lives in
+`docs/phase-0.7-plan.md`. This section is orientation only until that plan is
+reviewed and frozen.
 
-**Inputs:** 0.4 reasoning projection; 0.3 memory projection; 0.6 verbatim fallback.
+**Proposed objective:** Projection B (`graph-v1`) as a deterministic,
+Host-owned, measured context strategy with inspectable receipts and fail-safe
+`verbatim-v1` fallback. Graph remains non-default.
 
-**Implementation scope:**
-- Formal context compiler, not a loose filter.
-- **Mandatory inclusions:** current user request, active objective,
-  system/safety constraints, current worktree/repo state, unresolved tool
-  failures, pending permission state, active hypotheses, decisive evidence,
-  known contradictions, latest relevant tool outputs, relevant durable
-  memories, active verification obligations.
-- **Selection factors:** relevance, recency, confidence, evidence quality,
-  contradiction status, token cost, task scope, provenance.
-- **Projection receipt** recorded as a `context.projection_compiled` event
-  (mode, compiler version, source event sequence, receipt digest, token budget,
-  fallback status) plus an inspectable full receipt.
-- **Fail-safe → verbatim** when reasoning/context prerequisites are invalid or
-  incomplete.
-- Pre-register evaluation metrics before collecting A/B results.
+**Inputs:** closed 0.6 verbatim/durable transcript baseline; closed 0.4
+reasoning semantics; closed 0.3 memory semantics; 0.5 Host operation/cognition
+state; bounded Host-observed workspace/repository state.
 
-**Explicit exclusions:** making graph the default before measured promotion.
+**Proposed architecture:**
 
-**Deliverables:** graph compiler, receipt machinery, A/B harness, and the
-pre-registered evaluation protocol.
+- one stable canonical source cut for transcript/reasoning/memory/operation
+  context rather than independent mutable reads;
+- pure `@alcode/context` semantic/compiler package with no storage or execution
+  authority;
+- compile once per newly admitted user input in the bounded initial design;
+- current user request remains canonical and is appended exactly once;
+- graph-derived cognition/memory/workspace facts render as a deterministic
+  system appendix rather than fabricated historical user messages;
+- immediately preceding complete transcript turn plus required active
+  objective/hypotheses/verification/contradiction/operation/workspace/evidence
+  state are never silently dropped for budget reasons;
+- relevant memories reuse the closed 0.3 ranking function **without** recording
+  `seen` or `used`;
+- optional earlier transcript/reasoning/memory candidates are selected under a
+  deterministic estimated-cost budget;
+- provider-exact tokenization and compaction are not required;
+- canonical `context.projection_compiled` event contains the inspectable receipt
+  and output digests; a critical rebuildable projection materializes summary
+  rows into the existing `projection_receipts` table;
+- requested graph mode may produce effective verbatim mode with an explicit
+  fallback reason;
+- graph-capable Agent support is additive capability negotiation; the Agent
+  only receives Host-selected disposable context;
+- pre-registered A/B metrics measure task outcome, estimated context cost,
+  required-inclusion integrity, fallback behavior, and operational behavior;
+- no A/B result automatically changes the product default.
 
-**Required tests:** every fail-safe condition falls back to verbatim; receipts
-are complete/accurate; A/B metrics are captured.
+**Draft exclusions:** graph default promotion; LLM summarization; compaction;
+provider-specific tokenizers/transforms; durable system prompt/tool definition
+restoration; vector memory retrieval; memory reinforcement due to selection;
+new reasoning semantics; pending-input redispatch / START_NOW / GUIDE / QUEUE;
+UI; remote Agent transport; browser; workflow/task identity; subagents;
+general scheduler/automation.
 
-**Exit gate:** `pnpm gate:0.7` emits `status: "passed"` with graph as a toggle,
-receipts inspectable, fallback proven, and the preregistered protocol present.
-Default remains verbatim until graph measurably wins.
+**Proposed exit gate:** `pnpm gate:0.7` would compose `gate:0.6` and prove
+stable-source deterministic compilation, required inclusions, budget-safe
+fallback, transcript tool-pair atomicity, read-only memory selection, receipt
+durability/rebuild, Agent capability/replacement behavior, verbatim default,
+and preregistered isolated A/B metric capture.
 
-**Dependencies:** 0.5, 0.6.
+The exact check IDs and closure criterion remain draft material in
+`docs/phase-0.7-plan.md`; they are not acceptance criteria until explicitly
+frozen.
 
 ---
 
@@ -461,7 +522,7 @@ Default remains verbatim until graph measurably wins.
 transport.
 
 **Inputs:** open-harness `ui-stream.ts` + React provider (MIT); qwen web UI
-patterns (reference only); stable 0.5 runtime contracts.
+patterns (reference only); stable Host/runtime contracts.
 
 **Implementation scope:**
 - Define the application transport contract before UI build: ordered event
@@ -511,7 +572,7 @@ work against the Host without violating the security/ownership model.
 
 ---
 
-## Migration (post-0.5, when worth doing)
+## Migration (post-0.6, when worth doing)
 
 Ola/Ouroboros repositories remain behavioral references. Any future migration
 uses explicit export/import contracts with count/ID/digest/graph/provenance
@@ -530,8 +591,8 @@ databases.**
 0.3   Memory semantic engine                  CLOSED
 0.4   Reasoning semantic engine               CLOSED
 0.5   Host + cognition integration            CLOSED
-0.6   Durable verbatim context reconstruction NEXT — NOT STARTED
-0.7   Graph context compiler + experiment     PLANNED
+0.6   Durable verbatim context reconstruction CLOSED
+0.7   Graph context compiler + experiment     DRAFT — NOT AUTHORIZED
 0.8   Application Protocol + React GUI        PLANNED
 0.9   External integrations                   PLANNED
 ```
