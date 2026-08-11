@@ -109,22 +109,16 @@ describe("critic: frozen score formula", () => {
     expect(c.recommendation).toBe("graft");
   });
 
-  it("clamps each signal to [0,1]", () => {
-    const c = critic.evaluate("b", {
+  it("rejects out-of-range signals (matches Ouroboros, no clamping)", () => {
+    expect(() => critic.evaluate("b", {
       evidenceScore: 5,
-      verificationScore: -2,
-      progressScore: 1.5,
-      uncertaintyPenalty: 9,
-      failurePenalty: -1,
-      costPenalty: 0.5,
+      verificationScore: 0,
+      progressScore: 0,
+      uncertaintyPenalty: 0,
+      failurePenalty: 0,
+      costPenalty: 0,
       notes: [],
-    });
-    expect(c.signals.evidenceScore).toBe(1);
-    expect(c.signals.verificationScore).toBe(0);
-    expect(c.signals.progressScore).toBe(1);
-    expect(c.signals.uncertaintyPenalty).toBe(1);
-    expect(c.signals.failurePenalty).toBe(0);
-    expect(c.signals.costPenalty).toBe(0.5);
+    })).toThrow("evidenceScore must be between 0.0 and 1.0");
   });
 
   it("exposes weighted terms with sign and contribution", () => {
@@ -176,24 +170,40 @@ describe("critic: recommendation thresholds", () => {
   });
 });
 
-describe("critic: fromState inference", () => {
-  it("success result raises evidence and progress, lowers uncertainty", () => {
-    const s = fromState({ lastResult: { data: { success: true }, kind: "action_result" } });
-    expect(s.evidenceScore).toBe(0.5);
-    expect(s.progressScore).toBeCloseTo(0.3, 12);
-    expect(s.uncertaintyPenalty).toBeCloseTo(0.1, 12);
-    expect(s.failurePenalty).toBeCloseTo(0.1, 12);
+describe("critic: fromState inference (exact Ouroboros defaults)", () => {
+  it("success result: evidence += 0.20, progress += 0.15", () => {
+    const s = fromState({ lastResult: { success: true } });
+    expect(s.evidenceScore).toBe(0.20);
+    expect(s.progressScore).toBe(0.15);
+    expect(s.uncertaintyPenalty).toBe(0);
+    expect(s.failurePenalty).toBe(0);
+    expect(s.notes).toContain("latest action succeeded");
   });
-  it("failed result raises failure penalty", () => {
-    const s = fromState({ lastResult: { data: { success: false }, kind: "action_result" } });
-    expect(s.failurePenalty).toBe(0.5);
+  it("failed result: failure += 0.35, uncertainty += 0.10", () => {
+    const s = fromState({ lastResult: { success: false } });
+    expect(s.failurePenalty).toBe(0.35);
+    expect(s.uncertaintyPenalty).toBe(0.10);
     expect(s.evidenceScore).toBe(0);
+    expect(s.notes).toContain("latest action failed");
   });
-  it("no data → conservative defaults", () => {
+  it("no data → all zeros", () => {
     const s = fromState({});
-    expect(s.uncertaintyPenalty).toBe(0.5);
-    expect(s.progressScore).toBeCloseTo(0.1, 12);
-    expect(s.notes.length).toBeGreaterThan(0);
+    expect(s.evidenceScore).toBe(0);
+    expect(s.uncertaintyPenalty).toBe(0);
+    expect(s.progressScore).toBe(0);
+    expect(s.notes.length).toBe(0);
+  });
+  it("check PASS: verification += 0.30, evidence += 0.20", () => {
+    const s = fromState({ lastCheck: { verdict: "PASS" } });
+    expect(s.verificationScore).toBe(0.30);
+    expect(s.evidenceScore).toBe(0.20);
+    expect(s.notes).toContain("checkpoint passed");
+  });
+  it("check FAIL: failure += 0.35, uncertainty += 0.10", () => {
+    const s = fromState({ lastCheck: { verdict: "FAIL" } });
+    expect(s.failurePenalty).toBe(0.35);
+    expect(s.uncertaintyPenalty).toBe(0.10);
+    expect(s.notes).toContain("checkpoint failed");
   });
 });
 
