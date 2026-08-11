@@ -55,9 +55,9 @@ export function reduceIntegrationEvent(
   switch (eventType) {
     case "action.recorded": {
       const p = payload as unknown as ActionRecordedPayload;
-      const nodeId = deriveNodeId(sessionId, sequence, NK.ACTION);
+      const id = deriveNodeId(sessionId, sequence, NK.ACTION);
       addNodeIfAbsent(graph, {
-        id: nodeId,
+        id,
         kind: NK.ACTION,
         label: `${normalizeToolNameForReasoning(p.toolName)} ${p.operationId}`,
         data: {
@@ -75,7 +75,7 @@ export function reduceIntegrationEvent(
     case "evidence.recorded": {
       const p = payload as unknown as EvidenceRecordedPayload;
       const kind = p.evidenceKind === "observation" ? NK.OBSERVATION : NK.ACTION_RESULT;
-      const nodeId = deriveNodeId(sessionId, sequence, kind);
+      const id = deriveNodeId(sessionId, sequence, kind);
       const data: Record<string, unknown> = {
         ...payload,
         operation_id: p.operationId,
@@ -90,7 +90,7 @@ export function reduceIntegrationEvent(
       if (p.stderrDigest !== undefined) data.stderr_digest = p.stderrDigest;
 
       addNodeIfAbsent(graph, {
-        id: nodeId,
+        id,
         kind,
         label: `${normalizeToolNameForReasoning(p.toolName)}:${p.outcome}`,
         data,
@@ -101,7 +101,7 @@ export function reduceIntegrationEvent(
       if (p.actionId && getNode(graph, p.actionId)) {
         addEdgeIfAbsent(graph, {
           id: deriveEdgeId(sessionId, sequence, EK.PRODUCED_BY, 0),
-          source: nodeId,
+          source: id,
           target: p.actionId,
           kind: EK.PRODUCED_BY,
           data: {},
@@ -114,10 +114,11 @@ export function reduceIntegrationEvent(
       const p = payload as unknown as VerificationResultCorrelatedPayload;
       if (!getNode(graph, p.contractId) || !getNode(graph, p.evidenceId)) return true;
 
+      // Preserve the closed Phase 0.4 linker direction: result/evidence → contract.
       addEdgeIfAbsent(graph, {
         id: deriveEdgeId(sessionId, sequence, EK.EXECUTES, 0),
-        source: p.contractId,
-        target: p.evidenceId,
+        source: p.evidenceId,
+        target: p.contractId,
         kind: EK.EXECUTES,
         data: {
           match_status: p.matchStatus,
