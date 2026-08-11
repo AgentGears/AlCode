@@ -74,6 +74,94 @@ describeLocked("reasoning projection integration proofs", () => {
     }
   });
 
+  it("v6→v7 migration: caught-up reasoning cursor invalidated, derived graph rebuilt", async () => {
+    const dbPath = join(dir, "ws_migrate.sqlite");
+
+    // Step 1: Manually create a v6 database with old reasoning schema
+    const rawDb = new Database(dbPath);
+    rawDb.pragma("journal_mode = WAL");
+    rawDb.pragma("foreign_keys = ON");
+    // Create v1 reasoning_nodes (no session_id, no step)
+    rawDb.exec(`CREATE TABLE IF NOT EXISTS reasoning_nodes (
+      node_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, kind TEXT NOT NULL,
+      label TEXT NOT NULL, data TEXT, confidence REAL, created_sequence INTEGER NOT NULL
+    )`);
+    // Create v6 schema_migrations
+    rawDb.exec("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)");
+    rawDb.prepare("INSERT INTO schema_migrations (version, applied_at) VALUES (6, ?)").run(new Date().toISOString());
+    // Insert a stale v1 reasoning node
+    rawDb.prepare(
+      "INSERT INTO reasoning_nodes (node_id, workspace_id, kind, label, data, confidence, created_sequence) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run("stale-obj-1", TEST_WS, "objective", "old objective", "{}", 1.0, 1);
+    // Insert a caught-up reasoning cursor at schemaVersion 1
+    rawDb.exec(`CREATE TABLE IF NOT EXISTS projection_cursors (
+      projection_name TEXT PRIMARY KEY, last_applied_event_sequence INTEGER NOT NULL DEFAULT 0,
+      projection_schema_version INTEGER NOT NULL DEFAULT 1, classification TEXT NOT NULL DEFAULT 'derived'
+    )`);
+    rawDb.prepare(
+      "INSERT INTO projection_cursors (projection_name, last_applied_event_sequence, projection_schema_version, classification) VALUES (?, ?, ?, ?)",
+    ).run("reasoning", 1, 1, "derived");
+    // Create workspace_metadata (required by bindWorkspace)
+    rawDb.exec(`CREATE TABLE IF NOT EXISTS workspace_metadata (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      workspace_id TEXT NOT NULL, repository_id TEXT NOT NULL, created_at TEXT NOT NULL
+    )`);
+    rawDb.prepare(
+      "INSERT INTO workspace_metadata (singleton, workspace_id, repository_id, created_at) VALUES (1, ?, ?, ?)",
+    ).run(TEST_WS, TEST_REPO, new Date().toISOString());
+    // Create events table (required by store)
+    rawDb.exec(`CREATE TABLE events (
+      event_id TEXT PRIMARY KEY, idempotency_key TEXT, sequence INTEGER NOT NULL,
+      workspace_id TEXT NOT NULL, session_id TEXT NOT NULL, operation_id TEXT,
+      type TEXT NOT NULL, payload TEXT NOT NULL, payload_schema_version INTEGER NOT NULL,
+      producer TEXT NOT NULL, causation_event_id TEXT, correlation_id TEXT,
+      occurred_at TEXT NOT NULL, recorded_at TEXT NOT NULL, event_digest TEXT NOT NULL,
+      request_fingerprint TEXT NOT NULL
+    )`);
+    rawDb.close();
+
+    // Step 2: Open via openLockedWorkspaceStore — this triggers v6→v7 migration
+    const rt = await openStore(dbPath);
+
+    // Step 3: Verify migration results
+    const roDb = new Database(dbPath, { readonly: true, fileMustExist: true });
+    try {
+      // Schema version is now 7
+      expect(getSchemaVersion(roDb)).toBe(7);
+
+      // reasoning_edges table exists
+      const hasEdges = roDb.prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='reasoning_edges'",
+      ).get();
+      expect(hasEdges).toBeDefined();
+
+      // session_id + step columns added
+      const hasSessionId = roDb.prepare(
+        "SELECT COUNT(*) as c FROM pragma_table_info('reasoning_nodes') WHERE name = 'session_id'",
+      ).get() as { c: number };
+      expect(hasSessionId.c).toBe(1);
+
+      // Stale v1 reasoning nodes were cleared
+      const staleCount = (roDb.prepare("SELECT COUNT(*) as c FROM reasoning_nodes").get() as { c: number }).c;
+      expect(staleCount).toBe(0);
+
+      // Reasoning cursor was invalidated (deleted)
+      const cursor = roDb.prepare(
+        "SELECT last_applied_event_sequence, projection_schema_version FROM projection_cursors WHERE projection_name = 'reasoning'",
+      ).get();
+      expect(cursor).toBeUndefined();
+    } finally {
+      roDb.close();
+    }
+
+    // Step 4: Catch up the reasoning projection under v2
+    const runner = rt.store.getProjectionRunner();
+    const result = runner.catchUp(createReasoningProjection(TEST_WS));
+    expect(result.caught).toBe(true);
+
+    rt.close();
+  });
+
   it("append canonical reasoning events → project → close/reopen → catch up → equivalent graph", async () => {
     const dbPath = join(dir, "ws.sqlite");
     const wsId = TEST_WS;

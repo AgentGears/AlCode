@@ -1,7 +1,17 @@
 {
   "oracle": {
-    "source": "C:/Next-Era/Ouroboros/ouroboros/reducer.py",
-    "commit": "20be4b18d4c57487f8993d2762bace129f0cf7c6"
+    "source": "C:/Next-Era/Ouroboros/ouroboros/",
+    "archiveSha256": "ae1ffe7dbcebf3f2edfc2a0dbcf98523c3c68de1432cd1e370ae7ec144ab29bb",
+    "sourceFileHashes": {
+      "reducer.py": "332412ffbd4fb3b1709d71f47649b6e486e71942ec59ca8cfae6840dcd0ebf3b",
+      "diagnostics.py": "156a0c15fa251999825e23d673136e3ffd4cab61e22ac278bb8c95eb91a1ef14",
+      "critic.py": "31bc996d3a8e44f268370840cdadab5e249498a707a47556741fdca3b82eb2ee",
+      "branching.py": "1400d0bbb7ad447c10c2b382c01f5fa7a0bcd5c036f378e99ebadfeefcbee62d",
+      "verification.py": "e0ec679f616037d3c246f6d48bd0605dc52682874c0f90166f42dcac22c95802",
+      "graph.py": "430b806be936dabd930f988389d6036171e4c25b966aa4b604619e9228855cf6",
+      "artifacts.py": "9feaabb7dfa839712b9a1a4122334405514869ba54c93ecaddfbda8299f99a6b",
+      "cognitive.py": "53bd2d2a3919cd7bb0cb56d151cbbbfc5b1586004eb8c5eed763398ab153d456"
+    }
   },
   "families": {
     "normal_flow": {

@@ -235,15 +235,53 @@ export class RuleBasedBranchGenerator {
   constructor(private readonly idFactory: BranchIdFactory = new DeterministicBranchIdFactory()) {}
 
   /**
-   * Generate candidates for the given root cause.
+   * Generate candidates for the given root cause, with optional context tuning.
    *
    * @param rootCause       the diagnosed root cause
    * @param parentBranchId  the branch these candidates fork from
+   * @param contextText     optional lowercase text from recent observations/results/checks;
+   *                        when provided, _tune_from_latest_context boosts
+   *                        dependency-missing and test-fixture candidates
    */
-  generate(rootCause: RootCauseType, parentBranchId: string): BranchCandidate[] {
+  generate(rootCause: RootCauseType, parentBranchId: string, contextText?: string): BranchCandidate[] {
     const templates = templatesFor(rootCause);
-    return templates.map((t) => fromTemplate(this.idFactory, t, rootCause, parentBranchId));
+    let candidates = templates.map((t) => fromTemplate(this.idFactory, t, rootCause, parentBranchId));
+    if (contextText !== undefined) {
+      candidates = tuneFromLatestContext(candidates, contextText);
+    }
+    return candidates;
   }
+}
+
+/**
+ * Port of Ouroboros _tune_from_latest_context.
+ * Boosts candidates when recent context text indicates specific failure types.
+ */
+function tuneFromLatestContext(candidates: BranchCandidate[], contextText: string): BranchCandidate[] {
+  const text = contextText.toLowerCase();
+  const moduleFailure = ["modulenotfounderror", "missing module", "no module named"].some((t) => text.includes(t));
+  const dependencyFailure = ["dependency", "pyproject", "requirements"].some((t) => text.includes(t));
+  const fixtureFailure = text.includes("fixture");
+
+  return candidates.map((c) => {
+    if (c.title === "Dependency missing" && (moduleFailure || dependencyFailure)) {
+      return {
+        ...c,
+        confidence: Math.min(1.0, c.confidence + 0.10),
+        verificationValue: Math.min(1.0, c.verificationValue + 0.10),
+        rationale: `${c.rationale} Recent context mentions a module/dependency failure.`,
+      };
+    }
+    if (c.title === "Test fixture misconfigured" && fixtureFailure) {
+      return {
+        ...c,
+        confidence: Math.min(1.0, c.confidence + 0.08),
+        verificationValue: Math.min(1.0, c.verificationValue + 0.08),
+        rationale: `${c.rationale} Recent context mentions fixture setup.`,
+      };
+    }
+    return c;
+  });
 }
 
 function fromTemplate(
