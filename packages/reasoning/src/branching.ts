@@ -44,8 +44,8 @@ export class DeterministicBranchIdFactory implements BranchIdFactory {
 // Candidate and decision records
 // ---------------------------------------------------------------------------
 
-/** Where a candidate originated. */
-export type CandidateSource = "rule_based" | "rule_based:root_cause";
+/** Where a candidate originated (deprecated — source is now the RootCause string). */
+export type CandidateSource = string;
 
 /** A proposed alternate branch. */
 export interface BranchCandidate {
@@ -55,13 +55,14 @@ export interface BranchCandidate {
   hypothesis: string;
   plan: string[];
   rationale: string;
-  /** Signal the candidate is expected to produce when verified. */
-  expectedSignal: number;
+  /** Signal the candidate is expected to produce when verified (text). */
+  expectedSignal: string;
   /** Predicted verification outcome value (0-1). */
   verificationValue: number;
   /** Initial confidence (0-1). */
   confidence: number;
-  source: CandidateSource;
+  /** Root cause source string (RootCause StrEnum value). */
+  source: string;
 }
 
 /** A decision to graft from one candidate and reject the rest. */
@@ -252,8 +253,10 @@ interface CandidateTemplate {
   hypothesis: string;
   plan: string[];
   rationale: string;
+  expectedSignal: string;
   confidence: number;
   verificationValue: number;
+  prefix: string;
 }
 
 /**
@@ -285,7 +288,7 @@ function fromTemplate(
   rootCause: RootCauseType,
   parentBranchId: string,
 ): BranchCandidate {
-  const branchId = factory.nextId(branchPrefix(rootCause));
+  const branchId = factory.nextId(t.prefix);
   return {
     branchId,
     parentBranchId,
@@ -293,27 +296,11 @@ function fromTemplate(
     hypothesis: t.hypothesis,
     plan: t.plan,
     rationale: t.rationale,
-    expectedSignal: t.verificationValue,
+    expectedSignal: t.expectedSignal,
     verificationValue: t.verificationValue,
     confidence: t.confidence,
-    source: "rule_based",
+    source: rootCause,
   };
-}
-
-function branchPrefix(rootCause: RootCauseType): string {
-  switch (rootCause) {
-    case RootCause.GOAL:
-      return "branch-goal";
-    case RootCause.PLAN:
-      return "branch-plan";
-    case RootCause.EXECUTION:
-      return "branch-exec";
-    case RootCause.ENVIRONMENT:
-      return "branch-env";
-    case RootCause.UNKNOWN:
-    default:
-      return "branch-unknown";
-  }
 }
 
 function templatesFor(rootCause: RootCauseType): CandidateTemplate[] {
@@ -321,93 +308,113 @@ function templatesFor(rootCause: RootCauseType): CandidateTemplate[] {
     case RootCause.GOAL:
       return [
         {
-          title: "clarify-success-criteria",
-          hypothesis: "The success criteria are ambiguous; restating them resolves the goal gap.",
-          plan: ["Re-read the objective statement", "List explicit success criteria", "Confirm with the next check"],
-          rationale: "Goal ambiguity most often stems from unstated success criteria.",
+          title: "Clarify success criteria",
+          hypothesis: "The branch failed because the goal is ambiguous or underspecified.",
+          plan: ["Restate the goal", "Identify missing acceptance criteria", "Escalate if ambiguity remains"],
+          rationale: "A goal-rooted failure should reduce ambiguity before more actions are taken.",
+          expectedSignal: "Clearer acceptance criteria or an explicit escalation reason.",
           confidence: 0.52,
           verificationValue: 0.48,
+          prefix: "goal-clarify",
         },
         {
-          title: "narrow-subgoal",
-          hypothesis: "The current goal is too broad; a narrower subgoal is achievable.",
-          plan: ["Decompose the goal", "Pick the most uncertain subgoal", "Verify it independently"],
-          rationale: "Over-broad goals hide the real blocker behind a wall of work.",
-          confidence: 0.55,
-          verificationValue: 0.5,
+          title: "Narrow to testable subgoal",
+          hypothesis: "The original goal needs a smaller objective checkpoint.",
+          plan: ["Extract smallest testable subgoal", "Run one objective check", "Map result back to goal"],
+          rationale: "A smaller subgoal can produce a more objective validation signal.",
+          expectedSignal: "A pass/fail signal tied to a narrower acceptance criterion.",
+          confidence: 0.50,
+          verificationValue: 0.55,
+          prefix: "goal-subgoal",
         },
       ];
     case RootCause.PLAN:
       return [
         {
-          title: "inspect-assumptions",
-          hypothesis: "A plan assumption is wrong; inspecting assumptions exposes it.",
-          plan: ["List plan assumptions", "Mark each confirmed/unconfirmed", "Probe the riskiest assumption"],
-          rationale: "Plan failure usually traces to an unconfirmed assumption.",
-          confidence: 0.5,
-          verificationValue: 0.55,
+          title: "Inspect assumptions",
+          hypothesis: "The failed plan relied on an invalid assumption.",
+          plan: ["List active assumptions", "Check the riskiest assumption", "Revise plan from evidence"],
+          rationale: "Plan failures often come from untested premises.",
+          expectedSignal: "A confirmed or rejected assumption that changes the next action.",
+          confidence: 0.56,
+          verificationValue: 0.60,
+          prefix: "plan-assumption",
         },
         {
-          title: "alternate-hypothesis",
-          hypothesis: "The leading hypothesis is wrong; an alternate hypothesis fits the evidence.",
-          plan: ["State the alternate hypothesis", "Design a discriminating check", "Run it"],
-          rationale: "When the plan is stuck, the hypothesis it serves is often the culprit.",
+          title: "Try alternate hypothesis",
+          hypothesis: "A competing explanation better fits the observations.",
+          plan: ["State alternate hypothesis", "Run smallest discriminating check", "Continue only if supported"],
+          rationale: "The active branch should be replaced by a branch that can be falsified quickly.",
+          expectedSignal: "A discriminating check supports or rejects the alternate hypothesis.",
           confidence: 0.54,
           verificationValue: 0.64,
+          prefix: "plan-alternate",
         },
         {
-          title: "dependency-missing",
-          hypothesis: "A required dependency is missing or mis-declared.",
-          plan: ["Enumerate declared dependencies", "Resolve each one", "Re-run the failing step"],
-          rationale: "Missing dependencies surface as plan steps that cannot execute.",
+          title: "Dependency missing",
+          hypothesis: "The failure is caused by a missing dependency rather than the original plan hypothesis.",
+          plan: ["Inspect dependency configuration", "Confirm the missing package", "Add or correct the dependency", "Rerun tests"],
+          rationale: "Module import failures are often dependency/configuration failures, not code-path failures.",
+          expectedSignal: "Dependency metadata confirms the package is missing or misdeclared.",
+          confidence: 0.52,
+          verificationValue: 0.66,
+          prefix: "plan-dependency",
+        },
+        {
+          title: "Test fixture misconfigured",
+          hypothesis: "The failure is caused by an incorrect fixture or test setup.",
+          plan: ["Inspect failing fixture", "Run the fixture in isolation", "Correct setup if confirmed"],
+          rationale: "A setup failure can masquerade as a product-code failure.",
+          expectedSignal: "Fixture isolation reproduces or clears the failure.",
           confidence: 0.48,
-          verificationValue: 0.42,
-        },
-        {
-          title: "test-fixture",
-          hypothesis: "A test fixture or setup is wrong, masking real behavior.",
-          plan: ["Inspect the fixture", "Run the step outside the fixture", "Compare outputs"],
-          rationale: "Bad fixtures make good code look broken.",
-          confidence: 0.46,
-          verificationValue: 0.58,
+          verificationValue: 0.52,
+          prefix: "plan-fixture",
         },
       ];
     case RootCause.EXECUTION:
       return [
         {
-          title: "inspect-error",
-          hypothesis: "The error message or stack trace points at the real defect.",
-          plan: ["Read the full error", "Locate the originating frame", "Form a narrow fix hypothesis"],
-          rationale: "Execution failures carry their own diagnosis; read them first.",
-          confidence: 0.6,
-          verificationValue: 0.55,
+          title: "Inspect command error",
+          hypothesis: "The plan is viable, but the executed command or tool invocation failed.",
+          plan: ["Read the error output", "Correct command/input", "Retry once with verification"],
+          rationale: "Execution failures should be repaired before abandoning the plan.",
+          expectedSignal: "The corrected invocation runs or produces a different error.",
+          confidence: 0.58,
+          verificationValue: 0.56,
+          prefix: "exec-error",
         },
         {
-          title: "verify-preconditions",
-          hypothesis: "A precondition was not met before the failing action ran.",
-          plan: ["List the action's preconditions", "Check each one", "Re-run after fixing"],
-          rationale: "Actions fail silently when their preconditions are assumed, not checked.",
-          confidence: 0.52,
-          verificationValue: 0.5,
+          title: "Verify execution preconditions",
+          hypothesis: "A required local precondition was missing during execution.",
+          plan: ["Check current working directory", "Check required files/tools", "Retry after fixing preconditions"],
+          rationale: "The action may have failed despite a valid branch hypothesis.",
+          expectedSignal: "A missing precondition is found or ruled out.",
+          confidence: 0.53,
+          verificationValue: 0.58,
+          prefix: "exec-precondition",
         },
       ];
     case RootCause.ENVIRONMENT:
       return [
         {
-          title: "check-runtime",
-          hypothesis: "The runtime or toolchain version differs from what the plan assumed.",
-          plan: ["Print runtime versions", "Compare against expected", "Reconcile"],
-          rationale: "Environment drift is the most common silent breaker.",
-          confidence: 0.45,
-          verificationValue: 0.4,
+          title: "Check runtime environment",
+          hypothesis: "The branch is blocked by runtime or dependency environment state.",
+          plan: ["Check runtime version", "Check installed dependencies", "Retry after environment repair"],
+          rationale: "External environment faults should be confirmed before changing the plan.",
+          expectedSignal: "Runtime/dependency state confirms or rejects the blocker.",
+          confidence: 0.56,
+          verificationValue: 0.62,
+          prefix: "env-runtime",
         },
         {
-          title: "escalate",
-          hypothesis: "The environment is misconfigured beyond self-repair; escalate.",
-          plan: ["Capture the failing command and environment", "Hand off to the operator", "Stop modifying state"],
-          rationale: "Some environment failures require human or out-of-band intervention.",
-          confidence: 0.4,
-          verificationValue: 0.3,
+          title: "Escalate external blocker",
+          hypothesis: "The blocker is outside the harness control surface.",
+          plan: ["Identify unavailable resource", "Record blocker", "Escalate with evidence"],
+          rationale: "External failures should not cause blind retries.",
+          expectedSignal: "A clear external dependency or permission blocker is recorded.",
+          confidence: 0.45,
+          verificationValue: 0.50,
+          prefix: "env-escalate",
         },
       ];
     case RootCause.UNKNOWN:

@@ -220,42 +220,42 @@ describe("branching: DeterministicBranchIdFactory", () => {
   });
 });
 
-describe("branching: RuleBasedBranchGenerator dispatch", () => {
-  it("goal → 2 candidates with frozen confidence/verification", () => {
+describe("branching: RuleBasedBranchGenerator dispatch (exact Ouroboros values)", () => {
+  it("goal → 2 candidates with exact frozen confidence/verification", () => {
     const g = new RuleBasedBranchGenerator(new DeterministicBranchIdFactory());
     const cs = g.generate(RootCause.GOAL, "main");
     expect(cs.length).toBe(2);
     expect(cs[0]!.confidence).toBeCloseTo(0.52, 12);
     expect(cs[0]!.verificationValue).toBeCloseTo(0.48, 12);
-    expect(cs[1]!.confidence).toBeCloseTo(0.55, 12);
-    expect(cs[1]!.verificationValue).toBeCloseTo(0.5, 12);
+    expect(cs[1]!.confidence).toBeCloseTo(0.50, 12);
+    expect(cs[1]!.verificationValue).toBeCloseTo(0.55, 12);
     expect(cs.every((c) => c.parentBranchId === "main")).toBe(true);
-    expect(cs.every((c) => c.source === "rule_based")).toBe(true);
+    expect(cs.every((c) => c.source === "goal")).toBe(true);
   });
 
-  it("plan → 4 candidates with the frozen pairs", () => {
+  it("plan → 4 candidates with the exact frozen pairs", () => {
     const cs = generateRuleBasedCandidates(RootCause.PLAN, "main");
     const pairs = cs.map((c) => [c.confidence, c.verificationValue] as const);
-    expect(pairs).toContainEqual([0.5, 0.55]);
+    expect(pairs).toContainEqual([0.56, 0.60]);
     expect(pairs).toContainEqual([0.54, 0.64]);
-    expect(pairs).toContainEqual([0.48, 0.42]);
-    expect(pairs).toContainEqual([0.46, 0.58]);
+    expect(pairs).toContainEqual([0.52, 0.66]);
+    expect(pairs).toContainEqual([0.48, 0.52]);
     expect(cs.length).toBe(4);
   });
 
   it("execution → 2 candidates", () => {
     const cs = generateRuleBasedCandidates(RootCause.EXECUTION, "main");
     expect(cs.length).toBe(2);
-    expect(cs.map((c) => c.confidence)).toEqual(expect.arrayContaining([0.6, 0.52]));
-    expect(cs.map((c) => c.verificationValue)).toEqual(expect.arrayContaining([0.55, 0.5]));
+    expect(cs.map((c) => c.confidence)).toEqual(expect.arrayContaining([0.58, 0.53]));
+    expect(cs.map((c) => c.verificationValue)).toEqual(expect.arrayContaining([0.56, 0.58]));
   });
 
   it("environment → 2 candidates (escalate is lowest)", () => {
     const cs = generateRuleBasedCandidates(RootCause.ENVIRONMENT, "main");
     expect(cs.length).toBe(2);
-    const escalate = cs.find((c) => c.title === "escalate");
-    expect(escalate?.confidence).toBeCloseTo(0.4, 12);
-    expect(escalate?.verificationValue).toBeCloseTo(0.3, 12);
+    const escalate = cs.find((c) => c.title === "Escalate external blocker");
+    expect(escalate?.confidence).toBeCloseTo(0.45, 12);
+    expect(escalate?.verificationValue).toBeCloseTo(0.50, 12);
   });
 
   it("unknown → empty list", () => {
@@ -268,7 +268,7 @@ describe("branching: RuleBasedBranchGenerator dispatch", () => {
     const cs = g.generate(RootCause.PLAN, "main");
     const ids = cs.map((c) => c.branchId);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(ids[0]).toBe("branch-plan-1");
+    expect(ids[0]).toBe("plan-assumption-1");
   });
 });
 
@@ -339,10 +339,10 @@ function makeCandidate(
     hypothesis: `${id} hypothesis`,
     plan,
     rationale: "rationale",
-    expectedSignal: verification,
+    expectedSignal: `expected signal for ${id}`,
     verificationValue: verification,
     confidence,
-    source: "rule_based" as const,
+    source: "plan",
   };
 }
 
