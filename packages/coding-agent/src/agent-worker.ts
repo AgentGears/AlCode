@@ -110,6 +110,7 @@ async function main(): Promise<void> {
       transport,
       sessionId: () => localSessionId,
       toolNames: localContext.toolNames,
+      durableTranscript: localContext.verbatim !== undefined,
     })]);
 
     const provider = createProvider();
