@@ -159,6 +159,39 @@ describe("contract: intent → canonical event → reducer (no data loss)", () =
   });
 });
 
+describe("contract: legacy objective.set preserves label/data/confidence", () => {
+  it("legacy payload with nodeId preserves label, structured data, and confidence", () => {
+    const graph = createReasoningGraph();
+    const legacyPayload = {
+      nodeId: "n1",
+      kind: "objective",
+      label: "test objective",
+      data: { statement: "fix the bug", successCriteria: "tests pass" },
+      confidence: 1.0,
+    };
+    reduceEvent(graph, SESSION, 1, "objective.set", legacyPayload, createReductionIndex());
+
+    const node = getNode(graph, "n1");
+    expect(node).toBeDefined();
+    expect(node!.id).toBe("n1");
+    expect(node!.kind).toBe(NK.OBJECTIVE);
+    expect(node!.label).toBe("test objective");
+    expect(node!.data).toEqual({ statement: "fix the bug", successCriteria: "tests pass" });
+    expect(node!.confidence).toBe(1.0);
+  });
+
+  it("semantic objective (no nodeId) derives event ID and stores statement", () => {
+    const graph = createReasoningGraph();
+    reduceEvent(graph, SESSION, 1, "objective", { statement: "semantic obj" }, createReductionIndex());
+
+    const derivedId = `event:${SESSION}:1:objective`;
+    const node = getNode(graph, derivedId);
+    expect(node).toBeDefined();
+    expect(node!.label).toBe("semantic obj");
+    expect(node!.confidence).toBeNull();
+  });
+});
+
 describe("contract: canonical event name mapping", () => {
   it("maps every canonical dotted name to the correct reducer label", () => {
     expect(CANONICAL_TO_REDUCER["objective.set"]).toBe("objective");

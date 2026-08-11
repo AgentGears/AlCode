@@ -109,7 +109,7 @@ describeLocked("reasoning projection integration proofs", () => {
     rawDb.prepare(
       "INSERT INTO workspace_metadata (singleton, workspace_id, repository_id, created_at) VALUES (1, ?, ?, ?)",
     ).run(TEST_WS, TEST_REPO, new Date().toISOString());
-    // Create events table (required by store)
+    // Create events table with a real legacy objective.set canonical event
     rawDb.exec(`CREATE TABLE events (
       event_id TEXT PRIMARY KEY, idempotency_key TEXT, sequence INTEGER NOT NULL,
       workspace_id TEXT NOT NULL, session_id TEXT NOT NULL, operation_id TEXT,
@@ -118,6 +118,30 @@ describeLocked("reasoning projection integration proofs", () => {
       occurred_at TEXT NOT NULL, recorded_at TEXT NOT NULL, event_digest TEXT NOT NULL,
       request_fingerprint TEXT NOT NULL
     )`);
+    // Insert a real canonical legacy objective.set event
+    const legacyPayload = JSON.stringify({
+      nodeId: "legacy-obj-1", kind: "objective", label: "original objective",
+      data: { statement: "fix the bug" }, confidence: 0.9,
+    });
+    const { createHash } = await import("node:crypto");
+    const digestInput = JSON.stringify({
+      eventId: "legacy-evt-1", workspaceId: TEST_WS, sessionId: "legacy-session",
+      operationId: null, type: "objective.set", payload: JSON.parse(legacyPayload),
+      payloadSchemaVersion: 1, producer: { kind: "runtime", component: "test" },
+      causationEventId: null, correlationId: null, occurredAt: "2026-01-01T00:00:00.000Z",
+    });
+    const fingerprint = createHash("sha256").update(digestInput).digest("hex");
+    const eventDigest = createHash("sha256").update(
+      JSON.stringify({ eventId: "legacy-evt-1", workspaceId: TEST_WS, sessionId: "legacy-session",
+        occurredAt: "2026-01-01T00:00:00.000Z", type: "objective.set", payload: JSON.parse(legacyPayload),
+        payloadSchemaVersion: 1, producer: { kind: "runtime", component: "test" },
+        sequence: 1, recordedAt: "2026-01-01T00:00:00.000Z" }),
+    ).digest("hex");
+    rawDb.prepare(
+      "INSERT INTO events (event_id, idempotency_key, sequence, workspace_id, session_id, operation_id, type, payload, payload_schema_version, producer, causation_event_id, correlation_id, occurred_at, recorded_at, event_digest, request_fingerprint) VALUES (?, NULL, ?, ?, ?, NULL, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)",
+    ).run("legacy-evt-1", 1, TEST_WS, "legacy-session", "objective.set", legacyPayload, 1,
+      JSON.stringify({ kind: "runtime", component: "test" }),
+      "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z", eventDigest, fingerprint);
     rawDb.close();
 
     // Step 2: Open via openLockedWorkspaceStore — this triggers v6→v7 migration
@@ -126,38 +150,44 @@ describeLocked("reasoning projection integration proofs", () => {
     // Step 3: Verify migration results
     const roDb = new Database(dbPath, { readonly: true, fileMustExist: true });
     try {
-      // Schema version is now 7
       expect(getSchemaVersion(roDb)).toBe(7);
-
-      // reasoning_edges table exists
       const hasEdges = roDb.prepare(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='reasoning_edges'",
       ).get();
       expect(hasEdges).toBeDefined();
-
-      // session_id + step columns added
       const hasSessionId = roDb.prepare(
         "SELECT COUNT(*) as c FROM pragma_table_info('reasoning_nodes') WHERE name = 'session_id'",
       ).get() as { c: number };
       expect(hasSessionId.c).toBe(1);
-
       // Stale v1 reasoning nodes were cleared
       const staleCount = (roDb.prepare("SELECT COUNT(*) as c FROM reasoning_nodes").get() as { c: number }).c;
       expect(staleCount).toBe(0);
-
-      // Reasoning cursor was invalidated (deleted)
+      // Reasoning cursor was invalidated
       const cursor = roDb.prepare(
-        "SELECT last_applied_event_sequence, projection_schema_version FROM projection_cursors WHERE projection_name = 'reasoning'",
+        "SELECT * FROM projection_cursors WHERE projection_name = 'reasoning'",
       ).get();
       expect(cursor).toBeUndefined();
     } finally {
       roDb.close();
     }
 
-    // Step 4: Catch up the reasoning projection under v2
+    // Step 4: Catch up the reasoning projection under v2 — replays the real event
     const runner = rt.store.getProjectionRunner();
     const result = runner.catchUp(createReasoningProjection(TEST_WS));
     expect(result.caught).toBe(true);
+    expect(result.appliedCount).toBe(1);
+
+    // Step 5: Verify the legacy objective was restored with its original identity
+    const roDb2 = new Database(dbPath, { readonly: true, fileMustExist: true });
+    try {
+      const restored = roDb2.prepare("SELECT * FROM reasoning_nodes WHERE node_id = ?").get("legacy-obj-1");
+      expect(restored).toBeDefined();
+      expect((restored as Record<string, unknown>).kind).toBe("objective");
+      expect((restored as Record<string, unknown>).label).toBe("original objective");
+      expect((restored as Record<string, unknown>).confidence).toBe(0.9);
+    } finally {
+      roDb2.close();
+    }
 
     rt.close();
   });
@@ -255,7 +285,7 @@ describeLocked("reasoning projection integration proofs", () => {
         sessionId: sid as never,
         occurredAt: new Date().toISOString(),
         type: "hypothesis.created",
-        payload: { claim: "hyp", objectiveId: `event:${sid}:1:objective` },
+        payload: { claim: "hyp", objectiveId: "n1" },
         payloadSchemaVersion: 1,
         producer: { kind: "runtime", component: "test" },
       },

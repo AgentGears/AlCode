@@ -95,9 +95,18 @@ oracle_files = [
     "ouroboros/artifacts.py", "ouroboros/cognitive.py",
 ]
 
+# Compute archive SHA-256 over the concatenated file hashes (deterministic, reproducible)
+import hashlib as _hl
+_archive_hash = _hl.sha256()
+for f in sorted(oracle_files):
+    _archive_hash.update(sha256_file(f).encode("utf-8"))
+    _archive_hash.update(b"\n")
+archive_sha = _archive_hash.hexdigest()
+
 output = {
     "oracle": {
         "source": "C:/Next-Era/Ouroboros/ouroboros/",
+        "archiveSha256": archive_sha,
         "sourceFileHashes": {f.split("/")[-1]: sha256_file(f) for f in oracle_files},
     },
     "families": {

@@ -1,7 +1,7 @@
 {
   "oracle": {
     "source": "C:/Next-Era/Ouroboros/ouroboros/",
-    "archiveSha256": "ae1ffe7dbcebf3f2edfc2a0dbcf98523c3c68de1432cd1e370ae7ec144ab29bb",
+    "archiveSha256": "31ec534f710c14d0f12c0150a589a929e95bfdb810969da1166e3640f3e7a7fe",
     "sourceFileHashes": {
       "reducer.py": "332412ffbd4fb3b1709d71f47649b6e486e71942ec59ca8cfae6840dcd0ebf3b",
       "diagnostics.py": "156a0c15fa251999825e23d673136e3ffd4cab61e22ac278bb8c95eb91a1ef14",
