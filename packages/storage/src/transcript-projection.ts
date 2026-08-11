@@ -1,32 +1,18 @@
-// Transcript projection — critical. Materializes user/assistant message events
-// into the transcript_messages table. This is the second critical projection
-// required by Phase 0.2: an operation isn't complete until its messages are
-// visible (ADR 0001).
-//
-// See docs/phase-0-spec.md §0.2 Step 10 and docs/adr/0001.
+// Transcript projection — critical. Materializes conversational transcript
+// events into the intentionally human-readable transcript_messages table.
+// Exact Phase 0.6 context is reconstructed from canonical events, not this table.
 
 import type { PersistedDomainEvent } from "@alcode/events";
+import type {
+  AssistantMessageAppendedPayload,
+  ToolResultAppendedPayload,
+  UserMessageAppendedPayload,
+} from "@alcode/transcript";
 import type {
   ProjectionDefinition,
   ProjectionTransaction,
   StatementDefinition,
 } from "./projection.ts";
-
-// ---------------------------------------------------------------------------
-// Event payload types (owned by the transcript/agent domain)
-// ---------------------------------------------------------------------------
-
-export interface UserMessageAppendedPayload {
-  text: string;
-}
-
-export interface AssistantMessageAppendedPayload {
-  text: string;
-}
-
-// ---------------------------------------------------------------------------
-// Registered statements
-// ---------------------------------------------------------------------------
 
 export const transcriptStatements: readonly StatementDefinition[] = [
   {
@@ -36,20 +22,6 @@ export const transcriptStatements: readonly StatementDefinition[] = [
   },
 ];
 
-// ---------------------------------------------------------------------------
-// Projection definition
-// ---------------------------------------------------------------------------
-
-/**
- * The transcript projection. Classified 'critical' — a transcript message is
- * not visible to callers until this projection has caught up.
- *
- * Handles two event types:
- *   user.message.appended → INSERT role='user'
- *   assistant.message.appended → INSERT role='assistant'
- *
- * Other event types are ignored.
- */
 export function createTranscriptProjection(workspaceId: string): ProjectionDefinition {
   return {
     name: "transcript",
@@ -60,43 +32,26 @@ export function createTranscriptProjection(workspaceId: string): ProjectionDefin
       switch (event.type) {
         case "user.message.appended": {
           const p = event.payload as UserMessageAppendedPayload;
-          tx.exec(
-            "insert-message",
-            event.eventId,
-            event.sequence,
-            workspaceId,
-            event.sessionId,
-            "user",
-            p.text,
-          );
+          tx.exec("insert-message", event.eventId, event.sequence, workspaceId, event.sessionId, "user", p.text);
           break;
         }
-
         case "assistant.message.appended": {
           const p = event.payload as AssistantMessageAppendedPayload;
-          tx.exec(
-            "insert-message",
-            event.eventId,
-            event.sequence,
-            workspaceId,
-            event.sessionId,
-            "assistant",
-            p.text,
-          );
+          tx.exec("insert-message", event.eventId, event.sequence, workspaceId, event.sessionId, "assistant", p.text);
           break;
         }
-
+        case "tool.result.appended": {
+          const p = event.payload as ToolResultAppendedPayload;
+          const body = p.content.map((block) => block.text).join("");
+          tx.exec("insert-message", event.eventId, event.sequence, workspaceId, event.sessionId, "toolResult", body);
+          break;
+        }
         default:
-          // Other event types are ignored by this projection.
           break;
       }
     },
   };
 }
-
-// ---------------------------------------------------------------------------
-// Query helpers (read-only)
-// ---------------------------------------------------------------------------
 
 export interface TranscriptRecord {
   eventId: string;
@@ -125,9 +80,7 @@ export function createTranscriptQuery(db: import("better-sqlite3").Database) {
       return (rows as Record<string, unknown>[]).map(rowToRecord);
     },
     getBySession(sessionId: string): TranscriptRecord[] {
-      const rows = db.prepare(
-        "SELECT * FROM transcript_messages WHERE session_id = ? ORDER BY sequence",
-      ).all(sessionId);
+      const rows = db.prepare("SELECT * FROM transcript_messages WHERE session_id = ? ORDER BY sequence").all(sessionId);
       return (rows as Record<string, unknown>[]).map(rowToRecord);
     },
   };
