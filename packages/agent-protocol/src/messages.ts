@@ -1,4 +1,12 @@
+import type {
+  TranscriptAssistantMessage,
+  TranscriptMessage,
+  TranscriptToolResultMessage,
+} from "@alcode/transcript";
+
 export const AGENT_PROTOCOL_VERSION = 1 as const;
+export const DURABLE_TRANSCRIPT_CAPABILITY = "durable_transcript_v1" as const;
+export const VERBATIM_COMPILER_VERSION = "verbatim-v1" as const;
 
 export type ProtocolRequestId = string;
 export type AgentGenerationId = string;
@@ -15,6 +23,23 @@ export interface AssistantMessageProduced {
   requestId: ProtocolRequestId;
   sessionId: string;
   text: string;
+  /** Required from workers advertising durable_transcript_v1. */
+  content?: TranscriptAssistantMessage["content"];
+  stopReason?: TranscriptAssistantMessage["stopReason"];
+  errorMessage?: string;
+  timestamp?: number;
+}
+
+export interface ToolResultProduced {
+  type: "tool.result";
+  requestId: ProtocolRequestId;
+  sessionId: string;
+  toolCallId: string;
+  toolName: string;
+  content: TranscriptToolResultMessage["content"];
+  isError: boolean;
+  timestamp: number;
+  operationId?: string;
 }
 
 export interface CapabilityRequest {
@@ -51,6 +76,7 @@ export interface AgentError {
 export type AgentToHostMessage =
   | AgentHello
   | AssistantMessageProduced
+  | ToolResultProduced
   | CapabilityRequest
   | CriterionEvidence
   | AgentIdle
@@ -82,6 +108,17 @@ export interface InputAdmitted {
   requestId: ProtocolRequestId;
   sessionId: string;
   text: string;
+  /** Canonical conversational timestamp. Required by durable_transcript_v1 Host. */
+  timestamp?: number;
+}
+
+export interface VerbatimContextEnvelope {
+  compilerVersion: typeof VERBATIM_COMPILER_VERSION;
+  sourceEventSequence: number;
+  messages: TranscriptMessage[];
+  status: "complete" | "incomplete";
+  pendingToolCallIds: string[];
+  fidelity: "exact" | "legacy_text_only";
 }
 
 export interface ContextProvide {
@@ -91,6 +128,16 @@ export interface ContextProvide {
   systemPrompt: string;
   orientationRequired: boolean;
   toolNames: string[];
+  /** Required by a Host when durable_transcript_v1 is negotiated. */
+  verbatim?: VerbatimContextEnvelope;
+}
+
+export interface TranscriptAdmitted {
+  type: "transcript.admitted";
+  requestId: ProtocolRequestId;
+  sessionId: string;
+  eventId: string;
+  sequence: number;
 }
 
 export interface CapabilityResult {
@@ -125,6 +172,7 @@ export type HostToAgentMessage =
   | SessionResume
   | InputAdmitted
   | ContextProvide
+  | TranscriptAdmitted
   | CapabilityResult
   | Cancel
   | Shutdown;
