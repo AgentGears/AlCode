@@ -7,12 +7,14 @@ import {
   type PersistedDomainEvent,
   type SessionId,
 } from "@alcode/events";
-import type {
-  LockedWorkspaceStore,
-  ProjectionDefinition,
-  ProjectionTransaction,
-  StatementDefinition,
+import {
+  createWorkspaceReadModels,
+  type LockedWorkspaceStore,
+  type ProjectionDefinition,
+  type ProjectionTransaction,
+  type StatementDefinition,
 } from "@alcode/storage";
+import { CanonicalAdmissionQueue } from "./admission-queue.ts";
 
 export class HostSessionStateError extends Error {
   constructor(message: string) {
@@ -81,7 +83,14 @@ export interface CompletionEvidence {
 }
 
 export class HostSessionManager {
-  constructor(private readonly lockedStore: LockedWorkspaceStore) {}
+  private readonly readModels;
+
+  constructor(
+    private readonly lockedStore: LockedWorkspaceStore,
+    private readonly admission: CanonicalAdmissionQueue,
+  ) {
+    this.readModels = createWorkspaceReadModels(lockedStore.store);
+  }
 
   private get store() {
     return this.lockedStore.store;
@@ -94,8 +103,8 @@ export class HostSessionManager {
   async getState(sessionId: SessionId): Promise<HostSessionState> {
     let started = false;
     let stopped = false;
-    for await (const event of this.store.replay()) {
-      if (event.sessionId !== (sessionId as string)) continue;
+    const events = await this.readModels.getSessionEvents(sessionId as string);
+    for (const event of events) {
       if (event.type === "runtime.session.started") started = true;
       if (event.type === "runtime.session.stopped") stopped = true;
     }
@@ -126,7 +135,7 @@ export class HostSessionManager {
       payloadSchemaVersion: 1,
       producer: { kind: "runtime", component: "host-session-manager" },
     };
-    await this.store.append([draft]);
+    await this.admission.append([draft]);
     this.catchUp();
     return { sessionId: resolved, resumed: false };
   }
@@ -147,7 +156,7 @@ export class HostSessionManager {
     };
     if (evidence) payload.completionEvidence = evidence;
 
-    await this.store.append([{
+    await this.admission.append([{
       eventId: mkEventId(),
       idempotencyKey: `runtime.session.stopped:${sessionId as string}`,
       correlationId: uuidv7(),
