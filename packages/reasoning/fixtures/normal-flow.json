@@ -1,0 +1,18 @@
+{
+  "description": "Normal deterministic flow: objective→hypothesis→evidence→conclusion",
+  "cases": [
+    {
+      "name": "objective creates exactly one OBJECTIVE node",
+      "events": [{ "sequence": 1, "type": "objective", "payload": { "statement": "fix the bug" } }],
+      "expected": { "nodeCount": 1, "edgeCount": 0, "nodeKinds": ["objective"] }
+    },
+    {
+      "name": "hypothesis with falsifier creates 2 nodes + 2 edges",
+      "events": [
+        { "sequence": 1, "type": "objective", "payload": { "statement": "fix the bug" } },
+        { "sequence": 2, "type": "hypothesis", "payload": { "claim": "null pointer in line 42", "falsifier": "no crash after fix", "objectiveId": "event:s:1:objective" } }
+      ],
+      "expected": { "nodeCount": 3, "edgeCount": 2, "nodeKinds": ["objective", "hypothesis", "falsifier"] }
+    }
+  ]
+}

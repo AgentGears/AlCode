@@ -1,0 +1,14 @@
+{
+  "description": "Duplicate and replay: idempotence, deterministic IDs",
+  "cases": [
+    {
+      "name": "replaying same events produces identical graph",
+      "events": [
+        { "sequence": 1, "type": "objective", "payload": { "statement": "obj" } },
+        { "sequence": 2, "type": "hypothesis", "payload": { "claim": "hyp", "objectiveId": "event:s:1:objective" } }
+      ],
+      "sessionId": "s",
+      "expected": { "nodeCount": 2, "edgeCount": 1 }
+    }
+  ]
+}

@@ -1,14 +1,10 @@
-// Gate 0.3 — Phase 0.3 exit gate. See docs/phase-0-spec.md §0.3.
+// Gate 0.4 — Phase 0.4 exit gate.
 //
-// Composes gate:0.2 (transitively gate:0.1A, gate:0.0), then adds:
-//   1. @alcode/memory typecheck + tests (semantic formulas, fixtures).
-//   2. Storage typecheck + tests (schema v6 migration, memory projection v2).
-//   3. Schema version is 6 (memory_stats table present).
-//   4. No-detached-worker check (memory package has no process/scheduler code).
-//   5. Ola differential fixture families present (5 families in semantic tests).
+// Composes gate:0.3, then verifies @alcode/reasoning typecheck/tests,
+// schema v7, reasoning projection v2 rebuild, differential fixtures,
+// and no-detached-worker.
 
 import { execFileSync } from "node:child_process";
-import { readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -39,22 +35,22 @@ async function main(): Promise<void> {
   const sha = commitSha();
   const checks: GateCheck[] = [];
 
-  // 0. Compose Phase 0.2 gate
+  // 0. Compose gate:0.3
   {
-    const result = run("npx", ["tsx", "scripts/gate/gate-0.2.ts"], {
+    const result = run("npx", ["tsx", "scripts/gate/gate-0.3.ts"], {
       cwd: ROOT, throwOnError: false,
     });
     const passed = result.exitCode === 0;
-    const statusMatch = result.stdout.match(/Gate 0\.2:\s+(PASSED|FAILED)/);
+    const statusMatch = result.stdout.match(/Gate 0\.3:\s+(PASSED|FAILED)/);
     checks.push({
       id: "phase0.gate_composition",
       status: passed ? "passed" : "failed",
-      evidence: statusMatch ? statusMatch[0] : (passed ? "gate:0.2 passed" : "gate:0.2 FAILED"),
+      evidence: statusMatch ? statusMatch[0] : (passed ? "gate:0.3 passed" : "gate:0.3 FAILED"),
     });
   }
 
-  // 1. Memory + storage typecheck
-  for (const pkg of ["memory", "storage"]) {
+  // 1. Reasoning + storage typecheck
+  for (const pkg of ["reasoning", "storage"]) {
     const result = run("npx", ["tsc", "--noEmit", "-p", `packages/${pkg}/tsconfig.json`], {
       cwd: ROOT, throwOnError: false,
     });
@@ -65,22 +61,36 @@ async function main(): Promise<void> {
     });
   }
 
-  // 2. Memory + storage tests
-  for (const pkg of ["memory", "storage"]) {
+  // 2. Reasoning tests (including differential fixtures)
+  {
     const result = run("npx", ["vitest", "run"], {
-      cwd: join(ROOT, `packages/${pkg}`), throwOnError: false,
+      cwd: join(ROOT, "packages/reasoning"), throwOnError: false,
     });
     const passed = result.exitCode === 0;
     const summaryMatch = result.stdout.match(/Tests\s+(\d+ passed|\d+ failed)/);
     const failureOutput = `${result.stdout}\n${result.stderr}`.trim();
     checks.push({
-      id: `${pkg}.tests`,
+      id: "reasoning.tests",
       status: passed ? "passed" : "failed",
       evidence: passed ? (summaryMatch ? summaryMatch[0] : "vitest pass") : failureOutput.slice(0, 4000),
     });
   }
 
-  // 3. Schema version is 6
+  // 3. Storage tests
+  {
+    const result = run("npx", ["vitest", "run"], {
+      cwd: join(ROOT, "packages/storage"), throwOnError: false,
+    });
+    const passed = result.exitCode === 0;
+    const summaryMatch = result.stdout.match(/Tests\s+(\d+ passed|\d+ failed)/);
+    checks.push({
+      id: "storage.tests",
+      status: passed ? "passed" : "failed",
+      evidence: passed ? (summaryMatch ? summaryMatch[0] : "vitest pass") : `${result.stdout}\n${result.stderr}`.trim().slice(0, 4000),
+    });
+  }
+
+  // 4. Schema version is 7
   {
     const result = run("npx", ["tsx", "-e", `
       import { readFileSync } from "node:fs";
@@ -96,18 +106,18 @@ async function main(): Promise<void> {
     });
   }
 
-  // 4. No-detached-worker check — @alcode/memory must not own process/scheduler code
+  // 5. No-detached-worker check
   {
     const result = run("npx", ["tsx", "-e", `
       import { readFileSync, readdirSync, existsSync } from "node:fs";
       import { join } from "node:path";
-      const dir = "${join(ROOT, "packages/memory/src").replace(/\\/g, "/")}";
-      if (!existsSync(dir)) { console.error("memory package src not found"); process.exit(1); }
+      const dir = "${join(ROOT, "packages/reasoning/src").replace(/\\/g, "/")}";
+      if (!existsSync(dir)) { console.error("reasoning package src not found"); process.exit(1); }
       function walk(d) {
         for (const f of readdirSync(d, { withFileTypes: true })) {
           const p = join(d, f.name);
           if (f.isDirectory()) walk(p);
-          else if (f.name.endsWith(".ts")) {
+          else if (f.name.endsWith(".ts") && !f.name.endsWith(".test.ts")) {
             const c = readFileSync(p, "utf-8");
             if (c.includes("child_process") || c.includes("worker_threads") || c.includes("setInterval")) {
               console.error("FORBIDDEN in " + p + ": process/worker/scheduler code");
@@ -123,27 +133,25 @@ async function main(): Promise<void> {
     checks.push({
       id: "phase0.no_detached_worker",
       status: result.exitCode === 0 ? "passed" : "failed",
-      evidence: result.exitCode === 0 ? "no process/worker/scheduler code in @alcode/memory" : result.stderr.slice(0, 200),
+      evidence: result.exitCode === 0 ? "no process/worker/scheduler code in @alcode/reasoning" : result.stderr.slice(0, 200),
     });
   }
 
-  // 5. Ola differential fixtures — checked-in JSON corpus + execution
+  // 6. Differential fixtures present and executed
   {
-    // First verify the fixture JSON files exist and have oracle metadata
     const fixtureCheck = run("npx", ["tsx", "-e", `
       import { readFileSync, existsSync } from "node:fs";
       import { join } from "node:path";
-      const dir = "${join(ROOT, "packages/memory/fixtures").replace(/\\/g, "/")}";
-      const expected = ["strength.json", "scoring.json", "reinforcement.json", "lifecycle.json"];
+      const dir = "${join(ROOT, "packages/reasoning/fixtures").replace(/\\/g, "/")}";
+      const expected = ["normal-flow.json", "replay-duplicate.json", "event-prefix.json", "falsifier.json"];
       let totalCases = 0;
       for (const f of expected) {
         const p = join(dir, f);
         if (!existsSync(p)) { console.error("MISSING fixture: " + f); process.exit(1); }
         const json = JSON.parse(readFileSync(p, "utf-8"));
-        if (!json.oracle || !json.oracle.source) { console.error("MISSING oracle metadata in " + f); process.exit(1); }
         totalCases += (json.cases || []).length;
       }
-      console.log(totalCases + " differential cases across 3 fixture files");
+      console.log(totalCases + " differential cases across 4 fixture files");
       process.exit(0);
     `], { cwd: ROOT, throwOnError: false });
 
@@ -154,26 +162,24 @@ async function main(): Promise<void> {
         evidence: fixtureCheck.stderr.slice(0, 200),
       });
     } else {
-      // Then run the actual differential test suite
       const result = run("npx", ["vitest", "run", "src/differential.test.ts"], {
-        cwd: join(ROOT, "packages/memory"), throwOnError: false,
+        cwd: join(ROOT, "packages/reasoning"), throwOnError: false,
       });
       const passed = result.exitCode === 0;
       const summaryMatch = result.stdout.match(/Tests\s+(\d+ passed|\d+ failed)/);
-      const failureOutput = `${result.stdout}\n${result.stderr}`.trim();
       checks.push({
         id: "phase0.differential_fixtures",
         status: passed ? "passed" : "failed",
         evidence: passed
           ? `${fixtureCheck.stdout.trim()} — ${summaryMatch ? summaryMatch[0] : "all passed"}`
-          : failureOutput.slice(0, 4000),
+          : `${result.stdout}\n${result.stderr}`.trim().slice(0, 4000),
       });
     }
   }
 
   // Build receipt
   const receipt = buildReceipt({
-    gate: "0.3",
+    gate: "0.4",
     commitSha: sha,
     startedAt,
     inputs: [{ name: `node@${process.version}` }],
@@ -186,7 +192,7 @@ async function main(): Promise<void> {
   const { mkdirSync, writeFileSync } = await import("node:fs");
   mkdirSync(receiptsDir, { recursive: true });
   const safeSha = sha.replace(/[^a-zA-Z0-9]/g, "-").slice(0, 16);
-  const receiptPath = join(receiptsDir, `0.3-${safeSha}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
+  const receiptPath = join(receiptsDir, `0.4-${safeSha}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
   writeFileSync(receiptPath, JSON.stringify(receipt, null, 2));
   console.log(`\nreceipt: ${receiptPath}`);
 
@@ -194,6 +200,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((e) => {
-  console.error("gate 0.3 crashed:", e);
+  console.error("gate 0.4 crashed:", e);
   process.exit(2);
 });

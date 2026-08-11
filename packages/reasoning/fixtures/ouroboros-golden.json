@@ -1,0 +1,161 @@
+{
+  "oracle": {
+    "source": "C:/Next-Era/Ouroboros/ouroboros/",
+    "archiveSha256": "31ec534f710c14d0f12c0150a589a929e95bfdb810969da1166e3640f3e7a7fe",
+    "sourceFileHashes": {
+      "reducer.py": "332412ffbd4fb3b1709d71f47649b6e486e71942ec59ca8cfae6840dcd0ebf3b",
+      "diagnostics.py": "156a0c15fa251999825e23d673136e3ffd4cab61e22ac278bb8c95eb91a1ef14",
+      "critic.py": "31bc996d3a8e44f268370840cdadab5e249498a707a47556741fdca3b82eb2ee",
+      "branching.py": "1400d0bbb7ad447c10c2b382c01f5fa7a0bcd5c036f378e99ebadfeefcbee62d",
+      "verification.py": "e0ec679f616037d3c246f6d48bd0605dc52682874c0f90166f42dcac22c95802",
+      "graph.py": "430b806be936dabd930f988389d6036171e4c25b966aa4b604619e9228855cf6",
+      "artifacts.py": "9feaabb7dfa839712b9a1a4122334405514869ba54c93ecaddfbda8299f99a6b",
+      "cognitive.py": "53bd2d2a3919cd7bb0cb56d151cbbbfc5b1586004eb8c5eed763398ab153d456"
+    }
+  },
+  "families": {
+    "normal_flow": {
+      "nodes": [
+        {
+          "id": "event:s:1:objective",
+          "kind": "Objective",
+          "label": "fix the bug"
+        },
+        {
+          "id": "event:s:2:falsifier",
+          "kind": "Falsifier",
+          "label": "no crash after fix"
+        },
+        {
+          "id": "event:s:2:hypothesis",
+          "kind": "Hypothesis",
+          "label": "null pointer on line 42"
+        }
+      ],
+      "edges": [
+        {
+          "source": "event:s:2:falsifier",
+          "target": "event:s:2:hypothesis",
+          "kind": "falsifies"
+        },
+        {
+          "source": "event:s:2:hypothesis",
+          "target": "event:s:1:objective",
+          "kind": "addresses"
+        }
+      ]
+    },
+    "replay_a": {
+      "nodes": [
+        {
+          "id": "event:s:1:objective",
+          "kind": "Objective",
+          "label": "fix the bug"
+        },
+        {
+          "id": "event:s:2:falsifier",
+          "kind": "Falsifier",
+          "label": "no crash after fix"
+        },
+        {
+          "id": "event:s:2:hypothesis",
+          "kind": "Hypothesis",
+          "label": "null pointer on line 42"
+        }
+      ],
+      "edges": [
+        {
+          "source": "event:s:2:falsifier",
+          "target": "event:s:2:hypothesis",
+          "kind": "falsifies"
+        },
+        {
+          "source": "event:s:2:hypothesis",
+          "target": "event:s:1:objective",
+          "kind": "addresses"
+        }
+      ]
+    },
+    "replay_b": {
+      "nodes": [
+        {
+          "id": "event:s:1:objective",
+          "kind": "Objective",
+          "label": "fix the bug"
+        },
+        {
+          "id": "event:s:2:falsifier",
+          "kind": "Falsifier",
+          "label": "no crash after fix"
+        },
+        {
+          "id": "event:s:2:hypothesis",
+          "kind": "Hypothesis",
+          "label": "null pointer on line 42"
+        }
+      ],
+      "edges": [
+        {
+          "source": "event:s:2:falsifier",
+          "target": "event:s:2:hypothesis",
+          "kind": "falsifies"
+        },
+        {
+          "source": "event:s:2:hypothesis",
+          "target": "event:s:1:objective",
+          "kind": "addresses"
+        }
+      ]
+    },
+    "replay_equal": true,
+    "prefix1": {
+      "nodes": [
+        {
+          "id": "event:s:1:objective",
+          "kind": "Objective",
+          "label": "fix the bug"
+        }
+      ],
+      "edges": []
+    },
+    "prefix2": {
+      "nodes": [
+        {
+          "id": "event:s:1:objective",
+          "kind": "Objective",
+          "label": "fix the bug"
+        },
+        {
+          "id": "event:s:2:falsifier",
+          "kind": "Falsifier",
+          "label": "no crash after fix"
+        },
+        {
+          "id": "event:s:2:hypothesis",
+          "kind": "Hypothesis",
+          "label": "null pointer on line 42"
+        }
+      ],
+      "edges": [
+        {
+          "source": "event:s:2:falsifier",
+          "target": "event:s:2:hypothesis",
+          "kind": "falsifies"
+        },
+        {
+          "source": "event:s:2:hypothesis",
+          "target": "event:s:1:objective",
+          "kind": "addresses"
+        }
+      ]
+    },
+    "falsifier_satisfied": {
+      "contradicts_count": 1,
+      "supports_count": 0
+    },
+    "falsifier_refuted": {
+      "contradicts_count": 0,
+      "supports_count": 0
+    }
+  }
+}
