@@ -1,15 +1,20 @@
 #!/usr/bin/env node
 // alcode CLI — Host-owned Phase 0.5 entrypoint.
 //
-// The CLI now boots the durable Host control plane, resolves/locks the current
-// workspace, starts a replaceable Agent child process, and exposes coding tools
-// to that Agent only as Host-backed protocol proxies. The default provider in
-// the Agent remains the closed Phase 0.1A deterministic offline provider.
+// The durable Host path owns workspace/store/capability authority when the
+// native local-runtime dependencies are available. The closed Phase 0.1A
+// deterministic `-p` contract remains usable in environments that explicitly
+// install with native build scripts disabled (the historical Windows CI path).
 
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
+import {
+  runAgentLoop,
+  StaticExtensionHost,
+  type AgentExtension,
+} from "@alcode/agent-core";
 import {
   AgentSupervisor,
   DefaultHostPolicy,
@@ -19,6 +24,8 @@ import { openLockedWorkspaceStore } from "@alcode/storage";
 import { WorkspaceRegistry, resolveAlcodeHome } from "@alcode/workspace";
 import { createLocalWorkspace } from "./capabilities/local-workspace.ts";
 import { createDefaultHostCapabilities } from "./host-capabilities.ts";
+import { TestModelProvider } from "./test-model-provider.ts";
+import { createBashTool } from "./tools/bash.ts";
 
 const SYSTEM_PROMPT = "You are ALCODE, a memory-native coding agent.";
 
@@ -31,21 +38,44 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): 
   ]);
 }
 
-async function main(): Promise<void> {
-  const { values } = parseArgs({
-    options: {
-      prompt: { type: "string", short: "p" },
+function isUnavailableNativeRuntime(error: unknown): boolean {
+  const text = error instanceof Error
+    ? `${error.name}: ${error.message}\n${error.stack ?? ""}`
+    : String(error);
+  return text.includes("Could not locate the bindings file")
+    || text.includes("better_sqlite3.node")
+    || text.includes("fs_ext.node")
+    || text.includes("NODE_MODULE_VERSION");
+}
+
+async function runOfflineCompatibility(prompt: string): Promise<void> {
+  const extensionHost = new StaticExtensionHost();
+  const bashExtension: AgentExtension = {
+    name: "bash-tool",
+    register(ctx) {
+      ctx.registerTool(createBashTool({ workingDirectory: process.cwd() }));
     },
-    allowPositionals: false,
+  };
+  await extensionHost.mount([bashExtension]);
+
+  const provider = new TestModelProvider([
+    { match: "hello", text: "Hello from ALCODE. The agent loop is running." },
+    { match: "*", text: "ALCODE received your prompt." },
+  ]);
+
+  await runAgentLoop(prompt, {
+    systemPrompt: SYSTEM_PROMPT,
+    provider,
+    tools: extensionHost.getTools(),
+    emit(event) {
+      if (event.type !== "message_end" || event.message.role !== "assistant") return;
+      const text = event.message.content.find((content) => content.type === "text");
+      if (text && "text" in text && text.text) console.log(text.text);
+    },
   });
+}
 
-  const prompt = values.prompt;
-  if (!prompt) {
-    console.error("Usage: alcode -p \"<prompt>\"");
-    process.exitCode = 1;
-    return;
-  }
-
+async function runDurableHost(prompt: string): Promise<void> {
   const alcodeHome = resolveAlcodeHome();
   mkdirSync(alcodeHome, { recursive: true });
   const registry = new WorkspaceRegistry(alcodeHome);
@@ -125,6 +155,29 @@ async function main(): Promise<void> {
       }
     }
     await host.shutdown().catch(() => undefined);
+  }
+}
+
+async function main(): Promise<void> {
+  const { values } = parseArgs({
+    options: {
+      prompt: { type: "string", short: "p" },
+    },
+    allowPositionals: false,
+  });
+
+  const prompt = values.prompt;
+  if (!prompt) {
+    console.error("Usage: alcode -p \"<prompt>\"");
+    process.exitCode = 1;
+    return;
+  }
+
+  try {
+    await runDurableHost(prompt);
+  } catch (error) {
+    if (!isUnavailableNativeRuntime(error)) throw error;
+    await runOfflineCompatibility(prompt);
   }
 }
 
