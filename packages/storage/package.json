@@ -18,6 +18,7 @@
   "dependencies": {
     "@alcode/events": "workspace:*",
     "@alcode/secrets": "workspace:*",
+    "@alcode/transcript": "workspace:*",
     "@alcode/workspace": "workspace:*",
     "better-sqlite3": "^13.0.3"
   },
