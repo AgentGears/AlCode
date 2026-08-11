@@ -18,6 +18,13 @@ export {
   type InterruptedOperationRecovery,
 } from "./sqlite-event-store.ts";
 
+// Event-sourced bounded read models for Host runtime callers:
+export {
+  createWorkspaceReadModels,
+  type WorkspaceReadModels,
+  type TranscriptReadRecord,
+} from "./read-models.ts";
+
 // Projection model:
 export {
   type ProjectionDefinition,
@@ -67,7 +74,7 @@ export {
   type TranscriptRecord,
 } from "./transcript-projection.ts";
 
-// Reasoning + memory models (minimal Phase 0.2 derived projections):
+// Reasoning + memory models:
 export {
   createReasoningProjection,
   reasoningStatements,
