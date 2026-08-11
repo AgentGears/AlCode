@@ -13,16 +13,40 @@
 // ---------------------------------------------------------------------------
 
 export const REASONING_EVENT_TYPES = {
-  OBJECTIVE_SET: "objective.set", // Legacy Phase 0.2 compat (handled by reducer + projection)
-  OBJECTIVE: "objective",
-  HYPOTHESIS: "hypothesis",
-  ASSUMPTION: "assumption",
-  ALTERNATIVE: "alternative",
-  DECISION: "decision",
-  LINK_EVIDENCE: "link_evidence",
-  VERIFICATION_CONTRACT: "verification_contract",
-  FALSIFIER_EVALUATION: "falsifier_evaluation",
+  OBJECTIVE_SET: "objective.set",
+  HYPOTHESIS_CREATED: "hypothesis.created",
+  ASSUMPTION_RECORDED: "assumption.recorded",
+  ALTERNATIVE_DEFERRED: "alternative.deferred",
+  DECISION_RECORDED: "decision.recorded",
+  EVIDENCE_LINKED: "evidence.linked",
+  FALSIFIER_EVALUATED: "falsifier.evaluated",
+  VERIFICATION_PLANNED: "verification.planned",
 } as const;
+
+/**
+ * Map ALCODE canonical dotted event types to Ouroboros-compatible internal
+ * reducer labels. The reducer dispatches on the internal labels; the
+ * canonical durable event stream uses the dotted names.
+ */
+export const CANONICAL_TO_REDUCER: Record<string, string> = {
+  "objective.set": "objective",
+  "hypothesis.created": "hypothesis",
+  "assumption.recorded": "assumption",
+  "alternative.deferred": "alternative",
+  "decision.recorded": "decision",
+  "evidence.linked": "link_evidence",
+  "falsifier.evaluated": "falsifier_evaluation",
+  "verification.planned": "verification_contract",
+  // Also accept undotted forms for forward compat
+  "objective": "objective",
+  "hypothesis": "hypothesis",
+  "assumption": "assumption",
+  "alternative": "alternative",
+  "decision": "decision",
+  "link_evidence": "link_evidence",
+  "falsifier_evaluation": "falsifier_evaluation",
+  "verification_contract": "verification_contract",
+};
 
 // ---------------------------------------------------------------------------
 // Payload contracts

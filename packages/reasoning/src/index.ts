@@ -172,6 +172,7 @@ export {
 // Domain events
 export {
   REASONING_EVENT_TYPES,
+  CANONICAL_TO_REDUCER,
   type ObjectiveSetPayload,
   type HypothesisCreatedPayload,
   type AssumptionRecordedPayload,

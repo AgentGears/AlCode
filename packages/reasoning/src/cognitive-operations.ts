@@ -399,8 +399,24 @@ export function plan_verification(
   };
 }
 
+/** Recursively canonicalize a value for deterministic JSON serialization.
+ * Matches Python json.dumps(sort_keys=True, separators=(",",":"), ensure_ascii=False).
+ */
+function canonicalize(value: unknown): unknown {
+  if (value === null) return null;
+  if (typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map(canonicalize);
+  const obj = value as Record<string, unknown>;
+  const sortedKeys = Object.keys(obj).sort();
+  const result: Record<string, unknown> = {};
+  for (const key of sortedKeys) {
+    result[key] = canonicalize(obj[key]);
+  }
+  return result;
+}
+
 /** Compute a canonical input digest matching Ouroboros verification.py.
- * SHA-256 of canonical JSON (sort_keys, compact separators), truncated to 16 hex chars.
+ * SHA-256 of canonical JSON (recursive sort_keys, compact separators), truncated to 16 hex chars.
  * For Bash commands, only the 'command' field is hashed.
  */
 export function canonicalInputDigest(toolInput: Record<string, unknown>): string {
@@ -411,13 +427,7 @@ export function canonicalInputDigest(toolInput: Record<string, unknown>): string
   } else {
     normalized = toolInput;
   }
-  // Canonical JSON: sorted keys, compact separators, ensure_ascii=false
-  const canonical = JSON.stringify(
-    Object.keys(normalized).sort().reduce((obj: Record<string, unknown>, key: string) => {
-      obj[key] = (normalized as Record<string, unknown>)[key];
-      return obj;
-    }, {}),
-  );
+  const canonical = JSON.stringify(canonicalize(normalized));
   return createHash("sha256").update(canonical, "utf8").digest("hex").slice(0, 16);
 }
 

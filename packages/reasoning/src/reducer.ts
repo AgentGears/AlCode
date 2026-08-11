@@ -94,6 +94,26 @@ export interface ReasoningEvent {
   payload: Record<string, unknown>;
 }
 
+/**
+ * Normalize a canonical ALCODE dotted event type to the internal reducer
+ * label. Canonical events use dotted names (hypothesis.created); the reducer
+ * dispatches on the undotted Ouroboros-compatible labels. Unknown types pass
+ * through (and are silently ignored by the reducer).
+ */
+function normalizeEventType(eventType: string): string {
+  const CANONICAL_TO_REDUCER: Record<string, string> = {
+    "objective.set": "objective",
+    "hypothesis.created": "hypothesis",
+    "assumption.recorded": "assumption",
+    "alternative.deferred": "alternative",
+    "decision.recorded": "decision",
+    "evidence.linked": "link_evidence",
+    "falsifier.evaluated": "falsifier_evaluation",
+    "verification.planned": "verification_contract",
+  };
+  return CANONICAL_TO_REDUCER[eventType] ?? eventType;
+}
+
 // ---------------------------------------------------------------------------
 // Reduction — apply a single event to the graph
 // ---------------------------------------------------------------------------
@@ -139,10 +159,10 @@ export function reduceEvent(
   idx: ReductionIndex = createReductionIndex(),
 ): void {
   const ctx: ReductionContext = { graph, sessionId, sequence, idx };
+  const normalizedType = normalizeEventType(eventType);
 
-  switch (eventType) {
+  switch (normalizedType) {
     case "objective":
-    case "objective.set":
       reduceObjective(ctx, payload);
       break;
     case "hypothesis":
