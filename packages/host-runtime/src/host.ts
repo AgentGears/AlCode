@@ -179,7 +179,7 @@ export class HostRuntime {
           type: "assistant.message.appended",
           payload: { text: message.text },
           payloadSchemaVersion: 1,
-          producer: { kind: "agent", component: generationId },
+          producer: { kind: "model", provider: `agent:${generationId}` },
         }]);
         this.catchUpCritical();
         break;
@@ -246,7 +246,7 @@ export class HostRuntime {
           type: "runtime.criterion.evidence",
           payload: { evidenceType: message.evidenceType, data: message.data ?? null, generationId },
           payloadSchemaVersion: 1,
-          producer: { kind: "agent", component: generationId },
+          producer: { kind: "runtime", component: `agent:${generationId}` },
         }]);
         break;
 
@@ -267,12 +267,11 @@ export class HostRuntime {
           type: "runtime.agent.error",
           payload: { message: message.message, generationId },
           payloadSchemaVersion: 1,
-          producer: { kind: "agent", component: generationId },
+          producer: { kind: "runtime", component: `agent:${generationId}` },
         }]);
         break;
 
       case "agent.hello":
-        // Handshake is consumed by AgentSupervisor before attachment.
         break;
     }
   }
