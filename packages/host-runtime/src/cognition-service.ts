@@ -10,7 +10,6 @@ import {
   validateLessonFields,
   validatePlaybookFields,
   type MemoryInternalType,
-  type MemoryRecord,
 } from "@alcode/memory";
 import {
   commit_hypothesis,
@@ -105,7 +104,7 @@ export class HostCognitionService {
 
   private async reasoningTool(sessionId: SessionId, toolName: string, input: Record<string, unknown>): Promise<unknown> {
     const graph = await this.gateway.loadGraph(sessionId as string);
-    let intent: ReasoningTransitionIntent;
+    let intent: ReasoningTransitionIntent<string, unknown>;
 
     switch (toolName) {
       case "commit_hypothesis": {
