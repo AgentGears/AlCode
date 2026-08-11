@@ -79,6 +79,17 @@ describe("transcript semantics", () => {
     })).toThrow(/unresolved\/unknown/);
   });
 
+  it("rejects a result whose tool name does not match the admitted call", () => {
+    const current = reduceTranscript([user, assistant]);
+    expect(() => assertRichTranscriptTransition(current, "tool.result.appended", {
+      toolCallId: "T1",
+      toolName: "write",
+      content: [{ type: "text", text: "x" }],
+      isError: false,
+      timestamp: 3,
+    })).toThrow(/tool result name mismatch/);
+  });
+
   it("rejects duplicate tool-call identity", () => {
     const current = reduceTranscript([user, assistant]);
     expect(() => assertRichTranscriptTransition(current, "assistant.message.appended", {
