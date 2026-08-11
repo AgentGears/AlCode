@@ -28,6 +28,10 @@ export {
   createLocalWorkspace,
 } from "./capabilities/index.ts";
 export {
+  agentToolAsHostCapability,
+  createDefaultHostCapabilities,
+} from "./host-capabilities.ts";
+export {
   runDurableAgent,
   type DurableAgentOptions,
   type DurableAgentResult,
