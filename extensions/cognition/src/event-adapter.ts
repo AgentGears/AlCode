@@ -34,16 +34,32 @@ function assistantText(message: AssistantMessage): string {
 export function createAgentEventForwarder(
   transport: ProtocolTransport<AgentToHostMessage, HostToAgentMessage>,
   sessionId: () => string,
+  durableTranscript = true,
 ): AgentEventSink {
   return async (event: AgentEvent) => {
     if (event.type === "message_end" && event.message.role === "assistant") {
       const message = event.message as AssistantMessage;
+      const text = assistantText(message);
+      if (!durableTranscript) {
+        // Exact Phase 0.5 compatibility: only non-empty assistant text crosses
+        // the protocol; tool-call structure and tool results remain ephemeral.
+        if (text) {
+          await transport.send({
+            type: "assistant.message",
+            requestId: randomUUID(),
+            sessionId: sessionId(),
+            text,
+          });
+        }
+        return;
+      }
+
       const requestId = randomUUID();
       await admitTranscript(transport, {
         type: "assistant.message",
         requestId,
         sessionId: sessionId(),
-        text: assistantText(message),
+        text,
         content: message.content,
         stopReason: message.stopReason,
         ...(message.errorMessage !== undefined ? { errorMessage: message.errorMessage } : {}),
@@ -53,6 +69,7 @@ export function createAgentEventForwarder(
     }
 
     if (event.type === "message_end" && event.message.role === "toolResult") {
+      if (!durableTranscript) return;
       const message = event.message as ToolResultMessage;
       const requestId = randomUUID();
       await admitTranscript(transport, {
