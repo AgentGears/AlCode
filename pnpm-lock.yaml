@@ -27,7 +27,18 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.20.1)
 
+  extensions/cognition:
+    dependencies:
+      '@alcode/agent-core':
+        specifier: workspace:*
+        version: link:../../packages/agent-core
+      '@alcode/agent-protocol':
+        specifier: workspace:*
+        version: link:../../packages/agent-protocol
+
   packages/agent-core: {}
+
+  packages/agent-protocol: {}
 
   packages/ai:
     dependencies:
@@ -40,15 +51,27 @@ importers:
       '@alcode/agent-core':
         specifier: workspace:*
         version: link:../agent-core
+      '@alcode/agent-protocol':
+        specifier: workspace:*
+        version: link:../agent-protocol
+      '@alcode/cognition-extension':
+        specifier: workspace:*
+        version: link:../../extensions/cognition
       '@alcode/events':
         specifier: workspace:*
         version: link:../events
+      '@alcode/host-runtime':
+        specifier: workspace:*
+        version: link:../host-runtime
       '@alcode/storage':
         specifier: workspace:*
         version: link:../storage
       '@alcode/test-provider':
         specifier: workspace:*
         version: link:../test-provider
+      '@alcode/workspace':
+        specifier: workspace:*
+        version: link:../workspace
     devDependencies:
       '@types/better-sqlite3':
         specifier: ^7.6.13
@@ -57,7 +80,37 @@ importers:
         specifier: ^13.0.3
         version: 13.0.3
 
+  packages/cognition-runtime:
+    dependencies:
+      '@alcode/memory':
+        specifier: workspace:*
+        version: link:../memory
+      '@alcode/reasoning':
+        specifier: workspace:*
+        version: link:../reasoning
+
   packages/events: {}
+
+  packages/host-runtime:
+    dependencies:
+      '@alcode/agent-protocol':
+        specifier: workspace:*
+        version: link:../agent-protocol
+      '@alcode/cognition-runtime':
+        specifier: workspace:*
+        version: link:../cognition-runtime
+      '@alcode/events':
+        specifier: workspace:*
+        version: link:../events
+      '@alcode/memory':
+        specifier: workspace:*
+        version: link:../memory
+      '@alcode/reasoning':
+        specifier: workspace:*
+        version: link:../reasoning
+      '@alcode/storage':
+        specifier: workspace:*
+        version: link:../storage
 
   packages/memory:
     dependencies:

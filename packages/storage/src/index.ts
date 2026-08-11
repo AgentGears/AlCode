@@ -1,10 +1,8 @@
 // @alcode/storage — SQLite-backed workspace database and event store.
 // See docs/adr/0001-event-and-projection-commit-semantics.md.
 
-// Read-only diagnostics:
 export { getSchemaVersion, SCHEMA_VERSION } from "./schema.ts";
 
-// Store surface:
 export {
   type WorkspaceEventStore,
   EventIdentityConflictError,
@@ -18,7 +16,12 @@ export {
   type InterruptedOperationRecovery,
 } from "./sqlite-event-store.ts";
 
-// Projection model:
+export {
+  createWorkspaceReadModels,
+  type WorkspaceReadModels,
+  type TranscriptReadRecord,
+} from "./read-models.ts";
+
 export {
   type ProjectionDefinition,
   type ProjectionTransaction,
@@ -38,7 +41,6 @@ export {
   ReservedTableInStatementError,
 } from "./projection.ts";
 
-// Operations model:
 export {
   type OperationLifecycleState,
   type ExecutionOutcome,
@@ -57,7 +59,6 @@ export {
   createOperationQuery,
 } from "./operations.ts";
 
-// Transcript model:
 export {
   createTranscriptProjection,
   createTranscriptQuery,
@@ -67,12 +68,14 @@ export {
   type TranscriptRecord,
 } from "./transcript-projection.ts";
 
-// Reasoning + memory models (minimal Phase 0.2 derived projections):
 export {
   createReasoningProjection,
   reasoningStatements,
   type ObjectiveSetPayload,
 } from "./reasoning-memory-projections.ts";
+
+export { createReasoningIntegrationProjection } from "./reasoning-integration-projection.ts";
+
 export {
   createMemoryProjection,
   createMemoryQuery,
@@ -84,5 +87,4 @@ export {
   type MemoryStatsRecord,
 } from "./reasoning-memory-projections.ts";
 
-// Secrets (re-exported for convenience):
 export { SecretAdmissionError } from "@alcode/secrets";

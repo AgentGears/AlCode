@@ -10,8 +10,6 @@ on:
 permissions:
   contents: read
 
-# concurrency temporarily removed to work around stuck runner
-
 jobs:
   gate-0-0:
     name: Phase 0.0 gate
@@ -19,34 +17,25 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 10.13.1
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: "22.17.0"
           cache: pnpm
-
       - name: Install
         run: pnpm install --frozen-lockfile
-
-      # Native modules (esbuild, fs-ext, better-sqlite3) are built during
-      # install via pnpm.onlyBuiltDependencies in the root package.json.
-
       - name: Run Phase 0.0 gate
         env:
           ALCODE_HOME: ${{ runner.temp }}/alcode-home
         run: pnpm gate:0.0
-
       - name: Run Phase 0.1A gate
         env:
           ALCODE_HOME: ${{ runner.temp }}/alcode-home
         run: pnpm gate:0.1A
-
       - name: Typecheck + test workspace, storage, and secrets packages
         run: |
           pnpm --filter @alcode/workspace exec tsc --noEmit -p tsconfig.json
@@ -55,7 +44,6 @@ jobs:
           pnpm --filter @alcode/workspace exec vitest run
           pnpm --filter @alcode/storage exec vitest run
           pnpm --filter @alcode/secrets exec vitest run
-
       - name: Run Phase 0.2 gate
         env:
           ALCODE_HOME: ${{ runner.temp }}/alcode-home
@@ -71,29 +59,21 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 10.13.1
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: "22.17.0"
           cache: pnpm
-
       - name: Install (Linux/macOS)
         if: runner.os != 'Windows'
         run: pnpm install --frozen-lockfile
-
       - name: Install (Windows — skip native builds)
-        # Windows runners lack Visual Studio C++ build tools for native
-      # module compilation (better-sqlite3, fs-ext). Phase 0.1B tests skip
-        # POSIX-locked tests on Windows, so native modules aren't needed.
         if: runner.os == 'Windows'
         run: pnpm install --frozen-lockfile --ignore-scripts
-
       - name: Run Phase 0.1B gate
         env:
           ALCODE_HOME: ${{ runner.temp }}/alcode-home
@@ -105,21 +85,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 10.13.1
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: "22.17.0"
           cache: pnpm
-
       - name: Install
         run: pnpm install --frozen-lockfile
-
       - name: Run Phase 0.3 gate
         env:
           ALCODE_HOME: ${{ runner.temp }}/alcode-home
@@ -131,22 +107,40 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 10.13.1
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: "22.17.0"
           cache: pnpm
-
       - name: Install
         run: pnpm install --frozen-lockfile
-
       - name: Run Phase 0.4 gate
         env:
           ALCODE_HOME: ${{ runner.temp }}/alcode-home
         run: pnpm gate:0.4
+
+  gate-0-5:
+    name: Phase 0.5 gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.17.0"
+          cache: pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Run Phase 0.5 gate
+        env:
+          ALCODE_HOME: ${{ runner.temp }}/alcode-home
+        run: pnpm gate:0.5
