@@ -20,7 +20,10 @@
   },
   "dependencies": {
     "@alcode/agent-core": "workspace:*",
+    "@alcode/agent-protocol": "workspace:*",
+    "@alcode/cognition-extension": "workspace:*",
     "@alcode/events": "workspace:*",
+    "@alcode/host-runtime": "workspace:*",
     "@alcode/storage": "workspace:*",
     "@alcode/test-provider": "workspace:*"
   },
