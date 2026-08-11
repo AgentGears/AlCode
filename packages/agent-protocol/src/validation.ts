@@ -8,13 +8,23 @@ function hasString(value: Record<string, unknown>, key: string): boolean {
   return typeof value[key] === "string";
 }
 
+function hasNumber(value: Record<string, unknown>, key: string): boolean {
+  return typeof value[key] === "number" && Number.isFinite(value[key]);
+}
+
 export function isAgentToHostMessage(value: unknown): value is AgentToHostMessage {
   if (!isObject(value) || typeof value.type !== "string") return false;
   switch (value.type) {
     case "agent.hello":
       return value.protocolVersion === AGENT_PROTOCOL_VERSION && hasString(value, "generationId") && Array.isArray(value.capabilities);
     case "assistant.message":
-      return hasString(value, "requestId") && hasString(value, "sessionId") && hasString(value, "text");
+      return hasString(value, "requestId") && hasString(value, "sessionId") && hasString(value, "text")
+        && (value.content === undefined || Array.isArray(value.content))
+        && (value.timestamp === undefined || hasNumber(value, "timestamp"));
+    case "tool.result":
+      return hasString(value, "requestId") && hasString(value, "sessionId") && hasString(value, "toolCallId")
+        && hasString(value, "toolName") && Array.isArray(value.content) && typeof value.isError === "boolean"
+        && hasNumber(value, "timestamp");
     case "capability.request":
       return hasString(value, "requestId") && hasString(value, "sessionId") && hasString(value, "toolCallId") && hasString(value, "toolName");
     case "criterion.evidence":
@@ -38,9 +48,20 @@ export function isHostToAgentMessage(value: unknown): value is HostToAgentMessag
     case "session.resume":
       return hasString(value, "requestId") && hasString(value, "sessionId") && hasString(value, "workspaceId") && ["agent_replaced", "host_reopened", "reattach"].includes(String(value.reason));
     case "input.admitted":
-      return hasString(value, "requestId") && hasString(value, "sessionId") && hasString(value, "text");
+      return hasString(value, "requestId") && hasString(value, "sessionId") && hasString(value, "text")
+        && (value.timestamp === undefined || hasNumber(value, "timestamp"));
     case "context.provide":
-      return hasString(value, "requestId") && hasString(value, "sessionId") && hasString(value, "systemPrompt") && typeof value.orientationRequired === "boolean" && Array.isArray(value.toolNames);
+      return hasString(value, "requestId") && hasString(value, "sessionId") && hasString(value, "systemPrompt")
+        && typeof value.orientationRequired === "boolean" && Array.isArray(value.toolNames)
+        && (value.verbatim === undefined || (isObject(value.verbatim)
+          && value.verbatim.compilerVersion === "verbatim-v1"
+          && typeof value.verbatim.sourceEventSequence === "number"
+          && Array.isArray(value.verbatim.messages)
+          && ["complete", "incomplete"].includes(String(value.verbatim.status))
+          && Array.isArray(value.verbatim.pendingToolCallIds)
+          && ["exact", "legacy_text_only"].includes(String(value.verbatim.fidelity))));
+    case "transcript.admitted":
+      return hasString(value, "requestId") && hasString(value, "sessionId") && hasString(value, "eventId") && hasNumber(value, "sequence");
     case "capability.result":
       return hasString(value, "requestId") && hasString(value, "sessionId") && hasString(value, "toolCallId") && hasString(value, "toolName") && ["succeeded", "failed", "cancelled", "timed_out", "denied"].includes(String(value.outcome));
     case "cancel":
