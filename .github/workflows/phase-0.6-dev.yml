@@ -43,6 +43,9 @@ jobs:
           packages/storage/src/transcript-rebuild.test.ts
           packages/host-runtime/src/transcript-0.6.integration.test.ts
           packages/host-runtime/src/transcript-stable-head.test.ts
+          packages/host-runtime/src/context-boundaries-0.6.test.ts
           packages/coding-agent/src/transcript-admission-barrier.test.ts
           packages/coding-agent/src/verbatim-restart.integration.test.ts
           packages/coding-agent/src/agent-replacement.integration.test.ts
+      - name: Provisional gate 0.6
+        run: pnpm gate:0.6
