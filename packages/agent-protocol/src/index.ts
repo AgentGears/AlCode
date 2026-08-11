@@ -27,6 +27,8 @@ export {
   type MessageHandler,
 } from "./transport.ts";
 
+export { createProcessAgentTransport } from "./node-process-transport.ts";
+
 export {
   isAgentToHostMessage,
   isHostToAgentMessage,
