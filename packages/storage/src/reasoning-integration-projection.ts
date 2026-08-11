@@ -71,11 +71,6 @@ function insertEdge(
   );
 }
 
-/**
- * Phase 0.5 additive projection for Host-owned environmental reasoning events.
- * Kept separate from the closed Phase 0.4 projection so 0.4 semantics remain
- * frozen. Both projections write only rebuildable reasoning tables.
- */
 export function createReasoningIntegrationProjection(workspaceId: string): ProjectionDefinition {
   return {
     name: "reasoning-integration",
@@ -126,10 +121,11 @@ export function createReasoningIntegrationProjection(workspaceId: string): Proje
           const evidenceId = p.evidenceId as string | undefined;
           const hypothesisId = p.hypothesisId as string | undefined;
           if (!contractId || !evidenceId) break;
+          // Preserve the closed Phase 0.4 linker direction: result/evidence → contract.
           insertEdge(
             tx, workspaceId, sessionId, seq,
             edgeId(sessionId, seq, "executes", 0),
-            contractId, evidenceId, "executes",
+            evidenceId, contractId, "executes",
             {
               match_status: p.matchStatus,
               match_method: p.matchMethod,
