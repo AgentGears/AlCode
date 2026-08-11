@@ -25,7 +25,8 @@
     "@alcode/events": "workspace:*",
     "@alcode/host-runtime": "workspace:*",
     "@alcode/storage": "workspace:*",
-    "@alcode/test-provider": "workspace:*"
+    "@alcode/test-provider": "workspace:*",
+    "@alcode/workspace": "workspace:*"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
