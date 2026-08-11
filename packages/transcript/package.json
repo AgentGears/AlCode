@@ -1,5 +1,5 @@
 {
-  "name": "@alcode/host-runtime",
+  "name": "@alcode/transcript",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -16,12 +16,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@alcode/agent-protocol": "workspace:*",
-    "@alcode/cognition-runtime": "workspace:*",
-    "@alcode/events": "workspace:*",
-    "@alcode/memory": "workspace:*",
-    "@alcode/reasoning": "workspace:*",
-    "@alcode/storage": "workspace:*",
-    "@alcode/transcript": "workspace:*"
+    "zod": "^3.23.8"
   }
 }

@@ -31,6 +31,12 @@ export {
   type HostSessionHandle,
   type CompletionEvidence,
 } from "./session-manager.ts";
+export { TranscriptAdmissionService } from "./transcript-admission.ts";
+export {
+  ContextIncompleteError,
+  compileVerbatimContext,
+  assertContextContinuable,
+} from "./verbatim-context.ts";
 export { DurableWorkDispatcher, type MemoryConsolidationWork } from "./work-dispatcher.ts";
 export { createChildProcessHostTransport, createProcessAgentTransport } from "./node-ipc-transport.ts";
 export { HostRuntime, type HostRuntimeOptions, type AttachedAgent } from "./host.ts";

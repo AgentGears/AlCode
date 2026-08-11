@@ -41,13 +41,13 @@ export function createProtocolProxyTool(options: ProxyToolOptions): AgentTool<Re
       type: "object",
       properties: {},
     },
-    async execute(input): Promise<AgentToolResult<unknown>> {
+    async execute(input, context): Promise<AgentToolResult<unknown>> {
       const requestId = randomUUID();
       const response = await requestHost(options.transport, {
         type: "capability.request",
         requestId,
         sessionId: options.sessionId(),
-        toolCallId: randomUUID(),
+        toolCallId: context.toolCallId ?? randomUUID(),
         toolName: options.name,
         args: input,
       });

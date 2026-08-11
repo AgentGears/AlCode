@@ -10,6 +10,8 @@ import { createChildProcessHostTransport } from "./node-ipc-transport.ts";
 
 export interface AgentConnection {
   generationId: string;
+  /** Present for supervised processes; optional keeps test/custom transports compatible. */
+  capabilities?: readonly string[];
   transport: ProtocolTransport<HostToAgentMessage, AgentToHostMessage>;
   waitForExit(): Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
   terminate(signal?: NodeJS.Signals): void;
@@ -19,7 +21,6 @@ export interface AgentSupervisorOptions {
   entrypoint: string;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
-  /** Explicit Node loader/runtime args for the worker (e.g. --import tsx in tests). */
   execArgv?: string[];
   helloTimeoutMs?: number;
 }
@@ -50,14 +51,16 @@ export class AgentSupervisor {
     const exit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
       child.once("exit", (code, signal) => resolve({ code, signal }));
     });
+    const capabilities: string[] = [];
     const connection: AgentConnection = {
       generationId,
+      capabilities,
       transport,
       waitForExit: () => exit,
       terminate: (signal = "SIGTERM") => { if (child.exitCode === null && child.signalCode === null) child.kill(signal); },
     };
 
-    await this.awaitHello(connection);
+    await this.awaitHello(connection, capabilities);
     this.current = { child, connection };
     void exit.then(() => {
       if (this.current?.connection === connection) this.current = null;
@@ -69,11 +72,7 @@ export class AgentSupervisor {
     const previous = this.current?.connection ?? null;
     if (previous) {
       try {
-        await previous.transport.send({
-          type: "shutdown",
-          requestId: uuidv7(),
-          reason: "replaced",
-        });
+        await previous.transport.send({ type: "shutdown", requestId: uuidv7(), reason: "replaced" });
       } catch {
         // The old Agent may already be dead; replacement still proceeds.
       }
@@ -95,7 +94,7 @@ export class AgentSupervisor {
     }
   }
 
-  private async awaitHello(connection: AgentConnection): Promise<void> {
+  private async awaitHello(connection: AgentConnection, capabilities: string[]): Promise<void> {
     const timeoutMs = this.options.helloTimeoutMs ?? 5000;
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -114,6 +113,7 @@ export class AgentSupervisor {
           reject(new Error(`Agent generation mismatch: expected ${connection.generationId}, got ${message.generationId}`));
           return;
         }
+        capabilities.splice(0, capabilities.length, ...message.capabilities);
         resolve();
       });
     });

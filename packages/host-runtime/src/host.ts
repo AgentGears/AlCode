@@ -5,6 +5,7 @@ import {
   type SessionId,
 } from "@alcode/events";
 import {
+  DURABLE_TRANSCRIPT_CAPABILITY,
   type AgentToHostMessage,
   type CapabilityResult,
   type HostToAgentMessage,
@@ -13,6 +14,7 @@ import {
 import {
   createOperationsProjection,
   createTranscriptProjection,
+  createWorkspaceReadModels,
   type LockedWorkspaceStore,
 } from "@alcode/storage";
 import { CanonicalAdmissionQueue } from "./admission-queue.ts";
@@ -22,6 +24,8 @@ import { CognitionGateway } from "./cognition-gateway.ts";
 import { COGNITION_TOOL_NAMES, HostCognitionService } from "./cognition-service.ts";
 import { DefaultHostPolicy, type HostPolicy } from "./policy.ts";
 import { HostSessionManager, type HostSessionHandle } from "./session-manager.ts";
+import { TranscriptAdmissionService } from "./transcript-admission.ts";
+import { assertContextContinuable, compileVerbatimContext } from "./verbatim-context.ts";
 import { DurableWorkDispatcher } from "./work-dispatcher.ts";
 
 export interface HostRuntimeOptions {
@@ -45,6 +49,7 @@ export class HostRuntime {
   readonly sessions: HostSessionManager;
   readonly cognition: HostCognitionService;
   readonly capabilityBroker: CapabilityBroker;
+  readonly transcriptAdmission: TranscriptAdmissionService;
 
   private readonly store: LockedWorkspaceStore;
   private readonly hostInstanceId: string;
@@ -60,6 +65,7 @@ export class HostRuntime {
     this.workDispatcher = new DurableWorkDispatcher(options.store.store, this.admission);
     this.sessions = new HostSessionManager(options.store, this.admission);
     this.cognition = new HostCognitionService(options.store.store, this.admission, this.cognitionGateway, this.workDispatcher);
+    this.transcriptAdmission = new TranscriptAdmissionService(options.store.store, this.admission);
     this.capabilityBroker = new CapabilityBroker(
       options.store.store,
       this.admission,
@@ -80,18 +86,20 @@ export class HostRuntime {
     return this.sessions.openOrResume(sessionId);
   }
 
-  async admitInput(sessionId: SessionId, text: string): Promise<void> {
+  async admitInput(sessionId: SessionId, text: string): Promise<{ timestamp: number }> {
+    const timestamp = Date.now();
     await this.admission.append([{
       eventId: mkEventId(),
       workspaceId: asWorkspaceId(this.store.store.workspaceId),
       sessionId,
-      occurredAt: new Date().toISOString(),
+      occurredAt: new Date(timestamp).toISOString(),
       type: "user.message.appended",
-      payload: { text },
+      payload: { text, timestamp },
       payloadSchemaVersion: 1,
       producer: { kind: "user" },
     }]);
     this.catchUpCritical();
+    return { timestamp };
   }
 
   async attachAgent(
@@ -100,12 +108,16 @@ export class HostRuntime {
     systemPrompt: string,
     resumeReason: AgentResumeReason = "reattach",
   ): Promise<AttachedAgent> {
+    const durableTranscript = connection.capabilities?.includes(DURABLE_TRANSCRIPT_CAPABILITY) ?? false;
+    // Real supervised processes always report capabilities. A supervised old
+    // worker is refused rather than silently claiming 0.6 fidelity. Test/custom
+    // transports that omit capability metadata retain the closed 0.5 path.
+    if (connection.capabilities !== undefined && !durableTranscript) {
+      throw new Error(`Agent missing required capability: ${DURABLE_TRANSCRIPT_CAPABILITY}`);
+    }
+
     const transport = connection.transport;
-    await transport.send({
-      type: "host.hello",
-      protocolVersion: 1,
-      hostInstanceId: this.hostInstanceId,
-    });
+    await transport.send({ type: "host.hello", protocolVersion: 1, hostInstanceId: this.hostInstanceId });
     const sessionRequestId = uuidv7();
     if (session.resumed) {
       await transport.send({
@@ -123,6 +135,10 @@ export class HostRuntime {
         workspaceId: this.store.store.workspaceId,
       });
     }
+
+    const snapshot = durableTranscript
+      ? await createWorkspaceReadModels(this.store.store).getTranscriptSnapshot(session.sessionId as string)
+      : undefined;
     await transport.send({
       type: "context.provide",
       requestId: uuidv7(),
@@ -130,9 +146,16 @@ export class HostRuntime {
       systemPrompt,
       orientationRequired: session.resumed,
       toolNames: [...COGNITION_TOOL_NAMES, ...this.capabilityNames],
+      ...(snapshot !== undefined ? { verbatim: compileVerbatimContext(snapshot) } : {}),
     });
 
-    const unsubscribe = transport.onMessage((message) => this.handleAgentMessage(connection.generationId, transport, session.sessionId, message));
+    const unsubscribe = transport.onMessage((message) => this.handleAgentMessage(
+      connection.generationId,
+      transport,
+      session.sessionId,
+      message,
+      durableTranscript,
+    ));
     return { generationId: connection.generationId, detach: unsubscribe };
   }
 
@@ -141,12 +164,15 @@ export class HostRuntime {
     sessionId: SessionId,
     text: string,
   ): Promise<void> {
-    await this.admitInput(sessionId, text);
+    const snapshot = await createWorkspaceReadModels(this.store.store).getTranscriptSnapshot(sessionId as string);
+    assertContextContinuable(compileVerbatimContext(snapshot));
+    const { timestamp } = await this.admitInput(sessionId, text);
     await transport.send({
       type: "input.admitted",
       requestId: uuidv7(),
       sessionId: sessionId as string,
       text,
+      timestamp,
     });
   }
 
@@ -170,22 +196,57 @@ export class HostRuntime {
     transport: ProtocolTransport<HostToAgentMessage, AgentToHostMessage>,
     sessionId: SessionId,
     message: AgentToHostMessage,
+    durableTranscript: boolean,
   ): Promise<void> {
     switch (message.type) {
-      case "assistant.message":
+      case "assistant.message": {
         if (message.sessionId !== (sessionId as string)) throw new Error("Agent session mismatch");
-        await this.admission.append([{
-          eventId: mkEventId(),
-          workspaceId: asWorkspaceId(this.store.store.workspaceId),
-          sessionId,
-          occurredAt: new Date().toISOString(),
-          type: "assistant.message.appended",
-          payload: { text: message.text },
-          payloadSchemaVersion: 1,
-          producer: { kind: "model", provider: `agent:${generationId}` },
-        }]);
-        this.catchUpCritical();
+        if (!durableTranscript) {
+          await this.admission.append([{
+            eventId: mkEventId(),
+            workspaceId: asWorkspaceId(this.store.store.workspaceId),
+            sessionId,
+            occurredAt: new Date().toISOString(),
+            type: "assistant.message.appended",
+            payload: { text: message.text },
+            payloadSchemaVersion: 1,
+            producer: { kind: "model", provider: `agent:${generationId}` },
+          }]);
+          this.catchUpCritical();
+          break;
+        }
+        const persisted = await this.transcriptAdmission.admitAssistant(generationId, sessionId, message);
+        try {
+          await transport.send({
+            type: "transcript.admitted",
+            requestId: message.requestId,
+            sessionId: sessionId as string,
+            eventId: persisted.eventId,
+            sequence: persisted.sequence,
+          });
+        } catch {
+          // Canonical admission is authoritative even if ACK delivery is cut.
+        }
         break;
+      }
+
+      case "tool.result": {
+        if (!durableTranscript) throw new Error("tool.result requires durable transcript capability");
+        if (message.sessionId !== (sessionId as string)) throw new Error("Agent session mismatch");
+        const persisted = await this.transcriptAdmission.admitToolResult(generationId, sessionId, message);
+        try {
+          await transport.send({
+            type: "transcript.admitted",
+            requestId: message.requestId,
+            sessionId: sessionId as string,
+            eventId: persisted.eventId,
+            sequence: persisted.sequence,
+          });
+        } catch {
+          // Replacement Host/Agent reconstructs from the canonical event.
+        }
+        break;
+      }
 
       case "capability.request": {
         if (message.sessionId !== (sessionId as string)) throw new Error("Agent session mismatch");
@@ -236,11 +297,10 @@ export class HostRuntime {
           }
           this.requestCache.set(cacheKey, response);
         }
-
         try {
           await transport.send(response);
         } catch {
-          // Durable Host state is authoritative; replacement Agent will orient.
+          // Durable Host state is authoritative; replacement Agent will reconstruct/orient.
         }
         break;
       }

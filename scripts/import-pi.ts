@@ -2,14 +2,12 @@
 // Deterministic pi source acquisition and verification.
 //
 // Two operations:
-//   import  → acquire exact pinned source files from the pi-mono repo
-//   verify  → prove checked-in imported files match the manifest checksums
+//   import  → acquire exact pinned source files from the pi repo
+//   verify  → prove checked-in imported files match pinned checksums
 //
 // CI runs `verify` (no network needed). Developers run `import` to acquire
 // or refresh source material. Automatic upstream updates are explicitly
 // excluded — this replaces developer-local acquisition, not CI verification.
-//
-// See docs/provenance/pi-v0.81.1.import.json for the pinned source manifest.
 
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, readdirSync, statSync } from "node:fs";
@@ -19,6 +17,7 @@ import { execFileSync } from "node:child_process";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const MANIFEST_PATH = join(ROOT, "docs/provenance/pi-v0.81.1.import.json");
+const CONTEXT_ORACLE_MANIFEST_PATH = join(ROOT, "docs/provenance/pi-v0.81.1-context-oracle.json");
 
 interface ManifestFile {
   source: string;
@@ -36,8 +35,23 @@ interface Manifest {
   files: ManifestFile[];
 }
 
+interface ContextOracleManifest {
+  source: {
+    repository: string;
+    tag: string;
+    commit: string;
+    path: string;
+  };
+  destination: string;
+  sha256: string;
+}
+
 function loadManifest(): Manifest {
   return JSON.parse(readFileSync(MANIFEST_PATH, "utf-8"));
+}
+
+function loadContextOracleManifest(): ContextOracleManifest {
+  return JSON.parse(readFileSync(CONTEXT_ORACLE_MANIFEST_PATH, "utf-8"));
 }
 
 function sha256File(path: string): string {
@@ -46,6 +60,7 @@ function sha256File(path: string): string {
 
 function verify(): void {
   const manifest = loadManifest();
+  const oracle = loadContextOracleManifest();
   let allOk = true;
   let checked = 0;
   const errors: string[] = [];
@@ -65,14 +80,28 @@ function verify(): void {
     checked++;
   }
 
-  if (allOk) {
-    console.log(`verify: ${checked}/${manifest.files.length} files match manifest (pi ${manifest.source.tag} @ ${manifest.source.commit.slice(0, 12)})`);
-    process.exit(0);
+  const oraclePath = join(ROOT, oracle.destination);
+  if (!existsSync(oraclePath)) {
+    errors.push(`MISSING: ${oracle.destination}`);
+    allOk = false;
   } else {
-    console.error(`verify: FAILED — ${errors.length} error(s):`);
-    for (const e of errors) console.error(`  ${e}`);
-    process.exit(1);
+    const computed = sha256File(oraclePath);
+    if (computed !== oracle.sha256) {
+      errors.push(`MISMATCH: ${oracle.destination}\n  expected: ${oracle.sha256}\n  got:      ${computed}`);
+      allOk = false;
+    }
+    checked++;
   }
+
+  const total = manifest.files.length + 1;
+  if (allOk) {
+    console.log(`verify: ${checked}/${total} files match pinned pi provenance (${manifest.source.tag} @ ${manifest.source.commit.slice(0, 12)})`);
+    process.exit(0);
+  }
+
+  console.error(`verify: FAILED — ${errors.length} error(s):`);
+  for (const e of errors) console.error(`  ${e}`);
+  process.exit(1);
 }
 
 function addFilesToManifest(
@@ -113,34 +142,46 @@ function addFilesToManifest(
   return newFiles;
 }
 
+function importContextOracle(piSourceDir: string): void {
+  const oracle = loadContextOracleManifest();
+  const src = join(piSourceDir, oracle.source.path);
+  if (!existsSync(src)) {
+    throw new Error(`context oracle source missing: ${oracle.source.path}`);
+  }
+  const computed = sha256File(src);
+  if (computed !== oracle.sha256) {
+    throw new Error(`context oracle checksum mismatch: expected ${oracle.sha256}, got ${computed}`);
+  }
+  const destination = join(ROOT, oracle.destination);
+  mkdirSync(dirname(destination), { recursive: true });
+  copyFileSync(src, destination);
+}
+
 function importFiles(): void {
   const manifest = loadManifest();
   const existing = new Set(manifest.files.map((f) => f.destination));
   const newFiles: ManifestFile[] = [];
 
-  // Check for the pi source in ref/
   const piSourceDir = join(ROOT, "ref", "pi-main");
   if (!existsSync(piSourceDir)) {
     console.error(`import: pi source not found at ${piSourceDir}`);
-    console.error("Clone earendil-works/pi-mono at tag v0.81.1 into ref/pi-main first.");
+    console.error("Clone earendil-works/pi at tag v0.81.1 into ref/pi-main first.");
     process.exit(1);
   }
 
-  // Verify the commit matches (warn if not — the checksums are authoritative)
   try {
     const headCommit = execFileSync("git", ["rev-parse", "HEAD"], {
       cwd: piSourceDir, encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"],
     }).trim();
     if (headCommit !== manifest.source.commit) {
       console.warn(`import: WARNING — pi source at commit ${headCommit.slice(0, 12)}, expected ${manifest.source.commit.slice(0, 12)}.`);
-      console.warn("Checksums in the manifest are authoritative; proceeding with file acquisition.");
+      console.warn("Checksums in the manifests are authoritative; proceeding with file acquisition.");
     }
   } catch {
     console.warn("import: WARNING — could not verify pi source commit (not a git repo).");
-    console.warn("Checksums in the manifest are authoritative; proceeding with file acquisition.");
+    console.warn("Checksums in the manifests are authoritative; proceeding with file acquisition.");
   }
 
-  // Import the 6 tool source files + support files (as quarantined reference)
   const toolsSourceDir = join(piSourceDir, "packages/coding-agent/src/core/tools");
   const toolFiles = ["read.ts", "write.ts", "edit.ts", "grep.ts", "ls.ts", "find.ts",
     "path-utils.ts", "render-utils.ts", "truncate.ts", "tool-definition-wrapper.ts",
@@ -162,31 +203,24 @@ function importFiles(): void {
     });
   }
 
-  // Import pi packages/ai core source (types, api transport, key providers)
-  // as quarantined reference. Only import the .ts source files, not compiled output.
   const aiSourceDir = join(piSourceDir, "packages/ai/src");
   if (existsSync(aiSourceDir)) {
     const aiFiles = addFilesToManifest(aiSourceDir, "packages/agent-core/src/imported/ai", "packages/ai/src", existing);
     newFiles.push(...aiFiles);
   }
 
-  if (newFiles.length === 0) {
-    console.log("import: no new files to acquire (all manifest entries already present)");
-    process.exit(0);
+  importContextOracle(piSourceDir);
+
+  if (newFiles.length > 0) {
+    manifest.files.push(...newFiles);
+    writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2) + "\n");
   }
 
-  // Update manifest
-  manifest.files.push(...newFiles);
-  writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2) + "\n");
-
-  console.log(`import: acquired ${newFiles.length} new file(s)`);
-  console.log(`  tools: ${newFiles.filter((f) => f.destination.includes("/tools/")).length}`);
-  console.log(`  ai:    ${newFiles.filter((f) => f.destination.includes("/ai/")).length}`);
-  console.log(`manifest updated: ${MANIFEST_PATH}`);
-  console.log("Run `git diff docs/provenance/pi-v0.81.1.import.json` to review.");
+  console.log(`import: acquired ${newFiles.length} new historical file(s) and refreshed the Phase 0.6 context oracle`);
+  console.log(`manifest: ${MANIFEST_PATH}`);
+  console.log(`oracle manifest: ${CONTEXT_ORACLE_MANIFEST_PATH}`);
 }
 
-// --- CLI ---
 const command = process.argv[2];
 if (command === "verify") {
   verify();
@@ -195,6 +229,6 @@ if (command === "verify") {
 } else {
   console.error("Usage: tsx scripts/import-pi.ts [import|verify]");
   console.error("  import  → acquire pinned source from ref/pi-main (requires local clone)");
-  console.error("  verify  → prove checked-in files match manifest (no network needed)");
+  console.error("  verify  → prove checked-in files match manifests (no network needed)");
   process.exit(1);
 }

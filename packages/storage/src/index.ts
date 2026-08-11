@@ -20,6 +20,7 @@ export {
   createWorkspaceReadModels,
   type WorkspaceReadModels,
   type TranscriptReadRecord,
+  type TranscriptSnapshot,
 } from "./read-models.ts";
 
 export {
@@ -65,6 +66,7 @@ export {
   transcriptStatements,
   type UserMessageAppendedPayload,
   type AssistantMessageAppendedPayload,
+  type ToolResultAppendedPayload,
   type TranscriptRecord,
 } from "./transcript-projection.ts";
 

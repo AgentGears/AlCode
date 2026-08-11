@@ -1,13 +1,20 @@
-// Replaceable Agent process for Phase 0.5.
-//
-// This process owns the model loop only. It does NOT import storage, workspace,
-// memory, reasoning, or Host runtime. Every cognition/environmental tool is a
-// protocol proxy registered by the thin cognition extension.
+// Replaceable Agent process. The worker owns only the model loop and a
+// disposable in-memory message cache hydrated from Host-provided durability.
+// It does NOT import storage, workspace, memory, reasoning, or Host runtime.
 
 import { randomUUID } from "node:crypto";
-import { runAgentLoop, StaticExtensionHost, type ModelEvent, type ModelProvider, type ModelRequest, type ModelStream } from "@alcode/agent-core";
+import {
+  runAgentLoop,
+  StaticExtensionHost,
+  type Message,
+  type ModelEvent,
+  type ModelProvider,
+  type ModelRequest,
+  type ModelStream,
+} from "@alcode/agent-core";
 import {
   AGENT_PROTOCOL_VERSION,
+  DURABLE_TRANSCRIPT_CAPABILITY,
   createProcessAgentTransport,
   type ContextProvide,
   type HostToAgentMessage,
@@ -61,8 +68,6 @@ function createProvider(): ModelProvider {
     return new ScriptedWorkerProvider(parsed as ScriptedTurn[]);
   }
 
-  // Preserve the closed Phase 0.1A deterministic/offline CLI semantics while
-  // moving the model loop into the replaceable Agent process.
   return new TestModelProvider([
     { match: "hello", text: "Hello from ALCODE. The agent loop is running." },
     { match: "*", text: "ALCODE received your prompt." },
@@ -76,6 +81,7 @@ async function main(): Promise<void> {
   const transport = createProcessAgentTransport();
   let sessionId: string | null = null;
   let context: ContextProvide | null = null;
+  let history: Message[] = [];
   let abortController = new AbortController();
   let runChain: Promise<void> = Promise.resolve();
 
@@ -83,11 +89,20 @@ async function main(): Promise<void> {
     type: "agent.hello",
     protocolVersion: AGENT_PROTOCOL_VERSION,
     generationId,
-    capabilities: ["capability.request", "criterion.evidence", "agent.idle"],
+    capabilities: [
+      "capability.request",
+      "criterion.evidence",
+      "agent.idle",
+      DURABLE_TRANSCRIPT_CAPABILITY,
+    ],
   });
 
-  const runInput = async (text: string): Promise<void> => {
+  const runInput = async (text: string, timestamp?: number): Promise<void> => {
     if (!sessionId || !context) throw new Error("Agent received input before session/context bootstrap");
+    if (context.verbatim?.status === "incomplete") {
+      throw new Error(`context incomplete: unresolved tool calls ${context.verbatim.pendingToolCallIds.join(", ")}`);
+    }
+
     const localSessionId = sessionId;
     const localContext = context;
     const extensionHost = new StaticExtensionHost();
@@ -95,17 +110,21 @@ async function main(): Promise<void> {
       transport,
       sessionId: () => localSessionId,
       toolNames: localContext.toolNames,
+      durableTranscript: localContext.verbatim !== undefined,
     })]);
 
     const provider = createProvider();
     try {
-      await runAgentLoop(text, {
+      const completeHistory = await runAgentLoop(text, {
         systemPrompt: localContext.systemPrompt,
         provider,
         tools: extensionHost.getTools(),
         emit: (event) => extensionHost.emit(event),
         signal: abortController.signal,
+        initialMessages: history,
+        ...(timestamp !== undefined ? { promptTimestamp: timestamp } : {}),
       });
+      history = completeHistory as Message[];
     } catch (error) {
       await transport.send({
         type: "agent.error",
@@ -129,10 +148,11 @@ async function main(): Promise<void> {
         break;
       case "context.provide":
         context = message;
+        history = message.verbatim ? structuredClone(message.verbatim.messages) as Message[] : [];
         break;
       case "input.admitted":
         if (message.sessionId !== sessionId) throw new Error("input.admitted session mismatch");
-        runChain = runChain.then(() => runInput(message.text));
+        runChain = runChain.then(() => runInput(message.text, message.timestamp));
         break;
       case "cancel":
         if (message.sessionId === sessionId) {
@@ -145,7 +165,8 @@ async function main(): Promise<void> {
         void transport.close().finally(() => process.exit(0));
         break;
       case "capability.result":
-        // Consumed by the proxy tool's request-scoped listener.
+      case "transcript.admitted":
+        // Consumed by request-scoped listeners in the thin extension.
         break;
     }
   });

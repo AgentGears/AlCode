@@ -11,7 +11,6 @@
 // These are deliberate Phase 0.1A scope reductions, tracked in backlog.
 
 import type {
-  AgentEvent,
   AgentEventSink,
   AgentMessage,
   AgentTool,
@@ -19,7 +18,6 @@ import type {
   ToolExecutionOutcome,
   AssistantMessage,
   Message,
-  ModelEvent,
   ModelProvider,
   TextContent,
   ToolCallContent,
@@ -33,15 +31,15 @@ export interface AgentLoopOptions {
   maxSteps?: number;
   emit?: AgentEventSink;
   signal?: AbortSignal;
+  /** Disposable durable-prefix cache supplied by the Host. Never mutated in place. */
+  initialMessages?: readonly Message[];
+  /** Canonical timestamp for the newly admitted user prompt. */
+  promptTimestamp?: number;
 }
 
 /**
- * Run the agent loop with a user prompt. Returns the full transcript of
- * messages produced during the run.
- *
- * Semantics: stream the assistant → collect tool calls → execute them
- * sequentially → append tool results → re-stream → repeat until the
- * assistant returns no tool calls or maxSteps is reached.
+ * Run the agent loop with a user prompt. Returns the full transcript visible to
+ * the model during the run, including any caller-supplied durable prefix.
  */
 export async function runAgentLoop(
   prompt: string,
@@ -52,7 +50,12 @@ export async function runAgentLoop(
   const signal = options.signal;
 
   const messages: AgentMessage[] = [
-    { role: "user", content: [{ type: "text", text: prompt }], timestamp: Date.now() },
+    ...(options.initialMessages ?? []),
+    {
+      role: "user",
+      content: [{ type: "text", text: prompt }],
+      timestamp: options.promptTimestamp ?? Date.now(),
+    },
   ];
 
   await emit({ type: "agent_start" });
@@ -61,7 +64,6 @@ export async function runAgentLoop(
     if (signal?.aborted) break;
     await emit({ type: "turn_start" });
 
-    // Stream the assistant response.
     const assistantMessage = await streamAssistant(
       systemPrompt,
       messages as Message[],
@@ -71,9 +73,9 @@ export async function runAgentLoop(
     );
     messages.push(assistantMessage);
     await emit({ type: "message_start", message: assistantMessage });
+    // Phase 0.6 transcript adapters may block this event until Host durable ACK.
     await emit({ type: "message_end", message: assistantMessage });
 
-    // Collect tool calls.
     const toolCalls = assistantMessage.content.filter(
       (c): c is ToolCallContent => c.type === "toolCall",
     );
@@ -83,7 +85,6 @@ export async function runAgentLoop(
       break;
     }
 
-    // Execute tool calls sequentially.
     for (const tc of toolCalls) {
       if (signal?.aborted) break;
       await emit({ type: "tool_execution_start", toolCallId: tc.id, toolName: tc.name, args: tc.arguments });
@@ -102,7 +103,7 @@ export async function runAgentLoop(
         outcome = "failed";
       } else {
         try {
-          const ctx = signal ? { signal } : {};
+          const ctx = signal ? { signal, toolCallId: tc.id } : { toolCallId: tc.id };
           result = await tool.execute(tc.arguments, ctx);
           isError = false;
           outcome = result.executionOutcome ?? "succeeded";
@@ -128,6 +129,9 @@ export async function runAgentLoop(
         timestamp: Date.now(),
       };
       messages.push(toolResult);
+      await emit({ type: "message_start", message: toolResult });
+      // Phase 0.6 transcript adapters may block this event until Host durable ACK.
+      await emit({ type: "message_end", message: toolResult });
     }
 
     await emit({ type: "turn_end" });
@@ -137,10 +141,6 @@ export async function runAgentLoop(
   return messages;
 }
 
-/**
- * Stream a single assistant response from the provider. Collects text deltas
- * and tool calls, returns a complete AssistantMessage.
- */
 async function streamAssistant(
   systemPrompt: string,
   messages: Message[],
@@ -167,12 +167,7 @@ async function streamAssistant(
         textParts.push(event.text);
         break;
       case "tool_call":
-        toolCalls.push({
-          type: "toolCall",
-          id: event.id,
-          name: event.name,
-          arguments: event.arguments,
-        });
+        toolCalls.push({ type: "toolCall", id: event.id, name: event.name, arguments: event.arguments });
         break;
       case "done":
         stopReason = event.stopReason;
@@ -186,9 +181,7 @@ async function streamAssistant(
   }
 
   const content: (TextContent | ToolCallContent)[] = [];
-  if (textParts.length > 0) {
-    content.push({ type: "text", text: textParts.join("") });
-  }
+  if (textParts.length > 0) content.push({ type: "text", text: textParts.join("") });
   content.push(...toolCalls);
 
   const msg: AssistantMessage = {
