@@ -19,6 +19,8 @@ export interface AgentSupervisorOptions {
   entrypoint: string;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  /** Explicit Node loader/runtime args for the worker (e.g. --import tsx in tests). */
+  execArgv?: string[];
   helloTimeoutMs?: number;
 }
 
@@ -41,6 +43,7 @@ export class AgentSupervisor {
         ...this.options.env,
         ALCODE_AGENT_GENERATION_ID: generationId,
       },
+      ...(this.options.execArgv ? { execArgv: this.options.execArgv } : {}),
       stdio: ["inherit", "inherit", "inherit", "ipc"],
     });
     const transport = createChildProcessHostTransport(child);
@@ -104,7 +107,7 @@ export class AgentSupervisor {
         clearTimeout(timer);
         unsubscribe();
         if (message.protocolVersion !== AGENT_PROTOCOL_VERSION) {
-          reject(new Error(`Agent protocol version ${message.protocolVersion} is incompatible`));
+          reject(new Error(`Agent protocol version ${message.protocolVersion} is incompatible`);
           return;
         }
         if (message.generationId !== connection.generationId) {
