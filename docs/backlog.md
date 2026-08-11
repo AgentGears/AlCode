@@ -5,11 +5,12 @@ Nothing here is silently dropped; each becomes active when its trigger fires.
 
 ## Identities (deferred from 0.0)
 
-Frozen now: `workspace_id`, `session_id`, `event_id`, `operation_id`, `memory_id`,
-`reasoning_node_id`, `event_sequence`, `schema_version`.
+Frozen now: `workspace_id`, `repository_id`/`repositoryId`, `session_id`,
+`event_id`, `operation_id`, `memory_id`, `reasoning_node_id`, `event_sequence`,
+`schema_version`.
 
 - `installation_id` — when multi-machine sync or licensing matters.
-- `repository_id` (now `repositoryId`) — **PROMOTED to required-before-0.2**
+- `repository_id` (now `repositoryId`) — **PROMOTED and implemented before 0.2**
   (see "Workspace identity" below). A path cannot be "only an attribute" and
   simultaneously the sole durable identity used to recognize moves.
 - `worktree_id` — when subagent isolation uses git worktrees.
@@ -20,10 +21,11 @@ Frozen now: `workspace_id`, `session_id`, `event_id`, `operation_id`, `memory_id
   (currently `operation_id` covers the single-tool case).
 - `artifact_id` — if content-addressed digests are insufficient as handles.
 
-## Required before Phase 0.2 (promoted from deferred)
+## Required before Phase 0.2 (completed promotion)
 
-These three were deferred in an earlier draft and are now required before the
-0.2 vertical slice, because the 0.2 gate cannot prove its invariants without them.
+These items were deferred in an earlier draft and were promoted before the
+0.2 vertical slice because the 0.2 gate could not prove its invariants without
+them. This section is retained as decision history; it is not pending work.
 
 ### Workspace identity and resolution protocol
 
@@ -55,6 +57,9 @@ These three were deferred in an earlier draft and are now required before the
 
 ## Memory (deferred from 0.3)
 
+Phase 0.3 is closed. The items below were deliberately excluded from its
+semantic-engine gate and remain backlog items rather than reasons to reopen it.
+
 - Dense / vector retrieval. Phase 0.3 ships lexical; dense enters when lexical
   recall quality is the bottleneck. Embeddings via the local fastembed pattern
   Ola/mnemopi use.
@@ -66,13 +71,31 @@ These three were deferred in an earlier draft and are now required before the
 
 ## Reasoning (deferred from 0.4)
 
+Phase 0.4 is closed. These items require a new concrete need; they do not
+extend the accepted reasoning-port gate.
+
 - `command_signature.py` equivalent (shell tokenizer for test-runner
   classification). Defer because the agent loop knows tool intent directly;
   only needed if verification must classify arbitrary shell commands.
-- Additional differential corpus categories (beyond the 3+1 starter families):
-  branching, unsupported conclusions, verification classifications, malformed
-  inputs, database migrations, rollback, concurrent ownership. Expand during
-  the port as each semantic area activates.
+- Additional differential corpus categories beyond the frozen Phase 0.4
+  families. Reactivate only when a new reasoning surface or concrete defect
+  requires additional oracle evidence; do not expand the closed 0.4 corpus by
+  default.
+
+## Host/runtime (deferred after 0.5)
+
+Phase 0.5 proved a local Node IPC Agent Protocol, Host-owned capability
+execution, bounded event-sourced cognition work, and replaceable-Agent
+continuity. The following remain deliberately outside that phase:
+
+- remote Agent transport / public wire encoding;
+- general scheduler or recurring automation;
+- distributed claims / leases / remote workers;
+- browser execution subsystem;
+- task/workflow engine and `task_id` lifecycle;
+- remote workspace backends.
+
+Activate only when a later authorized product requirement needs them.
 
 ## Context projection (deferred from 0.7)
 
@@ -107,11 +130,13 @@ These three were deferred in an earlier draft and are now required before the
   to `jiti`, `pi-tui`, `pi-ai` provider bundle). 0.1A ships an owned
   `StaticExtensionHost` instead (contracts only: `AgentExtension`,
   `ExtensionContext`).
-- **Reactivation trigger:** when Phase 0.5 needs runtime-loaded cognition
-  extensions, OR when user-installed extensions become a product requirement.
-  At that point, port the loader/runner deliberately (not as a side-effect of
-  another phase), replacing `jiti` with an owned loader and the `pi-tui`/provider
-  bundle with the ALCODE-owned equivalents that exist by then.
+- **Phase 0.5 outcome:** runtime-loaded cognition extensions were not needed.
+  A thin statically-owned cognition adapter behind `@alcode/agent-protocol`
+  satisfied the replaceable-Agent boundary.
+- **Reactivation trigger:** user-installed/runtime-loaded extensions become a
+  product requirement, or a future authorized phase demonstrates a concrete
+  need for dynamic loading. Port deliberately then; do not introduce the pi
+  loader as a side effect of unrelated work.
 
 ## Process / scope
 
