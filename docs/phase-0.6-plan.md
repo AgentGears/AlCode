@@ -1,8 +1,10 @@
 # Phase 0.6 — Durable verbatim context reconstruction
 
-Status: **FROZEN DESIGN — NOT STARTED**. Implementation requires explicit authorization.
+Status: **CLOSED**. This remains the frozen historical implementation and acceptance contract.
 
-Baseline: documentation-synchronized `main` after Phase 0.5 closure (`96643e6`).
+Planning baseline: documentation-synchronized `main` after Phase 0.5 closure (`96643e6`).
+
+Closure: PR #12 source head `303a0c4cb528a63952befcdd86e83548f8378327` merged as `98c764c60f95fe45c7976661bedda30a287c5c20`; post-merge CI run `31542403984` completed successfully with `gate:0.6` green.
 
 This plan defines the Phase 0.6 implementation and acceptance boundary. It incorporates the architectural review of the initial plan. The central correction is that durable transcript reconstruction is not sufficient by itself: **before any subsequent model request, every prior non-user conversational message must have crossed a Host-acknowledged canonical transcript-admission barrier.**
 
@@ -1085,8 +1087,8 @@ canonical transcript
 
 ---
 
-## 26. Authorization boundary
+## 26. Closure / successor authorization boundary
 
-This document freezes the Phase 0.6 design and acceptance criteria only.
+This document remains the frozen historical Phase 0.6 design and acceptance contract.
 
-Implementation has **not** started and must not begin until explicitly authorized. No Phase 0.7 or 0.8 work is authorized by this plan.
+The plan was explicitly authorized, implemented, verified by `gate:0.6`, and closed in PR #12 / merge `98c764c`. That closure does **not** authorize Phase 0.7 or 0.8. Successor-phase work requires its own reviewed/frozen plan and explicit authorization.
