@@ -37,7 +37,7 @@ export function agentToolAsHostCapability(tool: AgentTool): HostCapability {
           content: result.content,
           details: result.details,
         },
-        outcome: result.executionOutcome,
+        ...(result.executionOutcome !== undefined ? { outcome: result.executionOutcome } : {}),
         stdout: text,
         ...(exitCode !== undefined ? { exitCode } : {}),
       };
