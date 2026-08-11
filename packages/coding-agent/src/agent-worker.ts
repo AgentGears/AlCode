@@ -4,10 +4,15 @@
 // memory, reasoning, or Host runtime. Every cognition/environmental tool is a
 // protocol proxy registered by the thin cognition extension.
 
+import { randomUUID } from "node:crypto";
 import { runAgentLoop, StaticExtensionHost, type ModelEvent, type ModelProvider, type ModelRequest, type ModelStream } from "@alcode/agent-core";
-import { AGENT_PROTOCOL_VERSION, type ContextProvide, type HostToAgentMessage } from "@alcode/agent-protocol";
+import {
+  AGENT_PROTOCOL_VERSION,
+  createProcessAgentTransport,
+  type ContextProvide,
+  type HostToAgentMessage,
+} from "@alcode/agent-protocol";
 import { createCognitionExtension } from "@alcode/cognition-extension";
-import { createProcessAgentTransport } from "@alcode/host-runtime";
 
 interface ScriptedTurn {
   text?: string;
@@ -95,7 +100,7 @@ async function main(): Promise<void> {
     } catch (error) {
       await transport.send({
         type: "agent.error",
-        requestId: crypto.randomUUID(),
+        requestId: randomUUID(),
         sessionId: localSessionId,
         message: error instanceof Error ? error.message : String(error),
       });
@@ -137,12 +142,12 @@ async function main(): Promise<void> {
   });
 }
 
-main().catch(async (error) => {
+main().catch((error) => {
   try {
     if (typeof process.send === "function") {
       process.send({
         type: "agent.error",
-        requestId: crypto.randomUUID(),
+        requestId: randomUUID(),
         message: error instanceof Error ? error.message : String(error),
       });
     }
