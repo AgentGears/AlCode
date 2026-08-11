@@ -13,6 +13,7 @@ import {
   type HostToAgentMessage,
 } from "@alcode/agent-protocol";
 import { createCognitionExtension } from "@alcode/cognition-extension";
+import { TestModelProvider } from "./test-model-provider.ts";
 
 interface ScriptedTurn {
   text?: string;
@@ -52,12 +53,20 @@ class ScriptedWorkerProvider implements ModelProvider {
   }
 }
 
-function loadScript(): ScriptedTurn[] {
+function createProvider(): ModelProvider {
   const raw = process.env.ALCODE_AGENT_SCRIPT;
-  if (!raw) return [{ text: "ALCODE Agent is ready.", stopReason: "stop" }];
-  const parsed = JSON.parse(raw) as unknown;
-  if (!Array.isArray(parsed)) throw new Error("ALCODE_AGENT_SCRIPT must be a JSON array");
-  return parsed as ScriptedTurn[];
+  if (raw) {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) throw new Error("ALCODE_AGENT_SCRIPT must be a JSON array");
+    return new ScriptedWorkerProvider(parsed as ScriptedTurn[]);
+  }
+
+  // Preserve the closed Phase 0.1A deterministic/offline CLI semantics while
+  // moving the model loop into the replaceable Agent process.
+  return new TestModelProvider([
+    { match: "hello", text: "Hello from ALCODE. The agent loop is running." },
+    { match: "*", text: "ALCODE received your prompt." },
+  ]);
 }
 
 async function main(): Promise<void> {
@@ -88,7 +97,7 @@ async function main(): Promise<void> {
       toolNames: localContext.toolNames,
     })]);
 
-    const provider = new ScriptedWorkerProvider(loadScript());
+    const provider = createProvider();
     try {
       await runAgentLoop(text, {
         systemPrompt: localContext.systemPrompt,
