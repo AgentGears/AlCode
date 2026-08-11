@@ -89,6 +89,10 @@ type ReasoningNodeId = string & { readonly __brand: "ReasoningNodeId" };
 Construct ids only through factory functions in `packages/events/src/identity.ts`
 (`mkEventId`, `mkWorkspaceId`, …). Never cast (`as EventId`) outside tests.
 
+Provider/model `toolCallId` is a distinct conversational correlation identity
+preserved end-to-end by Phase 0.6. It is not currently promoted into this
+foundational branded-identity set and does not replace `OperationId`.
+
 ## Producer
 
 Event origin is foundational for auditing, authorization, redaction policy,
@@ -104,7 +108,7 @@ type EventProducer =
   | { kind: "projection"; projectionName: string };
 ```
 
-Phase 0.5 deliberately reuses these existing producer categories for
+Phases 0.5–0.6 deliberately reuse these existing producer categories for
 Agent-originated/Host-admitted facts rather than expanding the envelope solely
 to encode process topology. The Host remains the canonical admission authority;
 `producer` records semantic origin, not database-write ownership.
@@ -165,14 +169,18 @@ Do not build the registry before there is a version to migrate from.
 
 The `events` package owns the envelope and registry mechanism **only**.
 Domain packages/Host runtime own event types and payloads. As of the closed
-Phase 0.5 foundation, the durable vocabulary includes these families:
+Phase 0.6 foundation, the durable vocabulary includes these families:
 
 - **Runtime/session:** `runtime.session.started`, `runtime.session.stopped`.
 - **Durable Host work:** `runtime.work.requested`, `runtime.work.claimed`,
   `runtime.work.completed`, `runtime.work.failed`, `runtime.work.interrupted`.
-- **Transcript/operation:** user/assistant message events and durable
-  operation/tool lifecycle events owned by the corresponding Host/transcript
-  domain contracts.
+- **Transcript (0.6 rich durable vocabulary):**
+  - `user.message.appended`
+  - `assistant.message.appended`
+  - `tool.result.appended`
+- **Operation/tool lifecycle:** durable operation/request/start/terminal facts
+  remain owned by the Host/storage operation contracts; operation state and
+  provider-visible transcript state are related but distinct domains.
 - **Reasoning semantic core:**
   - `objective.set`
   - `hypothesis.created`
@@ -186,9 +194,10 @@ Phase 0.5 foundation, the durable vocabulary includes these families:
   `evidence.recorded`, `verification.result.correlated`.
 - **Memory semantic core:** `memory.created`, `memory.reinforced`,
   `memory.archived`, `memory.tombstoned`, `memory.deleted`, `memory.restored`.
-- **Context compiler (future 0.7 receipt domain):**
-  `context.projection_compiled` remains planned, not implemented by the closed
-  0.5 foundation.
+- **Context compiler (Phase 0.7 draft only):**
+  `context.projection_compiled` is proposed by `docs/phase-0.7-plan.md`; it is
+  **not implemented by the closed Phase 0.6 foundation and is not frozen
+  vocabulary until the Phase 0.7 plan is reviewed/authorized.**
 
 Internal reducer labels or reference-system event names are **not** canonical
 ALCODE event vocabulary. For example, Ouroboros undotted labels are normalized
