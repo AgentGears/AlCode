@@ -8,6 +8,11 @@ import type {
   ToolResultAppendedPayload,
   UserMessageAppendedPayload,
 } from "@alcode/transcript";
+export type {
+  AssistantMessageAppendedPayload,
+  ToolResultAppendedPayload,
+  UserMessageAppendedPayload,
+} from "@alcode/transcript";
 import type {
   ProjectionDefinition,
   ProjectionTransaction,
