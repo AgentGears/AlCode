@@ -397,10 +397,18 @@ describe("diagnostics: GraphView semantics", () => {
     addNode(g, { id: "hyp", kind: NK.HYPOTHESIS });
     addNode(g, { id: "dec", kind: NK.DECISION });
     addEdge(g, { source: "obs", target: "hyp", kind: EK.SUPPORTS });
-    addEdge(g, { source: "hyp", target: "dec", kind: EK.SUPPORTS });
+    // dec → hyp via PRODUCED_BY, then hyp ← obs via incoming SUPPORTS
+    addEdge(g, { source: "dec", target: "hyp", kind: EK.PRODUCED_BY });
     const v = new GraphView(g);
-    expect(v.shortestEvidencePath("dec")).toBe(2);
-    expect(v.shortestEvidencePath("hyp")).toBe(1);
+    const path = v.shortestEvidencePath("dec");
+    expect(path).not.toBeNull();
+    expect(path!.length).toBe(3); // dec → hyp → obs
+    expect(path![0]).toBe("dec");
+    expect(path![2]).toBe("obs");
+    // Direct evidence path from hyp
+    const hypPath = v.shortestEvidencePath("hyp");
+    expect(hypPath).not.toBeNull();
+    expect(hypPath!.length).toBe(2); // hyp → obs
   });
 });
 
@@ -408,7 +416,7 @@ describe("diagnostics: detectors", () => {
   it("flags an unsupported decision with no evidence path", () => {
     const g = createReasoningGraph();
     addNode(g, { id: "dec", kind: NK.DECISION });
-    const findings = new DiagnosticEngine().diagnose(g);
+    const findings = new DiagnosticEngine().diagnose(g, "s", 0).findings;
     const f = findings.find((x) => x.code === "unsupported_conclusion");
     expect(f).toBeDefined();
     expect(f!.subjectNodeIds).toEqual(["dec"]);
@@ -421,7 +429,7 @@ describe("diagnostics: detectors", () => {
     addNode(g, { id: "obs", kind: NK.OBSERVATION });
     addNode(g, { id: "dec", kind: NK.DECISION });
     addEdge(g, { source: "obs", target: "dec", kind: EK.SUPPORTS });
-    const findings = new DiagnosticEngine().diagnose(g);
+    const findings = new DiagnosticEngine().diagnose(g, "s", 0).findings;
     expect(findings.some((x) => x.code === "unsupported_conclusion")).toBe(false);
   });
 
@@ -430,7 +438,7 @@ describe("diagnostics: detectors", () => {
     addNode(g, { id: "dec", kind: NK.DECISION });
     addNode(g, { id: "asmp", kind: NK.ASSUMPTION, data: { status: "contradicted" } });
     addEdge(g, { source: "dec", target: "asmp", kind: EK.PRODUCED_BY });
-    const findings = new DiagnosticEngine().diagnose(g);
+    const findings = new DiagnosticEngine().diagnose(g, "s", 0).findings;
     const f = findings.find((x) => x.code === "contradicted_dependency");
     expect(f).toBeDefined();
     expect(f!.subjectNodeIds).toEqual(["dec"]);
@@ -445,14 +453,19 @@ describe("diagnostics: detectors", () => {
     addNode(g, { id: "dec2", kind: NK.DECISION });
     addNode(g, { id: "asmp", kind: NK.ASSUMPTION, data: { status: "contradicted" } });
     addEdge(g, { source: "dec2", target: "asmp", kind: EK.PRODUCED_BY });
-    // mature hypothesis without falsifier
-    addNode(g, { id: "hyp", kind: NK.HYPOTHESIS, data: { predicts: ["x"] } });
+    // mature hypothesis: has an assumption depending on it (DEPENDS_ON outgoing)
+    addNode(g, { id: "hyp", kind: NK.HYPOTHESIS });
+    addNode(g, { id: "dep_asmpt", kind: NK.ASSUMPTION });
+    addEdge(g, { source: "hyp", target: "dep_asmpt", kind: EK.DEPENDS_ON });
 
-    const findings = new DiagnosticEngine().diagnose(g);
+    const findings = new DiagnosticEngine().diagnose(g, "s", 0).findings;
     const codes = findings.map((f) => f.code);
     const cIdx = codes.indexOf("contradicted_dependency");
     const uIdx = codes.indexOf("unsupported_conclusion");
     const mIdx = codes.indexOf("missing_falsifier");
+    expect(cIdx).toBeGreaterThanOrEqual(0);
+    expect(uIdx).toBeGreaterThanOrEqual(0);
+    expect(mIdx).toBeGreaterThanOrEqual(0);
     expect(cIdx).toBeLessThan(uIdx);
     expect(uIdx).toBeLessThan(mIdx);
   });
@@ -464,16 +477,26 @@ describe("diagnostics: detectors", () => {
     // Two PRODUCED_BY edges to the same assumption — same defect, dedup.
     addEdge(g, { source: "dec", target: "asmp", kind: EK.PRODUCED_BY });
     addEdge(g, { source: "dec", target: "asmp", kind: EK.PRODUCED_BY });
-    const findings = new DiagnosticEngine().diagnose(g);
+    const findings = new DiagnosticEngine().diagnose(g, "s", 0).findings;
     const contradicted = findings.filter((f) => f.code === "contradicted_dependency");
     expect(contradicted.length).toBe(1);
   });
 
-  it("flags a mature hypothesis (with predictions) missing a falsifier", () => {
+  it("flags a mature hypothesis missing a falsifier", () => {
     const g = createReasoningGraph();
-    addNode(g, { id: "hyp", kind: NK.HYPOTHESIS, data: { predicts: ["x"] } });
-    const findings = new DiagnosticEngine().diagnose(g);
+    // Mature = has downstream activity: an assumption linked via DEPENDS_ON
+    addNode(g, { id: "hyp", kind: NK.HYPOTHESIS });
+    addNode(g, { id: "dep", kind: NK.ASSUMPTION });
+    addEdge(g, { source: "hyp", target: "dep", kind: EK.DEPENDS_ON });
+    const findings = new DiagnosticEngine().diagnose(g, "s", 0).findings;
     expect(findings.some((f) => f.code === "missing_falsifier")).toBe(true);
+  });
+
+  it("does not flag a hypothesis with no downstream activity (not mature)", () => {
+    const g = createReasoningGraph();
+    addNode(g, { id: "hyp", kind: NK.HYPOTHESIS });
+    const findings = new DiagnosticEngine().diagnose(g, "s", 0).findings;
+    expect(findings.some((f) => f.code === "missing_falsifier")).toBe(false);
   });
 
   it("does not flag a hypothesis that has a falsifier", () => {
@@ -481,7 +504,7 @@ describe("diagnostics: detectors", () => {
     addNode(g, { id: "hyp", kind: NK.HYPOTHESIS, data: { predicts: ["x"] } });
     addNode(g, { id: "fal", kind: NK.FALSIFIER });
     addEdge(g, { source: "fal", target: "hyp", kind: EK.FALSIFIES });
-    const findings = new DiagnosticEngine().diagnose(g);
+    const findings = new DiagnosticEngine().diagnose(g, "s", 0).findings;
     expect(findings.some((f) => f.code === "missing_falsifier")).toBe(false);
   });
 });

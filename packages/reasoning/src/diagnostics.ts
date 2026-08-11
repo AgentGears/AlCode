@@ -1,139 +1,167 @@
-// Diagnostics — structural defect detection over the reasoning graph.
+// Diagnostics — structural graph detectors.
 //
-// Ports Ouroboros diagnostics.py. Pure semantic functions: no SQLite, no
-// filesystem, no process spawning.
+// Ports Ouroboros diagnostics.py faithfully. Pure read-only semantic
+// functions: no SQLite, no filesystem, no process spawning.
 //
-// Four detectors run over active nodes:
-//   1. unsupported_conclusion   — active DECISION with no accepted evidence path
-//   2. contradicted_dependency  — active DECISION based on a contradicted ASSUMPTION
-//   3. evidence_staleness       — active DECISION with stale evidence
-//   4. missing_falsifier        — active mature HYPOTHESIS with no FALSIFIES
-//
-// All emit warning severity. Findings dedup by findingId and sort by
-// (code priority, -subjectSeq, code, findingId).
-//
-// GraphView centralizes shared semantics so all detectors see the same
-// active/evidence/contradiction picture.
+// GraphView centralizes shared graph semantics. DiagnosticEngine runs 4
+// detectors in a fixed order with exact suppression rules.
 
+import { createHash } from "node:crypto";
 import {
-  NodeKind as NK,
-  EdgeKind as EK,
-  EvaluationState as ES,
-  DiagnosticSeverity,
-  DiagnosticCode,
-  type DiagnosticSeverity as DiagnosticSeverityType,
-  type DiagnosticCode as DiagnosticCodeType,
   type ReasoningNode,
   type ReasoningEdge,
+  NodeKind as NK,
+  EdgeKind as EK,
+  DiagnosticSeverity as DS,
 } from "./schema.ts";
-import {
-  type ReasoningGraph,
-  getSupersededIds,
-  getNodesByKind,
-  extractSequence,
-} from "./graph.ts";
-import type { AssumptionPayload } from "./cognitive.ts";
+import { type ReasoningGraph, getNodesByKind } from "./graph.ts";
 
 // ---------------------------------------------------------------------------
-// Detector version
+// Constants
 // ---------------------------------------------------------------------------
 
 export const DETECTOR_VERSION = "0.10.0";
+
+const CODE_PRIORITY: Record<string, number> = {
+  contradicted_dependency: 0,
+  evidence_staleness: 1,
+  unsupported_conclusion: 2,
+  missing_falsifier: 3,
+};
+
+const EVIDENCE_KINDS = new Set<string>([NK.OBSERVATION, NK.ACTION_RESULT]);
+const MUTATION_TOOLS = new Set(["Edit", "Write"]);
 
 // ---------------------------------------------------------------------------
 // DiagnosticFinding
 // ---------------------------------------------------------------------------
 
-export type AnyDiagnosticCode =
-  | typeof DiagnosticCode.UNSUPPORTED_CONCLUSION
-  | typeof DiagnosticCode.CONTRADICTED_DEPENDENCY
-  | typeof DiagnosticCode.EVIDENCE_STALENESS
-  | typeof DiagnosticCode.MISSING_FALSIFIER;
-
 export interface DiagnosticFinding {
-  /** Deterministic hash of (code + sorted subject/related IDs). */
   findingId: string;
-  code: AnyDiagnosticCode;
-  severity: typeof DiagnosticSeverity.WARNING;
-  subjectNodeIds: string[];
-  relatedNodeIds: string[];
-  pathNodeIds: string[];
+  code: string;
+  severity: string;
+  subjectNodeIds: readonly string[];
+  relatedNodeIds: readonly string[];
+  pathNodeIds: readonly string[];
   message: string;
-  remediation: string;
-  detectorVersion: typeof DETECTOR_VERSION;
+  remediation: string | null;
+  detectorVersion: string;
 }
 
 // ---------------------------------------------------------------------------
-// Code priority for stable sorting
+// Helpers
 // ---------------------------------------------------------------------------
 
-const CODE_PRIORITY: Record<AnyDiagnosticCode, number> = {
-  [DiagnosticCode.CONTRADICTED_DEPENDENCY]: 0,
-  [DiagnosticCode.EVIDENCE_STALENESS]: 1,
-  [DiagnosticCode.UNSUPPORTED_CONCLUSION]: 2,
-  [DiagnosticCode.MISSING_FALSIFIER]: 3,
-};
-
-// ---------------------------------------------------------------------------
-// Deterministic finding ID
-// ---------------------------------------------------------------------------
-
-/**
- * Deterministic hash for a finding. Combines the code and the sorted
- * subject + related IDs so the same defect always hashes the same,
- * regardless of iteration order.
- */
-function makeFindingId(
-  code: AnyDiagnosticCode,
-  subjectNodeIds: readonly string[],
-  relatedNodeIds: readonly string[],
-): string {
-  const subject = [...subjectNodeIds].sort().join(",");
-  const related = [...relatedNodeIds].sort().join(",");
-  const key = `${code}|${subject}|${related}`;
-  // FNV-1a 32-bit over the key bytes, expressed as zero-padded hex.
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < key.length; i++) {
-    hash ^= key.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
+function canonicalJson(obj: Record<string, unknown>): string {
+  function sortDeep(v: unknown): unknown {
+    if (v === null || typeof v !== "object") return v;
+    if (Array.isArray(v)) return v.map(sortDeep);
+    const sorted: Record<string, unknown> = {};
+    for (const key of Object.keys(v as Record<string, unknown>).sort()) {
+      sorted[key] = sortDeep((v as Record<string, unknown>)[key]);
+    }
+    return sorted;
   }
-  return `diag:${code}:${hash.toString(16).padStart(8, "0")}`;
+  return JSON.stringify(sortDeep(obj));
+}
+
+function findingId(code: string, subjectIds: readonly string[], relatedIds: readonly string[]): string {
+  const payload = canonicalJson({
+    code,
+    subject_ids: [...subjectIds].sort(),
+    related_ids: [...relatedIds].sort(),
+  });
+  return createHash("sha256").update(payload, "utf8").digest("hex").slice(0, 16);
+}
+
+function seqFromId(nodeId: string): number {
+  const parts = nodeId.split(":");
+  if (parts.length >= 4 && parts[0] === "event") {
+    const seq = parseInt(parts[2]!, 10);
+    if (!isNaN(seq)) return seq;
+  }
+  return 0;
+}
+
+function sortFindings(findings: DiagnosticFinding[]): DiagnosticFinding[] {
+  return findings.slice().sort((a, b) => {
+    const pa = CODE_PRIORITY[a.code] ?? 99;
+    const pb = CODE_PRIORITY[b.code] ?? 99;
+    if (pa !== pb) return pa - pb;
+    const sa = a.subjectNodeIds.length > 0 ? Math.max(...a.subjectNodeIds.map(seqFromId)) : 0;
+    const sb = b.subjectNodeIds.length > 0 ? Math.max(...b.subjectNodeIds.map(seqFromId)) : 0;
+    if (sa !== sb) return sb - sa;
+    if (a.code !== b.code) return a.code.localeCompare(b.code);
+    return a.findingId.localeCompare(b.findingId);
+  });
 }
 
 // ---------------------------------------------------------------------------
-// GraphView — shared graph semantics
+// GraphView — exact Ouroboros port
 // ---------------------------------------------------------------------------
 
-/**
- * Read-only semantic view over a ReasoningGraph.
- *
- * Centralizes the predicates all detectors share (active, accepted evidence,
- * contradiction, falsifier maturity, evidence-path reachability) so a change
- * in semantics changes one place.
- */
 export class GraphView {
-  /** The underlying graph. Public-read for detectors that need raw access. */
-  readonly graph: ReasoningGraph;
-  private readonly superseded: Set<string>;
+  private readonly graph: ReasoningGraph;
+  private readonly incomingMap: Map<string, ReasoningEdge[]>;
+  private readonly outgoingMap: Map<string, ReasoningEdge[]>;
+  private supersededCache: Set<string> | null = null;
 
   constructor(graph: ReasoningGraph) {
     this.graph = graph;
-    this.superseded = getSupersededIds(graph);
+    this.incomingMap = new Map();
+    this.outgoingMap = new Map();
+    for (const edge of graph.edges.values()) {
+      const inList = this.incomingMap.get(edge.target) ?? [];
+      inList.push(edge);
+      this.incomingMap.set(edge.target, inList);
+      const outList = this.outgoingMap.get(edge.source) ?? [];
+      outList.push(edge);
+      this.outgoingMap.set(edge.source, outList);
+    }
   }
 
-  // --- predicates --------------------------------------------------------
+  incoming(nodeId: string, kind?: string): ReasoningEdge[] {
+    const edges = this.incomingMap.get(nodeId) ?? [];
+    return kind ? edges.filter((e) => e.kind === kind) : edges;
+  }
 
-  /** A node is active iff it is not superseded by a same-kind REVISES. */
+  outgoing(nodeId: string, kind?: string): ReasoningEdge[] {
+    const edges = this.outgoingMap.get(nodeId) ?? [];
+    return kind ? edges.filter((e) => e.kind === kind) : edges;
+  }
+
+  node(nodeId: string): ReasoningNode | undefined {
+    return this.graph.nodes.get(nodeId);
+  }
+
+  supersededIds(): Set<string> {
+    if (this.supersededCache !== null) return this.supersededCache;
+    const result = new Set<string>();
+    for (const edge of this.graph.edges.values()) {
+      if (edge.kind !== EK.REVISES) continue;
+      const target = this.graph.nodes.get(edge.target);
+      const source = this.graph.nodes.get(edge.source);
+      if (target && source && target.kind === source.kind) {
+        result.add(edge.target);
+      }
+    }
+    this.supersededCache = result;
+    return result;
+  }
+
   isActive(nodeId: string): boolean {
-    return !this.superseded.has(nodeId);
+    return !this.supersededIds().has(nodeId);
   }
 
-  /**
-   * Evidence is "accepted" when:
-   *   - OBSERVATION: always (observations are trusted inputs)
-   *   - ACTION_RESULT: unless data.success === false
-   *   - anything else: not evidence
-   */
+  activeNodes(kind: string): ReasoningNode[] {
+    return getNodesByKind(this.graph, kind as NK).filter((n) => this.isActive(n.id));
+  }
+
+  isEvidence(nodeId: string): boolean {
+    const node = this.graph.nodes.get(nodeId);
+    return node !== undefined && EVIDENCE_KINDS.has(node.kind);
+  }
+
   isAcceptedEvidence(nodeId: string): boolean {
     const node = this.graph.nodes.get(nodeId);
     if (!node) return false;
@@ -142,147 +170,104 @@ export class GraphView {
     return false;
   }
 
-  /** True if this node is the target of a CONTRADICTS edge. */
   isExplicitlyContradicted(nodeId: string): boolean {
-    for (const edge of this.graph.edges.values()) {
-      if (edge.kind === EK.CONTRADICTS && edge.target === nodeId) return true;
-    }
-    return false;
-  }
-
-  /** True if this node has at least one incoming FALSIFIES edge. */
-  hasFalsifier(nodeId: string): boolean {
-    for (const edge of this.graph.edges.values()) {
-      if (edge.kind === EK.FALSIFIES && edge.target === nodeId) return true;
-    }
-    return false;
-  }
-
-  /**
-   * A HYPOTHESIS is "mature" when it is active AND carries at least one
-   * prediction (a claim the agent has committed to testing) AND at least one
-   * of its falsifiers — if any — has been evaluated to a non-unevaluated
-   * state. A hypothesis with no falsifier yet can still be mature by
-   * predictions; the missing_falsifier detector exists precisely to flag
-   * mature hypotheses that lack a falsifier.
-   *
-   * Concretely: active HYPOTHESIS with `predicts.length > 0`.
-   * The "evaluated falsifier" gate is applied separately where relevant.
-   */
-  isMatureHypothesis(nodeId: string): boolean {
     const node = this.graph.nodes.get(nodeId);
-    if (!node || node.kind !== NK.HYPOTHESIS) return false;
-    if (!this.isActive(nodeId)) return false;
-    const predicts = node.data.predicts;
-    return Array.isArray(predicts) && predicts.length > 0;
-  }
-
-  /**
-   * True if the node has a falsifier that has been evaluated to a
-   * non-unevaluated state (satisfied / refuted / inconclusive / superseded).
-   */
-  hasEvaluatedFalsifier(nodeId: string): boolean {
-    for (const edge of this.graph.edges.values()) {
-      if (edge.kind !== EK.FALSIFIES || edge.target !== nodeId) continue;
-      // edge.source is the falsifier; look for an EVALUATES edge into it.
-      for (const evalEdge of this.graph.edges.values()) {
-        if (
-          evalEdge.kind === EK.EVALUATES &&
-          evalEdge.target === edge.source
-        ) {
-          const evalNode = this.graph.nodes.get(evalEdge.source);
-          const state = evalNode?.data.state as string | undefined;
-          if (state !== undefined && state !== ES.UNEVALUATED) return true;
-        }
-      }
+    if (!node) return false;
+    if (node.data.status === "contradicted") return true;
+    for (const edge of this.incoming(nodeId, EK.CONTRADICTS)) {
+      if (this.isEvidence(edge.source)) return true;
     }
     return false;
   }
 
-  /**
-   * Shortest evidence-path length from any accepted evidence node to `target`
-   * via SUPPORTS edges. Returns Infinity if unreachable.
-   *
-   * Traversed source→target: an edge `A -SUPPORTS-> B` is one hop; BFS
-   * expands outward from each evidence seed over outgoing SUPPORTS edges
-   * until it reaches the target.
-   */
-  shortestEvidencePath(target: string): number {
-    const seeds: string[] = [];
-    for (const node of this.graph.nodes.values()) {
-      if (this.isAcceptedEvidence(node.id)) seeds.push(node.id);
-    }
-    if (seeds.length === 0) return Infinity;
-    if (seeds.includes(target)) return 0;
+  contradictionEdges(nodeId: string): ReasoningEdge[] {
+    return this.incoming(nodeId, EK.CONTRADICTS).filter((e) => this.isEvidence(e.source));
+  }
 
-    const visited = new Set<string>(seeds);
-    const queue: Array<{ id: string; dist: number }> = seeds.map((id) => ({ id, dist: 0 }));
-    let head = 0;
-    while (head < queue.length) {
-      const entry = queue[head]!;
-      head += 1;
-      for (const edge of this.graph.edges.values()) {
-        if (edge.kind !== EK.SUPPORTS) continue;
-        if (edge.source !== entry.id) continue;
-        const next = edge.target;
-        if (next === target) return entry.dist + 1;
-        if (!visited.has(next)) {
-          visited.add(next);
-          queue.push({ id: next, dist: entry.dist + 1 });
+  hasPostContradictionReaffirmation(
+    subjectId: string, contradictionSeq: number, contradictedAssumptionId?: string,
+  ): boolean {
+    if (!this.isActive(subjectId)) return true;
+
+    const validTargets = new Set<string>([subjectId]);
+    if (contradictedAssumptionId) {
+      validTargets.add(contradictedAssumptionId);
+      for (const node of this.graph.nodes.values()) {
+        if (node.kind === NK.HYPOTHESIS) {
+          for (const edge of this.outgoing(node.id, EK.DEPENDS_ON)) {
+            if (edge.target === contradictedAssumptionId) validTargets.add(node.id);
+          }
         }
       }
     }
-    return Infinity;
-  }
 
-  // --- raw accessors used by detectors -----------------------------------
-
-  /** Direct node lookup. */
-  node(nodeId: string): ReasoningNode | undefined {
-    return this.graph.nodes.get(nodeId);
-  }
-
-  /** Sequence number for stable tie-breaking. Falls back to 0. */
-  sequence(nodeId: string): number {
-    return extractSequence(nodeId);
-  }
-
-  /** All active DECISION nodes. */
-  activeDecisions(): ReasoningNode[] {
-    return getNodesByKind(this.graph, NK.DECISION).filter((n) => this.isActive(n.id));
-  }
-
-  /** All active HYPOTHESIS nodes. */
-  activeHypotheses(): ReasoningNode[] {
-    return getNodesByKind(this.graph, NK.HYPOTHESIS).filter((n) => this.isActive(n.id));
-  }
-
-  /** Incoming edges of a given kind targeting `nodeId`. */
-  incoming(nodeId: string, kind: ReasoningEdge["kind"]): ReasoningEdge[] {
-    const out: ReasoningEdge[] = [];
-    for (const edge of this.graph.edges.values()) {
-      if (edge.kind === kind && edge.target === nodeId) out.push(edge);
+    for (const targetId of validTargets) {
+      for (const edge of this.incoming(targetId, EK.SUPPORTS)) {
+        const source = this.graph.nodes.get(edge.source);
+        if (source && this.isEvidence(source.id) && seqFromId(source.id) > contradictionSeq) return true;
+      }
     }
-    return out;
-  }
 
-  /** Outgoing edges of a given kind from `nodeId`. */
-  outgoing(nodeId: string, kind: ReasoningEdge["kind"]): ReasoningEdge[] {
-    const out: ReasoningEdge[] = [];
-    for (const edge of this.graph.edges.values()) {
-      if (edge.kind === kind && edge.source === nodeId) out.push(edge);
+    for (const edge of this.incoming(subjectId)) {
+      const source = this.graph.nodes.get(edge.source);
+      if (source && source.kind === NK.CHECK && seqFromId(source.id) > contradictionSeq) return true;
     }
-    return out;
+    return false;
   }
 
-  /** Outgoing PRODUCED_BY targets — the "based-on" relation for DECISION. */
-  basedOn(nodeId: string): string[] {
-    return this.outgoing(nodeId, EK.PRODUCED_BY).map((e) => e.target);
+  hasFalsifier(hypothesisId: string): boolean {
+    return this.incoming(hypothesisId, EK.FALSIFIES).length > 0;
   }
 
-  /** All ACTION_RESULT nodes (used by the staleness detector). */
-  actionResults(): ReasoningNode[] {
-    return getNodesByKind(this.graph, NK.ACTION_RESULT);
+  isMatureHypothesis(hypothesisId: string): boolean {
+    if (this.incoming(hypothesisId, EK.SUPPORTS).some((e) => this.isEvidence(e.source))) return true;
+    for (const edge of this.incoming(hypothesisId, EK.PRODUCED_BY)) {
+      const source = this.graph.nodes.get(edge.source);
+      if (source && source.kind === NK.DECISION) return true;
+    }
+    if (this.outgoing(hypothesisId, EK.DEPENDS_ON).length > 0) return true;
+    if (this.incoming(hypothesisId, EK.ALTERNATIVE_TO).length > 0) return true;
+    return false;
+  }
+
+  shortestEvidencePath(startId: string): readonly string[] | null {
+    const queue: Array<{ id: string; path: string[] }> = [{ id: startId, path: [startId] }];
+    const visited = new Set<string>([startId]);
+    const qualifyingPaths: string[][] = [];
+
+    while (queue.length > 0) {
+      const { id: currentId, path } = queue.shift()!;
+      if (currentId !== startId && this.isAcceptedEvidence(currentId)) {
+        qualifyingPaths.push(path);
+        continue;
+      }
+      for (const edge of this.outgoing(currentId, EK.PRODUCED_BY)) {
+        if (!visited.has(edge.target)) {
+          visited.add(edge.target);
+          queue.push({ id: edge.target, path: [...path, edge.target] });
+        }
+      }
+      for (const edge of this.incoming(currentId, EK.SUPPORTS)) {
+        if (!visited.has(edge.source)) {
+          visited.add(edge.source);
+          queue.push({ id: edge.source, path: [...path, edge.source] });
+        }
+      }
+      for (const edge of this.outgoing(currentId, EK.DEPENDS_ON)) {
+        if (!visited.has(edge.target)) {
+          visited.add(edge.target);
+          queue.push({ id: edge.target, path: [...path, edge.target] });
+        }
+      }
+    }
+
+    if (qualifyingPaths.length === 0) return null;
+    qualifyingPaths.sort((a, b) => a.length - b.length || a.join("\0").localeCompare(b.join("\0")));
+    return qualifyingPaths[0]!;
+  }
+
+  hasAnyEvidencePath(startId: string): boolean {
+    return this.shortestEvidencePath(startId) !== null;
   }
 }
 
@@ -290,276 +275,171 @@ export class GraphView {
 // DiagnosticEngine
 // ---------------------------------------------------------------------------
 
-/**
- * Runs the four Phase 0.4 detectors over a graph, dedups by findingId, and
- * returns findings sorted by (code priority, -subjectSeq, code, findingId).
- *
- * The engine is stateless: the same graph always yields the same findings.
- */
 export class DiagnosticEngine {
-  /** Run all detectors and return sorted, deduplicated findings. */
-  diagnose(graph: ReasoningGraph): DiagnosticFinding[] {
+  diagnose(
+    graph: ReasoningGraph,
+    sessionId: string,
+    throughSequence: number,
+    limit: number = 100,
+    includeInfo: boolean = true,
+  ): { sessionId: string; throughSequence: number; findings: DiagnosticFinding[]; omittedCount: number; truncated: boolean } {
     const view = new GraphView(graph);
-    const findings = new Map<string, DiagnosticFinding>();
 
-    const add = (f: DiagnosticFinding): void => {
-      // Dedup by findingId; first one wins (IDs are deterministic).
-      if (!findings.has(f.findingId)) findings.set(f.findingId, f);
+    const staleFindings = this.evidenceStaleness(view, throughSequence);
+    const staleSubjects = new Set<string>(
+      staleFindings.filter((f) => f.subjectNodeIds.length > 0).map((f) => f.subjectNodeIds[0]!),
+    );
+
+    const unsupported = this.unsupportedConclusion(view, throughSequence, staleSubjects);
+    const contradicted = this.contradictedDependency(view, throughSequence);
+    const missingFals = this.missingFalsifier(view, throughSequence);
+
+    let findings = [...unsupported, ...contradicted, ...staleFindings, ...missingFals];
+
+    // Dedup by findingId
+    const seen = new Set<string>();
+    const unique: DiagnosticFinding[] = [];
+    for (const f of findings) {
+      if (!seen.has(f.findingId)) { seen.add(f.findingId); unique.push(f); }
+    }
+
+    const sorted = sortFindings(unique);
+    const filtered = includeInfo ? sorted : sorted.filter((f) => f.severity !== DS.INFO);
+    const omitted = Math.max(0, filtered.length - limit);
+
+    return {
+      sessionId, throughSequence,
+      findings: filtered.slice(0, limit),
+      omittedCount: omitted,
+      truncated: omitted > 0,
     };
-
-    for (const f of this.detectUnsupportedConclusion(view)) add(f);
-    for (const f of this.detectContradictedDependency(view)) add(f);
-    for (const f of this.detectEvidenceStaleness(view)) add(f);
-    for (const f of this.detectMissingFalsifier(view)) add(f);
-
-    return this.sort(findings);
   }
 
-  // --- detector 1: unsupported_conclusion --------------------------------
+  private makeFinding(
+    code: string, subjectIds: readonly string[], relatedIds: readonly string[],
+    pathIds: readonly string[], message: string, remediation: string, throughSeq: number,
+  ): DiagnosticFinding {
+    void throughSeq;
+    return {
+      findingId: findingId(code, subjectIds, relatedIds),
+      code, severity: DS.WARNING,
+      subjectNodeIds: subjectIds, relatedNodeIds: relatedIds, pathNodeIds: pathIds,
+      message, remediation, detectorVersion: DETECTOR_VERSION,
+    };
+  }
 
-  /**
-   * An active DECISION is an "unsupported conclusion" when no accepted
-   * evidence reaches it through SUPPORTS edges (directly or transitively).
-   *
-   * Evidence reaches a DECISION when there is a SUPPORTS path from accepted
-   * evidence (OBSERVATION, or ACTION_RESULT with success !== false) to the
-   * decision node. Decisions are most often supported via intermediate
-   * hypotheses, so the SUPPORTS subgraph is walked in full.
-   */
-  detectUnsupportedConclusion(view: GraphView): DiagnosticFinding[] {
-    const findings: DiagnosticFinding[] = [];
-    for (const decision of view.activeDecisions()) {
-      const dist = view.shortestEvidencePath(decision.id);
-      if (!Number.isFinite(dist)) {
-        findings.push(
-          this.finding(
-            DiagnosticCode.UNSUPPORTED_CONCLUSION,
-            [decision.id],
-            [],
-            [],
-            `Decision "${labelOf(decision)}" has no accepted evidence path`,
-            "Link accepted evidence (OBSERVATION or successful ACTION_RESULT) via SUPPORTS to this decision or a hypothesis it depends on.",
-          ),
-        );
+  private unsupportedConclusion(view: GraphView, throughSeq: number, staleSubjects: Set<string>): DiagnosticFinding[] {
+    const results: DiagnosticFinding[] = [];
+    for (const node of view.activeNodes(NK.DECISION)) {
+      if (staleSubjects.has(node.id)) continue;
+      if (view.shortestEvidencePath(node.id) !== null) continue;
+      const producedBy = view.outgoing(node.id, EK.PRODUCED_BY);
+      if (producedBy.length === 0) {
+        results.push(this.makeFinding(
+          "unsupported_conclusion", [node.id], [], [node.id],
+          `Decision '${node.label.slice(0, 60)}' has no recorded basis.`,
+          "Record what evidence or reasoning this decision was based on.", throughSeq));
+      } else {
+        const basisIds = producedBy.map((e) => e.target);
+        results.push(this.makeFinding(
+          "unsupported_conclusion", [node.id], basisIds, [node.id, ...basisIds],
+          `Decision '${node.label.slice(0, 60)}' has no recorded evidence path to an observation or result.`,
+          "Link evidence (observations or test results) that supports this decision.", throughSeq));
       }
     }
-    return findings;
+    return results;
   }
 
-  // --- detector 2: contradicted_dependency -------------------------------
-
-  /**
-   * An active DECISION whose basis (PRODUCED_BY targets) includes a
-   * contradicted ASSUMPTION.
-   *
-   * An assumption is "contradicted" when its payload status is
-   * "contradicted" OR it is the explicit target of a CONTRADICTS edge.
-   *
-   * Suppression: if the DECISION was reaffirmed *after* the contradiction
-   * surfaced (decision sequence > latest contradicting source sequence),
-   * the finding is suppressed — the agent already re-justified the decision
-   * knowing about the contradiction.
-   */
-  detectContradictedDependency(view: GraphView): DiagnosticFinding[] {
-    const findings: DiagnosticFinding[] = [];
-    for (const decision of view.activeDecisions()) {
-      const basis = view.basedOn(decision.id);
-      for (const basisId of basis) {
-        const basisNode = view.node(basisId);
-        if (!basisNode || basisNode.kind !== NK.ASSUMPTION) continue;
-        if (!isAssumptionContradicted(view, basisNode)) continue;
-
-        if (reaffirmedAfterContradiction(view, decision.id, basisId)) continue;
-
-        findings.push(
-          this.finding(
-            DiagnosticCode.CONTRADICTED_DEPENDENCY,
-            [decision.id],
-            [basisId],
-            [basisId],
-            `Decision "${labelOf(decision)}" depends on contradicted assumption "${labelOf(basisNode)}"`,
-            "Re-justify the decision without the contradicted assumption, or revise the assumption.",
-          ),
-        );
-      }
-    }
-    return findings;
-  }
-
-  // --- detector 3: evidence_staleness ------------------------------------
-
-  /**
-   * An active DECISION with stale evidence: its supporting evidence predates
-   * a mutation (an ACTION_RESULT that changed state) and has not been
-   * re-verified since.
-   *
-   * Heuristic (frozen):
-   *   - supporters = direct SUPPORTS sources of the decision that are
-   *     accepted evidence.
-   *   - If there are no accepted-evidence supporters, skip (handled by the
-   *     unsupported_conclusion detector instead).
-   *   - latestEvidenceSeq = max sequence among accepted-evidence supporters.
-   *   - mutation = the highest-sequence ACTION_RESULT whose sequence is
-   *     greater than latestEvidenceSeq.
-   *   - If a mutation exists and no supporter has sequence >= mutation's
-   *     sequence (no re-verification), the evidence is stale.
-   */
-  detectEvidenceStaleness(view: GraphView): DiagnosticFinding[] {
-    const findings: DiagnosticFinding[] = [];
-    for (const decision of view.activeDecisions()) {
-      const supporters = view
-        .incoming(decision.id, EK.SUPPORTS)
-        .map((e) => e.source)
-        .filter((id) => view.isAcceptedEvidence(id));
-      if (supporters.length === 0) continue;
-
-      const evidenceSeqs = supporters.map((id) => view.sequence(id));
-      const latestEvidenceSeq = Math.max(...evidenceSeqs);
-
-      // Find the latest mutation after the evidence.
-      let mutationId: string | null = null;
-      let mutationSeq = -1;
-      for (const ar of view.actionResults()) {
-        const seq = view.sequence(ar.id);
-        if (seq > latestEvidenceSeq && seq > mutationSeq) {
-          mutationSeq = seq;
-          mutationId = ar.id;
+  private contradictedDependency(view: GraphView, throughSeq: number): DiagnosticFinding[] {
+    const results: DiagnosticFinding[] = [];
+    for (const decision of view.activeNodes(NK.DECISION)) {
+      const contradicted: string[] = [];
+      for (const edge of view.outgoing(decision.id, EK.PRODUCED_BY)) {
+        const basis = view.node(edge.target);
+        if (!basis) continue;
+        if (basis.kind === NK.ASSUMPTION && view.isExplicitlyContradicted(basis.id)) {
+          const contraEdges = view.contradictionEdges(basis.id);
+          const cSeq = contraEdges.length > 0 ? Math.max(...contraEdges.map((e) => seqFromId(e.source))) : seqFromId(basis.id);
+          if (!view.hasPostContradictionReaffirmation(decision.id, cSeq, basis.id)) contradicted.push(basis.id);
+        } else if (basis.kind === NK.HYPOTHESIS) {
+          for (const depEdge of view.outgoing(basis.id, EK.DEPENDS_ON)) {
+            const depNode = view.node(depEdge.target);
+            if (depNode && depNode.kind === NK.ASSUMPTION && view.isExplicitlyContradicted(depNode.id)) {
+              const contraEdges = view.contradictionEdges(depNode.id);
+              const cSeq = contraEdges.length > 0 ? Math.max(...contraEdges.map((e) => seqFromId(e.source))) : seqFromId(depNode.id);
+              if (!view.hasPostContradictionReaffirmation(decision.id, cSeq, depNode.id)) contradicted.push(depNode.id);
+            }
+          }
         }
       }
-      if (mutationId === null) continue;
-
-      // Re-verified iff some supporter's sequence >= mutation's sequence.
-      const reverified = supporters.some((id) => view.sequence(id) >= mutationSeq);
-      if (reverified) continue;
-
-      findings.push(
-        this.finding(
-          DiagnosticCode.EVIDENCE_STALENESS,
-          [decision.id],
-          [mutationId],
-          supporters,
-          `Decision "${labelOf(decision)}" relies on evidence (seq<=${latestEvidenceSeq}) predating mutation "${mutationId}" (seq ${mutationSeq})`,
-          "Re-run the verification that produced the supporting evidence against the current state.",
-        ),
-      );
+      if (contradicted.length > 0) {
+        const unique = [...new Set(contradicted)].sort();
+        results.push(this.makeFinding(
+          "contradicted_dependency", [decision.id], unique, [decision.id, ...unique],
+          `Decision '${decision.label.slice(0, 60)}' depends on ${unique.length} explicitly contradicted assumption(s).`,
+          "Re-evaluate the dependent artifact, replace the assumption, record a justified reaffirmation, or invalidate the branch.", throughSeq));
+      }
     }
-    return findings;
+    return results;
   }
 
-  // --- detector 4: missing_falsifier -------------------------------------
+  private evidenceStaleness(view: GraphView, throughSeq: number): DiagnosticFinding[] {
+    const results: DiagnosticFinding[] = [];
+    for (const decision of view.activeNodes(NK.DECISION)) {
+      const evidenceNodes: ReasoningNode[] = [];
+      for (const edge of view.outgoing(decision.id, EK.PRODUCED_BY)) {
+        const basis = view.node(edge.target);
+        if (basis && view.isEvidence(basis.id)) evidenceNodes.push(basis);
+      }
+      if (evidenceNodes.length === 0) continue;
 
-  /**
-   * An active mature HYPOTHESIS with no incoming FALSIFIES edge.
-   * "Mature" = active + carries predictions (GraphView.isMatureHypothesis).
-   *
-   * This detector surfaces hypotheses that have been developed enough to
-   * deserve a falsifier but never got one committed.
-   */
-  detectMissingFalsifier(view: GraphView): DiagnosticFinding[] {
-    const findings: DiagnosticFinding[] = [];
-    for (const hyp of view.activeHypotheses()) {
+      const allActions = getNodesByKind(view.node("")?.kind ? undefined as never : undefined as never, undefined as never);
+      // Get ACTION nodes directly from the graph
+      const mutations = [...view.node("")?.kind ? [] : []];
+      // Proper way: iterate graph nodes
+      const actionMutations: ReasoningNode[] = [];
+      for (const n of (view as unknown as { graph: ReasoningGraph }).graph.nodes.values()) {
+        if (n.kind === NK.ACTION && MUTATION_TOOLS.has(n.data.tool_name as string)) actionMutations.push(n);
+      }
+      if (actionMutations.length === 0) continue;
+
+      const latestEv = evidenceNodes.reduce((a, b) => seqFromId(b.id) > seqFromId(a.id) ? b : a);
+      const latestEvSeq = seqFromId(latestEv.id);
+      const mutAfter = actionMutations.filter((m) => seqFromId(m.id) > latestEvSeq);
+      if (mutAfter.length === 0) continue;
+
+      const latestMut = mutAfter.reduce((a, b) => seqFromId(b.id) > seqFromId(a.id) ? b : a);
+      const latestMutSeq = seqFromId(latestMut.id);
+
+      let reverified = evidenceNodes.some(
+        (ev) => seqFromId(ev.id) > latestMutSeq && ev.data.verification_command && ev.data.success !== false);
+      for (const n of (view as unknown as { graph: ReasoningGraph }).graph.nodes.values()) {
+        if (n.kind === NK.ACTION_RESULT && seqFromId(n.id) > latestMutSeq && n.data.verification_command && n.data.success !== false) {
+          reverified = true; break;
+        }
+      }
+
+      if (!reverified) {
+        results.push(this.makeFinding(
+          "evidence_staleness", [decision.id], [latestEv.id, latestMut.id],
+          [decision.id, latestEv.id, latestMut.id],
+          `Decision '${decision.label.slice(0, 60)}' relies on verification (seq ${latestEvSeq}) predating a mutation (seq ${latestMutSeq}).`,
+          "Re-run verification against the current input state or withdraw the conclusion.", throughSeq));
+      }
+    }
+    return results;
+  }
+
+  private missingFalsifier(view: GraphView, throughSeq: number): DiagnosticFinding[] {
+    const results: DiagnosticFinding[] = [];
+    for (const hyp of view.activeNodes(NK.HYPOTHESIS)) {
       if (!view.isMatureHypothesis(hyp.id)) continue;
       if (view.hasFalsifier(hyp.id)) continue;
-      findings.push(
-        this.finding(
-          DiagnosticCode.MISSING_FALSIFIER,
-          [hyp.id],
-          [],
-          [],
-          `Mature hypothesis "${labelOf(hyp)}" has no falsifier`,
-          "Commit a falsifier (a condition that would disconfirm this hypothesis) and link it via FALSIFIES.",
-        ),
-      );
+      results.push(this.makeFinding(
+        "missing_falsifier", [hyp.id], [], [hyp.id],
+        `Hypothesis '${hyp.label.slice(0, 60)}' has no falsifier.`,
+        "Record an observation, test result, or condition that would cause the hypothesis to be rejected.", throughSeq));
     }
-    return findings;
-  }
-
-  // --- finding construction & sorting ------------------------------------
-
-  private finding(
-    code: AnyDiagnosticCode,
-    subjectNodeIds: string[],
-    relatedNodeIds: string[],
-    pathNodeIds: string[],
-    message: string,
-    remediation: string,
-  ): DiagnosticFinding {
-    return {
-      findingId: makeFindingId(code, subjectNodeIds, relatedNodeIds),
-      code,
-      severity: DiagnosticSeverity.WARNING,
-      subjectNodeIds,
-      relatedNodeIds,
-      pathNodeIds,
-      message,
-      remediation,
-      detectorVersion: DETECTOR_VERSION,
-    };
-  }
-
-  private sort(findings: Map<string, DiagnosticFinding>): DiagnosticFinding[] {
-    const list = [...findings.values()];
-    list.sort((a, b) => {
-      const pa = CODE_PRIORITY[a.code] ?? 99;
-      const pb = CODE_PRIORITY[b.code] ?? 99;
-      if (pa !== pb) return pa - pb;
-      // Within the same code, newest subject first (descending sequence).
-      const sa = subjectSequence(a);
-      const sb = subjectSequence(b);
-      if (sa !== sb) return sb - sa;
-      if (a.code !== b.code) return a.code < b.code ? -1 : 1;
-      return a.findingId < b.findingId ? -1 : a.findingId > b.findingId ? 1 : 0;
-    });
-    return list;
+    return results;
   }
 }
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function labelOf(node: ReasoningNode): string {
-  return node.label || node.id;
-}
-
-/** Best-effort sequence extraction from the first subject node of a finding. */
-function subjectSequence(f: DiagnosticFinding): number {
-  if (f.subjectNodeIds.length === 0) return 0;
-  return extractSequence(f.subjectNodeIds[0]!);
-}
-
-/**
- * True if the decision was (re)recorded after the latest contradicting
- * evidence for the assumption, i.e. the agent has already reaffirmed it.
- */
-function reaffirmedAfterContradiction(
-  view: GraphView,
-  decisionId: string,
-  assumptionId: string,
-): boolean {
-  const decisionSeq = view.sequence(decisionId);
-  let latestContradictionSeq = -1;
-  for (const edge of view.incoming(assumptionId, EK.CONTRADICTS)) {
-    // The contradicting evidence is the edge source.
-    const srcSeq = view.sequence(edge.source);
-    if (srcSeq > latestContradictionSeq) latestContradictionSeq = srcSeq;
-    // Also consider the edge's own derived sequence (when it was emitted).
-    const edgeSeq = view.sequence(edge.id);
-    if (edgeSeq > latestContradictionSeq) latestContradictionSeq = edgeSeq;
-  }
-  if (latestContradictionSeq < 0) return false;
-  return decisionSeq > latestContradictionSeq;
-}
-
-/**
- * An assumption is contradicted when its payload status is "contradicted"
- * OR it is the explicit target of a CONTRADICTS edge.
- */
-function isAssumptionContradicted(view: GraphView, node: ReasoningNode): boolean {
-  const status = node.data.status as AssumptionPayload["status"] | undefined;
-  if (status === "contradicted") return true;
-  return view.isExplicitlyContradicted(node.id);
-}
-
-// Re-export severity/code type aliases for callers that want a single site.
-export type { DiagnosticSeverityType, DiagnosticCodeType };
