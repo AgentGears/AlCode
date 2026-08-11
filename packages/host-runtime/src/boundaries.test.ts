@@ -8,7 +8,7 @@ const repoRoot = resolve(here, "../../..");
 
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir)
-    .filter((name) => name.endsWith(".ts"))
+    .filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts"))
     .map((name) => join(dir, name));
 }
 
