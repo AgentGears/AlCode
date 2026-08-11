@@ -3,14 +3,6 @@
 // The reasoning package owns these event type names and payload contracts
 // per the frozen event contract. The Host owns event admission and durable
 // state. The reducer reconstructs the graph from these events.
-//
-// Phase 0.2 established objective.set with payload v1. Phase 0.4 extends
-// reasoning semantics. The preferred path is additive optional fields on
-// payload v1 to preserve replay compatibility.
-
-// ---------------------------------------------------------------------------
-// Event type constants
-// ---------------------------------------------------------------------------
 
 export const REASONING_EVENT_TYPES = {
   OBJECTIVE_SET: "objective.set",
@@ -21,13 +13,12 @@ export const REASONING_EVENT_TYPES = {
   EVIDENCE_LINKED: "evidence.linked",
   FALSIFIER_EVALUATED: "falsifier.evaluated",
   VERIFICATION_PLANNED: "verification.planned",
+  ACTION_RECORDED: "action.recorded",
+  EVIDENCE_RECORDED: "evidence.recorded",
+  VERIFICATION_RESULT_CORRELATED: "verification.result.correlated",
 } as const;
 
-/**
- * Map ALCODE canonical dotted event types to Ouroboros-compatible internal
- * reducer labels. The reducer dispatches on the internal labels; the
- * canonical durable event stream uses the dotted names.
- */
+/** Map canonical ALCODE event types to reducer labels. */
 export const CANONICAL_TO_REDUCER: Record<string, string> = {
   "objective.set": "objective",
   "hypothesis.created": "hypothesis",
@@ -37,7 +28,9 @@ export const CANONICAL_TO_REDUCER: Record<string, string> = {
   "evidence.linked": "link_evidence",
   "falsifier.evaluated": "falsifier_evaluation",
   "verification.planned": "verification_contract",
-  // Also accept undotted forms for forward compat
+  "action.recorded": "action_recorded",
+  "evidence.recorded": "evidence_recorded",
+  "verification.result.correlated": "verification_result_correlated",
   "objective": "objective",
   "hypothesis": "hypothesis",
   "assumption": "assumption",
@@ -46,11 +39,10 @@ export const CANONICAL_TO_REDUCER: Record<string, string> = {
   "link_evidence": "link_evidence",
   "falsifier_evaluation": "falsifier_evaluation",
   "verification_contract": "verification_contract",
+  "action_recorded": "action_recorded",
+  "evidence_recorded": "evidence_recorded",
+  "verification_result_correlated": "verification_result_correlated",
 };
-
-// ---------------------------------------------------------------------------
-// Payload contracts
-// ---------------------------------------------------------------------------
 
 export interface ObjectiveSetPayload {
   nodeId: string;
@@ -58,7 +50,6 @@ export interface ObjectiveSetPayload {
   label: string;
   data: Record<string, unknown>;
   confidence: number | null;
-  /** Phase 0.4 extended fields */
   statement?: string;
   successCriteria?: string;
   revisesObjectiveId?: string;
@@ -108,6 +99,7 @@ export interface FalsifierEvaluatedPayload {
   evidenceNodeIds?: string[];
   explanation?: string;
   evaluatorVersion?: string;
+  forHypothesisId?: string;
 }
 
 export interface VerificationPlannedPayload {
@@ -118,4 +110,38 @@ export interface VerificationPlannedPayload {
   contradictsWhen?: unknown;
   description?: string;
   expectation?: string;
+}
+
+/** Phase 0.5: Host records the prospective environmental action before execution. */
+export interface ActionRecordedPayload {
+  operationId: string;
+  toolName: string;
+  inputDigest: string;
+  argsSummary?: unknown;
+}
+
+/** Phase 0.5: Host records normalized environmental evidence after execution. */
+export interface EvidenceRecordedPayload {
+  operationId: string;
+  sourceEventId: string;
+  toolName: string;
+  evidenceKind: "observation" | "action_result";
+  success: boolean;
+  outcome: "succeeded" | "failed" | "cancelled" | "timed_out";
+  exitCode?: number | null;
+  stdoutDigest?: string;
+  stderrDigest?: string;
+  verificationCommand?: string;
+  actionId: string;
+}
+
+/** Phase 0.5: persist the conservative verification-linker result. */
+export interface VerificationResultCorrelatedPayload {
+  contractId: string;
+  evidenceId: string;
+  hypothesisId: string;
+  matchStatus: "exact" | "structured";
+  matchMethod: "correlation_id" | "digest" | "signature";
+  outcomeTrust: "trusted" | "untrusted";
+  outcome: "supports" | "contradicts" | "inconclusive" | "ambiguous";
 }
