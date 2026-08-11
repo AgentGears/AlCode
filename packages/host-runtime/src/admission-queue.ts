@@ -44,6 +44,13 @@ function canonicalReasoningType(type: string): string {
   return INTERNAL_TO_CANONICAL[type] ?? type;
 }
 
+function asPayloadRecord(payload: unknown): Record<string, unknown> {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    throw new Error("reasoning transition payload must be a JSON object");
+  }
+  return payload as Record<string, unknown>;
+}
+
 function setPath(target: Record<string, unknown>, path: string, value: unknown): void {
   const parts = path.split(".").filter(Boolean);
   if (parts.length === 0) throw new Error("symbolic reference path must be non-empty");
@@ -79,7 +86,7 @@ export class CanonicalAdmissionQueue {
 
   appendReasoningIntent(
     sessionId: SessionId,
-    intent: ReasoningTransitionIntent,
+    intent: ReasoningTransitionIntent<string, unknown>,
   ): Promise<PersistedDomainEvent<string, unknown>[]> {
     return this.enqueue(async () => {
       const draft: EventDraft<string, unknown> = {
@@ -88,7 +95,7 @@ export class CanonicalAdmissionQueue {
         sessionId,
         occurredAt: new Date().toISOString(),
         type: canonicalReasoningType(intent.type),
-        payload: intent.payload,
+        payload: asPayloadRecord(intent.payload),
         payloadSchemaVersion: 1,
         producer: { kind: "runtime", component: "host-cognition" },
       };
@@ -104,7 +111,7 @@ export class CanonicalAdmissionQueue {
       const head = await this.store.headSequence();
       const intents = batch.intents.map((intent) => ({
         type: canonicalReasoningType(intent.type),
-        payload: { ...(intent.payload as Record<string, unknown>) },
+        payload: { ...asPayloadRecord(intent.payload) },
         internalType: intent.type,
       }));
 
@@ -134,7 +141,6 @@ export class CanonicalAdmissionQueue {
       }));
 
       const persisted = await this.store.append(drafts);
-      // The queue plus the single-writer store guarantee no interleaving; assert it.
       for (let i = 0; i < persisted.length; i++) {
         const expected = head + i + 1;
         if (persisted[i]?.sequence !== expected) {
