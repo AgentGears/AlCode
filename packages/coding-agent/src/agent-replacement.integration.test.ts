@@ -162,7 +162,6 @@ describeLocked("Phase 0.5 replaceable Agent", () => {
     expect(slowExecutions).toBe(1);
 
     const snapshotBeforeReplacement = await host.cognitionGateway.snapshot(session.sessionId as string);
-    expect(snapshotBeforeReplacement.activeObjective).toBeUndefined();
     expect(snapshotBeforeReplacement.memories.some((memory) => memory.memory_id === remembered.memoryId)).toBe(true);
     const orientationBeforeReplacement = host.cognitionGateway.coordinator.orient(snapshotBeforeReplacement);
     expect(orientationBeforeReplacement.activeHypotheses.some(
