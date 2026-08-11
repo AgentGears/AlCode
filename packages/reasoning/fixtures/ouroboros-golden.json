@@ -1,0 +1,151 @@
+{
+  "oracle": {
+    "source": "C:/Next-Era/Ouroboros/ouroboros/reducer.py",
+    "commit": "20be4b18d4c57487f8993d2762bace129f0cf7c6"
+  },
+  "families": {
+    "normal_flow": {
+      "nodes": [
+        {
+          "id": "event:s:1:objective",
+          "kind": "Objective",
+          "label": "fix the bug"
+        },
+        {
+          "id": "event:s:2:falsifier",
+          "kind": "Falsifier",
+          "label": "no crash after fix"
+        },
+        {
+          "id": "event:s:2:hypothesis",
+          "kind": "Hypothesis",
+          "label": "null pointer on line 42"
+        }
+      ],
+      "edges": [
+        {
+          "source": "event:s:2:falsifier",
+          "target": "event:s:2:hypothesis",
+          "kind": "falsifies"
+        },
+        {
+          "source": "event:s:2:hypothesis",
+          "target": "event:s:1:objective",
+          "kind": "addresses"
+        }
+      ]
+    },
+    "replay_a": {
+      "nodes": [
+        {
+          "id": "event:s:1:objective",
+          "kind": "Objective",
+          "label": "fix the bug"
+        },
+        {
+          "id": "event:s:2:falsifier",
+          "kind": "Falsifier",
+          "label": "no crash after fix"
+        },
+        {
+          "id": "event:s:2:hypothesis",
+          "kind": "Hypothesis",
+          "label": "null pointer on line 42"
+        }
+      ],
+      "edges": [
+        {
+          "source": "event:s:2:falsifier",
+          "target": "event:s:2:hypothesis",
+          "kind": "falsifies"
+        },
+        {
+          "source": "event:s:2:hypothesis",
+          "target": "event:s:1:objective",
+          "kind": "addresses"
+        }
+      ]
+    },
+    "replay_b": {
+      "nodes": [
+        {
+          "id": "event:s:1:objective",
+          "kind": "Objective",
+          "label": "fix the bug"
+        },
+        {
+          "id": "event:s:2:falsifier",
+          "kind": "Falsifier",
+          "label": "no crash after fix"
+        },
+        {
+          "id": "event:s:2:hypothesis",
+          "kind": "Hypothesis",
+          "label": "null pointer on line 42"
+        }
+      ],
+      "edges": [
+        {
+          "source": "event:s:2:falsifier",
+          "target": "event:s:2:hypothesis",
+          "kind": "falsifies"
+        },
+        {
+          "source": "event:s:2:hypothesis",
+          "target": "event:s:1:objective",
+          "kind": "addresses"
+        }
+      ]
+    },
+    "replay_equal": true,
+    "prefix1": {
+      "nodes": [
+        {
+          "id": "event:s:1:objective",
+          "kind": "Objective",
+          "label": "fix the bug"
+        }
+      ],
+      "edges": []
+    },
+    "prefix2": {
+      "nodes": [
+        {
+          "id": "event:s:1:objective",
+          "kind": "Objective",
+          "label": "fix the bug"
+        },
+        {
+          "id": "event:s:2:falsifier",
+          "kind": "Falsifier",
+          "label": "no crash after fix"
+        },
+        {
+          "id": "event:s:2:hypothesis",
+          "kind": "Hypothesis",
+          "label": "null pointer on line 42"
+        }
+      ],
+      "edges": [
+        {
+          "source": "event:s:2:falsifier",
+          "target": "event:s:2:hypothesis",
+          "kind": "falsifies"
+        },
+        {
+          "source": "event:s:2:hypothesis",
+          "target": "event:s:1:objective",
+          "kind": "addresses"
+        }
+      ]
+    },
+    "falsifier_satisfied": {
+      "contradicts_count": 1,
+      "supports_count": 0
+    },
+    "falsifier_refuted": {
+      "contradicts_count": 0,
+      "supports_count": 0
+    }
+  }
+}
