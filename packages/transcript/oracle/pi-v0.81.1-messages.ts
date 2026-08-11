@@ -8,11 +8,18 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ImageContent, Message, TextContent } from "@earendil-works/pi-ai";
 
-export const COMPACTION_SUMMARY_PREFIX = `The conversation history before this point was compacted into the following summary:\n\n<summary>\n`;
+export const COMPACTION_SUMMARY_PREFIX = `The conversation history before this point was compacted into the following summary:
 
-export const COMPACTION_SUMMARY_SUFFIX = `\n</summary>`;
+<summary>
+`;
 
-export const BRANCH_SUMMARY_PREFIX = `The following is a summary of a branch that this conversation came back from:\n\n<summary>\n`;
+export const COMPACTION_SUMMARY_SUFFIX = `
+</summary>`;
+
+export const BRANCH_SUMMARY_PREFIX = `The following is a summary of a branch that this conversation came back from:
+
+<summary>
+`;
 
 export const BRANCH_SUMMARY_SUFFIX = `</summary>`;
 
