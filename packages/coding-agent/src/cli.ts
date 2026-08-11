@@ -7,6 +7,7 @@
 // the Agent remains the closed Phase 0.1A deterministic offline provider.
 
 import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 import {
@@ -53,7 +54,7 @@ async function main(): Promise<void> {
   if (!workspaceEntry) {
     throw new Error(`Workspace registry lost resolved workspace ${resolution.workspaceId}`);
   }
-  mkdirSync(workspaceEntry.storageDir, { recursive: true });
+  mkdirSync(dirname(workspaceEntry.dbPath), { recursive: true });
 
   const workspace = createLocalWorkspace({
     workspaceId: resolution.workspaceId,
