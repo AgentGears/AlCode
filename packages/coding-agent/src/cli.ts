@@ -15,15 +15,6 @@ import {
   StaticExtensionHost,
   type AgentExtension,
 } from "@alcode/agent-core";
-import {
-  AgentSupervisor,
-  DefaultHostPolicy,
-  HostRuntime,
-} from "@alcode/host-runtime";
-import { openLockedWorkspaceStore } from "@alcode/storage";
-import { WorkspaceRegistry, resolveAlcodeHome } from "@alcode/workspace";
-import { createLocalWorkspace } from "./capabilities/local-workspace.ts";
-import { createDefaultHostCapabilities } from "./host-capabilities.ts";
 import { TestModelProvider } from "./test-model-provider.ts";
 import { createBashTool } from "./tools/bash.ts";
 
@@ -76,6 +67,24 @@ async function runOfflineCompatibility(prompt: string): Promise<void> {
 }
 
 async function runDurableHost(prompt: string): Promise<void> {
+  // Keep the native Host/storage/workspace graph behind the guarded boundary.
+  // Windows Phase 0.1B intentionally installs with --ignore-scripts; if those
+  // native bindings are unavailable, this import/boot path may fail and the
+  // caller can preserve the closed deterministic offline contract.
+  const [
+    { AgentSupervisor, DefaultHostPolicy, HostRuntime },
+    { openLockedWorkspaceStore },
+    { WorkspaceRegistry, resolveAlcodeHome },
+    { createLocalWorkspace },
+    { createDefaultHostCapabilities },
+  ] = await Promise.all([
+    import("@alcode/host-runtime"),
+    import("@alcode/storage"),
+    import("@alcode/workspace"),
+    import("./capabilities/local-workspace.ts"),
+    import("./host-capabilities.ts"),
+  ]);
+
   const alcodeHome = resolveAlcodeHome();
   mkdirSync(alcodeHome, { recursive: true });
   const registry = new WorkspaceRegistry(alcodeHome);
@@ -116,17 +125,16 @@ async function runDurableHost(prompt: string): Promise<void> {
     execArgv: ["--import", "tsx"],
   });
 
-  let sessionId: Awaited<ReturnType<typeof host.openOrResumeSession>>["sessionId"] | null = null;
+  let session: Awaited<ReturnType<typeof host.openOrResumeSession>> | null = null;
   try {
     await host.startup();
-    const session = await host.openOrResumeSession();
-    sessionId = session.sessionId;
+    session = await host.openOrResumeSession();
     const connection = await supervisor.start();
 
     let removeAssistantListener = () => {};
     const assistantText = new Promise<string>((resolve) => {
       removeAssistantListener = connection.transport.onMessage((message) => {
-        if (message.type !== "assistant.message" || message.sessionId !== (session.sessionId as string)) return;
+        if (message.type !== "assistant.message" || message.sessionId !== (session!.sessionId as string)) return;
         removeAssistantListener();
         resolve(message.text);
       });
@@ -142,16 +150,16 @@ async function runDurableHost(prompt: string): Promise<void> {
     // the authoritative session stop before tearing down the runtime.
     await withTimeout((async () => {
       while (true) {
-        if ((await host.sessions.getState(session.sessionId)).stopped) return;
+        if ((await host.sessions.getState(session!.sessionId)).stopped) return;
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
     })(), 15000, "Host completion");
   } finally {
     await supervisor.shutdown("host_shutdown").catch(() => undefined);
-    if (sessionId) {
-      const state = await host.sessions.getState(sessionId).catch(() => null);
+    if (session) {
+      const state = await host.sessions.getState(session.sessionId).catch(() => null);
       if (state?.started && !state.stopped) {
-        await host.sessions.stop(sessionId, "host_shutdown").catch(() => undefined);
+        await host.sessions.stop(session.sessionId, "host_shutdown").catch(() => undefined);
       }
     }
     await host.shutdown().catch(() => undefined);
