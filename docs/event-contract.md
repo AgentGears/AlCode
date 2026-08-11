@@ -78,11 +78,11 @@ Ids are branded to prevent mixing. Mixing a `WorkspaceId` with a `SessionId`
 is a type error, not a runtime bug.
 
 ```ts
-type EventId        = string & { readonly __brand: "EventId" };
-type WorkspaceId    = string & { readonly __brand: "WorkspaceId" };
-type SessionId      = string & { readonly __brand: "SessionId" };
-type OperationId    = string & { readonly __brand: "OperationId" };
-type MemoryId       = string & { readonly __brand: "MemoryId" };
+type EventId         = string & { readonly __brand: "EventId" };
+type WorkspaceId     = string & { readonly __brand: "WorkspaceId" };
+type SessionId       = string & { readonly __brand: "SessionId" };
+type OperationId     = string & { readonly __brand: "OperationId" };
+type MemoryId        = string & { readonly __brand: "MemoryId" };
 type ReasoningNodeId = string & { readonly __brand: "ReasoningNodeId" };
 ```
 
@@ -98,25 +98,27 @@ now, not deferred.
 ```ts
 type EventProducer =
   | { kind: "user" }
-  | { kind: "runtime"; component: string }   // e.g. "session-manager", "projection:memory"
+  | { kind: "runtime"; component: string }
   | { kind: "model"; provider: string }
   | { kind: "tool"; toolName: string }
   | { kind: "projection"; projectionName: string };
 ```
 
-This does not require a full producer-identity system. It records the category
-and the minimal discriminator needed to interpret the event.
+Phase 0.5 deliberately reuses these existing producer categories for
+Agent-originated/Host-admitted facts rather than expanding the envelope solely
+to encode process topology. The Host remains the canonical admission authority;
+`producer` records semantic origin, not database-write ownership.
 
 ## Correlation and causation
 
-- `correlationId` — a client-generated id grouping everything that flows from
-  one user command or background task: the user message, the model request,
-  every tool operation it triggered, every projection update derived from it.
-  Propagated through the whole fan-out.
+- `correlationId` — groups everything that belongs to one logical request or
+  durable work flow: user/model activity, capability operations, and semantic
+  effects. The exact correlation source is domain/protocol-owned; the envelope
+  only carries the string.
 - `causationEventId` — the *directly* prior event. Forms a per-workspace
   causation tree, useful for replay debugging and "why did this event exist?"
 
-Both optional (some events, like `runtime.session.started`, have neither).
+Both are optional; some lifecycle events have neither.
 
 ## Versioning
 
@@ -126,8 +128,9 @@ There are three distinct versions. Do not conflate them:
    Phase 0. If the envelope ever changes, the append/replay layer handles it;
    it is not stored per-event.
 2. **`payloadSchemaVersion`** — per-event-type payload version, stored on each
-   event row. `memory.created` can evolve independently of `tool.completed`.
-   The initial payload version for every event type is `1`.
+   event row. `memory.created` can evolve independently of
+   `operation.completed`. The initial payload version for every event type is
+   `1`.
 3. **Database schema version** — the `schema_migrations` table version for the
    workspace DB structure (tables, columns, indexes).
 
@@ -136,10 +139,11 @@ There are three distinct versions. Do not conflate them:
 Upcasting (rewriting an old payload version to a newer one at replay time) is
 **deferred** until a second payload version exists for some event type. The
 contract requires only that:
-- new fields added to a payload are optional with safe defaults;
-- a payload version bump is recorded in the event's `payloadSchemaVersion`;
+- additive fields remain backward-compatible where the domain semantics allow;
+- a payload version bump is recorded when an incompatible payload shape is
+  actually introduced;
 - when a second version exists, an upcaster registry maps
-  `(type, oldVersion) → (upcaster fn) → (type, newVersion)`.
+  `(type, oldVersion) → upcaster → current version`.
 
 Do not build the registry before there is a version to migrate from.
 
@@ -150,29 +154,46 @@ Do not build the registry before there is a version to migrate from.
   `Z`. Defined in `packages/events/src/serialize.ts::canonicalJson(event)`.
 - **Canonical payloads are valid JSON values only.** No `undefined`, `NaN`,
   `Infinity`/`-Infinity`, functions, symbols, bigints beyond the safe-integer
-  range, or platform-dependent numeric encodings (e.g. locale-formatted
-  numbers). The serializer rejects these at append time rather than emitting
-  non-deterministic text.
+  range, or platform-dependent numeric encodings. The serializer rejects these
+  at append time rather than emitting non-deterministic text.
 - Storage in `events.payload` column: canonical JSON text.
 - `eventDigest` is SHA-256 over the canonical JSON of the fully persisted
   event, excluding only `eventDigest`. Computed by `append` after assigning
-  `sequence` and `recordedAt` (it is therefore a post-append integrity check,
-  not a pre-append id — see "Why separate" above).
+  `sequence` and `recordedAt`.
 
 ## Event ownership rule
 
 The `events` package owns the envelope and registry mechanism **only**.
-Domain packages own their event types and payloads:
+Domain packages/Host runtime own event types and payloads. As of the closed
+Phase 0.5 foundation, the durable vocabulary includes these families:
 
-- `runtime.session.started`, `runtime.session.stopped` — owned by a runtime/session domain, NOT the `events` package.
-- `user.message.appended`, `assistant.message.appended`, `tool.*` — owned by the transcript/agent domain.
-- `objective.set`, `hypothesis.created`, `evidence.linked`, `falsifier.evaluated`, `conclusion.committed` — owned by `packages/reasoning`.
-- `memory.created`, `memory.reinforced`, `memory.archived`, `memory.tombstoned` — owned by `packages/memory`.
-- `context.projection_compiled` — owned by the context-compiler domain.
+- **Runtime/session:** `runtime.session.started`, `runtime.session.stopped`.
+- **Durable Host work:** `runtime.work.requested`, `runtime.work.claimed`,
+  `runtime.work.completed`, `runtime.work.failed`, `runtime.work.interrupted`.
+- **Transcript/operation:** user/assistant message events and durable
+  operation/tool lifecycle events owned by the corresponding Host/transcript
+  domain contracts.
+- **Reasoning semantic core:**
+  - `objective.set`
+  - `hypothesis.created`
+  - `assumption.recorded`
+  - `alternative.deferred`
+  - `decision.recorded`
+  - `evidence.linked`
+  - `falsifier.evaluated`
+  - `verification.planned`
+- **Reasoning environmental integration (0.5):** `action.recorded`,
+  `evidence.recorded`, `verification.result.correlated`.
+- **Memory semantic core:** `memory.created`, `memory.reinforced`,
+  `memory.archived`, `memory.tombstoned`, `memory.deleted`, `memory.restored`.
+- **Context compiler (future 0.7 receipt domain):**
+  `context.projection_compiled` remains planned, not implemented by the closed
+  0.5 foundation.
 
-A previous draft assigned `session.started`/`session.stopped` to the `events`
-package. That is corrected here: the `events` package defines the envelope; a
-runtime/session domain owns those events.
+Internal reducer labels or reference-system event names are **not** canonical
+ALCODE event vocabulary. For example, Ouroboros undotted labels are normalized
+at the reasoning reducer/projector boundary; the durable ALCODE reasoning
+contract remains the dotted domain vocabulary above.
 
 ## Append and replay contract
 
