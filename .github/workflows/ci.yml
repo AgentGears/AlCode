@@ -158,6 +158,7 @@ jobs:
         run: |
           pnpm exec vitest run \
             packages/agent-protocol/src \
+            packages/cognition-runtime/src \
             packages/host-runtime/src \
             packages/coding-agent/src/agent-replacement.integration.test.ts
       - name: Upload refreshed lockfile
