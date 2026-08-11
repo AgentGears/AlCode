@@ -1,12 +1,10 @@
 // Cognitive artifact types — structured payloads for reasoning nodes.
 // Ported from Ouroboros cognitive.py.
+//
+// These are carried as node.data payloads. The graph itself is generic;
+// these types define the structured content for the cognitive-system subset.
 
-import {
-  EvaluationState,
-  type MatchMethod,
-  type MatchStatus,
-  type OutcomeTrust,
-} from "./schema.ts";
+import { EvaluationState } from "./schema.ts";
 
 export interface ObjectivePayload {
   statement: string;
@@ -56,6 +54,7 @@ export interface FalsifierEvaluationPayload {
   explanation: string;
   falsifierId: string;
   evidenceNodeIds: string[];
+  /** The hypothesis this falsifier targets (for projection CONTRADICTS derivation). */
   forHypothesisId: string | null;
 }
 
@@ -95,9 +94,9 @@ export interface VerificationContractPayload {
 }
 
 export interface MatchResult {
-  status: MatchStatus;
-  method: MatchMethod;
-  outcomeTrust: OutcomeTrust;
+  status: string;
+  method: string;
+  outcomeTrust: string;
   contractId: string | null;
   reason: string;
 }
