@@ -6,59 +6,71 @@ condition under which they become relevant.
 
 ## Architecture (deferred from Phase 0.0)
 
-- Defining every event type. The `events` package defines the envelope +
-  registry mechanism only. Domain packages own their event payloads and types
-  emerge with each phase.
-- The complete memory schema and the complete reasoning schema. Only the
-  subsets needed for each phase's exit gate.
-- The full identity model. Phase 0.0 freezes only: `workspace_id`, `session_id`,
-  `event_id`, `operation_id`, `memory_id`, `reasoning_node_id`, plus
-  `event_sequence` and `schema_version`. Deferred identities (until required):
-  `installation_id`, `repository_id`, `worktree_id`, `task_id`, `turn_id`,
-  `model_request_id`, `tool_call_id`, `artifact_id`.
-- Multi-agent identity. One agent, one workspace, one writer for v1.
-- Distributed runtime behavior. Single-writer, single-host.
+- Defining every event type up front. The `events` package defines the envelope
+  and registry mechanism; domain packages own their event payloads and types
+  emerge with each implemented phase.
+- A universal/final memory or reasoning schema beyond the semantics required by
+  the closed 0.3/0.4 engines and their additive integration events.
+- The full identity model. Phase 0 has implemented `workspace_id`,
+  `repository_id`/`repositoryId`, `session_id`, `event_id`, `operation_id`,
+  `memory_id`, `reasoning_node_id`, `event_sequence`, and `schema_version`.
+  Still deferred until required: `installation_id`, `worktree_id`, `task_id`,
+  `turn_id`, `model_request_id`, `tool_call_id`, `artifact_id`.
+- Multi-agent identity. The current foundation proves one supervised Agent at a
+  time behind a replaceable protocol boundary, one workspace writer, and
+  Host-owned durable authority.
+- Distributed runtime behavior. The implemented runtime is single-writer,
+  single-Host; remote Agent transport and distributed claims are deferred.
 - Every extension event. The pi event taxonomy is reviewed and reduced to
-  stable domain events; upstream events are not preserved indefinitely.
-- Final GUI transport contract (settled in 0.8, not 0.0).
+  stable domain/Agent Protocol semantics; upstream events are not preserved
+  indefinitely.
+- Final GUI/application transport contract (settled in 0.8, not in the current
+  foundation).
 - Final plugin compatibility (ALCODE owns its extension contract; pi
   compatibility is not a goal).
 
 ## Implementation (deferred from later phases)
 
 - **pi `tui` package** — dropped entirely. GUI arrives in 0.8.
-- **pi `server` and `storage` packages** — replaced by the event-log
+- **pi `server` and `storage` packages** — replaced by the event-log/Host
   architecture. Not ported.
 - **pi example extensions** (except `subagent`, which is backlog-referenced
   only, not ported in Phase 0).
 - **Dense / vector retrieval** in the memory package. Phase 0.3 ships lexical
-  retrieval; dense retrieval enters backlog.
+  retrieval; dense retrieval remains backlog work.
 - **Ola offload / task-tracking surface, R2 migration, phase-0 chunk/judge
   scripts** — not ported.
-- **Ouroboros MCP/governance apparatus** (~11,300 LOC): `mcp_server`,
+- **Ouroboros MCP/governance/runtime apparatus:** `mcp_server`,
   `mcp_invocation`, `invocation_gateway`, `lifecycle_*`, `reconciliation*`,
   `native_projection`, `register_governed_tool`, `trace_*`, `sidecar`,
-  `qualification`, `clock_calibration_v2`, `command_signature` (the agent knows
-  tool intent directly), `attribution`, `hash_schemas`, `activation`, and the
-  `hooks/` dir. Dropped.
-- **Ouroboros plumbing tests** (~73% of test LOC). Only the core-reasoning
-  tests (~3,900 LOC) and the 3+1 differential families are ported.
-- **The full ~12-category golden corpus up front.** Phase 0.4 starts with
-  normal flow, duplicate/replay, crash/reopen, and a small falsifier/conflict
-  fixture. The corpus expands iteratively as semantic areas activate.
-- **Making graph projection default.** Projection B ships behind a toggle in
-  0.7 and stays non-default until it measurably wins.
+  `qualification`, `clock_calibration_v2`, `command_signature`, `attribution`,
+  `hash_schemas`, `activation`, and the `hooks/` dir. Phase 0.4 ports reasoning
+  semantics, not the runtime that happened to host them.
+- **Ouroboros plumbing tests** outside the source-faithful reasoning core and
+  frozen differential families. Additional oracle coverage requires a concrete
+  future need; it is not unfinished Phase 0.4 work.
+- **General scheduler/automation.** Phase 0.5 implements only bounded,
+  event-sourced durable cognition work (`memory.consolidation`) needed to prove
+  supervised recovery and idempotent semantic effect. Cron, recurring work,
+  priorities, distributed leases, and remote workers remain deferred.
+- **Remote Agent transport/public wire encoding.** Phase 0.5 implements the
+  semantic Agent Protocol with local Node IPC; remote transports remain later
+  adapters.
+- **Verbatim durable context reconstruction before 0.6.** Phase 0.5 orientation
+  is structured bootstrap state, not transcript→provider context compilation.
+- **Making graph projection default.** Projection B belongs to 0.7, ships behind
+  a toggle, and stays non-default until it measurably wins.
 - **Full graph visualization in the GUI.** 0.8 ships inspectors, not a graph UI.
-- **Multi-agent kanban** (agent-teams-ai style). That is a v2 product
-  direction, not a v1 build item. The spine supports it later.
+- **Multi-agent kanban** (agent-teams-ai style). That is a v2 product direction,
+  not a current Phase 0 foundation item.
 
 ## Migration (post-0.5, when worth doing)
 
 - Pointing the new runtime at old live Ola/Ouroboros databases. Migration uses
   explicit export/import contracts with receipts — never direct DB reuse.
 - Simultaneously adding major new architecture to both old and new
-  implementations. Old repos are frozen as behavioral references during
-  construction.
+  implementations. Old repos remain behavioral references rather than shared
+  live state owners.
 
 ## Process
 

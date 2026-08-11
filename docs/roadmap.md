@@ -1,58 +1,62 @@
 # ALCODE Roadmap — Architecture Orientation
 
-Status: **active; Phases 0.0, 0.1A, 0.2 closed**. This document orients the
-architecture and sequencing. The executable specification with authoritative
-gate definitions lives in [`phase-0-spec.md`](./phase-0-spec.md).
+Status: **active; Phases 0.0 through 0.5 closed**. Phase 0.5 closed in merge
+commit `9b06f4a` with `gate:0.5` green. Phase 0.6 is the next roadmap unit and
+has **not started**. This document orients the architecture and sequencing; the
+executable specification with authoritative gate definitions lives in
+[`phase-0-spec.md`](./phase-0-spec.md).
 
 ## North star
 
 ALCODE is a durable Host runtime that supervises replaceable reasoning agents,
 mediates environmental capabilities, owns execution policy and canonical state,
-schedules durable work, and exposes a consistent workspace contract across
-execution environments.
+schedules bounded durable work, and exposes a consistent workspace contract
+across execution environments.
 
-The governing ownership model:
+The governing ownership model is now implemented through Phase 0.5:
 
 ```text
 Experience Plane
 CLI / Desktop / Web / API
       │
-      │ Application Protocol
+      │ Application Protocol (later)
       ▼
-┌───────────────────────────────┐
-│         ALCODE HOST           │
-│                               │
-│ sessions                      │
-│ execution contracts           │
-│ input admission               │
-│ permissions / policy          │
-│ agent supervision             │
-│ capability brokerage          │
-│ durable persistence           │
-│ scheduler dispatch            │
-└──────────┬───────────┬────────┘
-           │           │
-    Agent Protocol     │ Capability / Workspace Protocol
-           │           │
-           ▼           ▼
-      ┌─────────┐   ┌────────────────────┐
-      │  AGENT  │   │ EXECUTION          │
-      │         │   │                    │
-      │ replace-│   │ filesystem         │
-      │ able    │   │ terminal           │
-      │ reasoner│   │ git                │
-      └─────────┘   │ browser            │
-                    │ other capabilities │
-                    └────────────────────┘
+┌────────────────────────────────────┐
+│            ALCODE HOST             │
+│                                    │
+│ session lifetime                   │
+│ canonical admission                │
+│ permissions / policy               │
+│ Agent supervision                  │
+│ capability brokerage               │
+│ durable persistence / recovery     │
+│ bounded durable work               │
+│ completion authority               │
+└──────────────┬──────────────┬──────┘
+               │              │
+       Agent Protocol         │ Capability / Workspace
+               │              │
+               ▼              ▼
+       ┌─────────────┐   ┌────────────────────┐
+       │ replaceable │   │ EXECUTION          │
+       │ Agent       │   │ filesystem         │
+       │ process     │   │ terminal           │
+       └─────────────┘   │ future capabilities│
+                         └────────────────────┘
 
-              DURABLE STATE
-        canonical events + projections
+                    DURABLE STATE
+              canonical events + projections
+                     │             │
+                     ▼             ▼
+                  memory        reasoning
+                  engine         engine
 ```
 
-The key shift from the original roadmap: build semantic engines on the proven
-durable spine while progressively extracting a Host control plane, so that by
-Phase 0.5 the Agent is replaceable, capabilities are mediated, and durable
-execution — not the reasoning process — is the product authority.
+The load-bearing architectural shift is complete: durable execution and
+canonical state are Host authority; the Agent is a replaceable reasoning
+process. Memory and reasoning are semantic engines behind Host-owned admission,
+not independent state-owning runtimes. ADR 0005 freezes these ownership
+boundaries.
 
 ---
 
@@ -60,279 +64,212 @@ execution — not the reasoning process — is the product authority.
 
 ```text
 0.0   Architecture foundation            CLOSED
-0.1A  Owned minimal agent                CLOSED
-0.2   Durable event/recovery spine        CLOSED
+0.1A  Minimal owned agent                CLOSED
+0.1B  Capability/provider layer          CLOSED
+0.2   Durable event/recovery spine       CLOSED
+0.3   Memory semantic engine             CLOSED
+0.4   Reasoning semantic engine          CLOSED
+0.5   Host + cognition integration       CLOSED
                                               │
-                         ┌─────────────────────┼─────────────────────┐
-                         ▼                     ▼                     ▼
-                      0.1B                   0.3                   0.4
-                 Capability              Memory               Reasoning
-                 foundation              semantics            semantics
-                    │                       │                     │
-                    │                       └──────────┬──────────┘
-                    └───────────────────────────────┬─┘
-                                                  ▼
-                                                 0.5
-                                        Host + cognition
-                                           integration
-                                                  │
-                                                  ▼
-                                                 0.6
-                                        Verbatim context
-                                                  │
-                                                  ▼
-                                                 0.7
-                                           Graph context
-                                                  │
-                                     ┌────────────┴────────────┐
-                                     ▼                         ▼
-                                    0.8                       0.9
-                              Experience/UI              Integrations
+                                              ▼
+0.6   Durable verbatim context reconstruction NEXT — NOT STARTED
+                                              │
+                                              ▼
+0.7   Graph-distilled context strategy   PLANNED
+                                              │
+                              ┌───────────────┴───────────────┐
+                              ▼                               ▼
+0.8   Application protocol + React UI    PLANNED     0.9 External adapters PLANNED
 ```
 
-Phase 0.2 stays closed. Its canonical event architecture becomes the
-foundation for the Host rather than something to refactor away.
-
-Phases 0.1B, 0.3, and 0.4 can proceed in parallel. Prefer closing 0.1B
-before the heavy 0.5 integration begins, but do not make that a frozen
-dependency unless concrete implementation evidence requires it.
+The completed foundation must not be reopened absent concrete defect evidence.
+The next phase does not start automatically; it requires its own frozen plan
+and authorization.
 
 ---
 
-## Phase summaries
+## Completed foundation
 
-### 0.1B — Capability foundation + complete coding agent
+### 0.0 — Architecture foundation — CLOSED
 
-The existing objective remains: remaining tools, live providers,
-deterministic acquisition, tri-platform CI, and pinned runtime/toolchain.
+Established the workspace, event-envelope scaffold, gate receipt machinery,
+single-platform CI, licensing, threat/recovery documentation, and ADRs 0001–0004.
 
-The architectural refinement is that the six new tools should begin
-establishing the Capability boundary. Instead of tools directly owning
-filesystem/process authority, move incrementally toward:
+**Gate:** `gate:0.0`.
 
-```text
-AgentTool adapter
-       │
-       ▼
-Capability contract
-       │
-       ▼
-Host-owned implementation
-```
+### 0.1A — Minimal owned agent — CLOSED
 
-Do not migrate everything into a separate Host process yet. The immediate
-goal is to make capabilities extractable. The current `bash` tool can
-initially sit behind the terminal capability implementation.
+Converted the pi agent-loop slice into ALCODE-owned infrastructure with a
+narrow provider/tool contract, deterministic offline provider, static extension
+seam, and controlled `bash` tool.
 
-**Gate:** `gate:0.1B`, tri-platform CI. See [`phase-0-spec.md`](./phase-0-spec.md) §0.1B.
+**Gate:** `gate:0.1A`.
 
-### 0.3 — Memory semantic engine
+### 0.1B — Capability/provider layer — CLOSED
 
-Ola is the primary behavioral reference. ZCode is the secondary
-product-semantics reference.
+Completed the owned coding-tool set, LocalWorkspace/capability contracts,
+deterministic pi acquisition verification, live Anthropic provider support,
+pinned toolchain, and tri-platform CI. ADR 0005 froze Host ↔ Agent,
+Host ↔ Capability, Host ↔ Workspace, Host ↔ Memory, and Host ↔ Reasoning
+ownership before the semantic ports.
 
-The semantic boundary must explicitly distinguish five operations that must
-not collapse into a single `remember()` mechanism:
+**Gate:** `gate:0.1B`, green on Ubuntu, macOS, and Windows.
 
-1. Memory record
-2. Memory retrieval
-3. Memory reinforcement
-4. Memory extraction
-5. Memory consolidation
+### 0.2 — Durable event/recovery spine — CLOSED
 
-Primary Ola semantics: lessons/playbooks, stable memory IDs, retrieval
-scoring, exact-match override, strength/decay, recordUse vs recordSeen,
-lifecycle, provenance, lexical retrieval.
+Made the append-only event log canonical, added rebuildable projections,
+workspace ownership/locking, durable session and operation lifecycle,
+explicit uncertain-effect recovery, pre-persistence secret admission, and
+replay/rebuild guarantees.
 
-ZCode constraints: user/feedback/project/reference memory classes, prefer
-non-derivable information, avoid copying information recoverable from code,
-treat memories as potentially stale, separate extraction from retrieval,
-bounded extraction authority.
+**Gate:** `gate:0.2`.
 
-The ALCODE design: the Agent requests recall; the Host invokes the Memory
-engine; the Memory engine reads the durable projection; the result returns
-to the Agent. Memory semantic transitions go through canonical `memory.*`
-events to derived memory projections. No detached extraction worker — any
-future extraction/consolidation goes through supervised durable execution.
+### 0.3 — Memory semantic engine — CLOSED
 
-**Gate:** `gate:0.3`, Ola differential fixtures. See [`phase-0-spec.md`](./phase-0-spec.md) §0.3.
+Ported Ola's memory semantic core into `@alcode/memory`: typed lesson/playbook
+records, stable IDs, lexical retrieval, 0.65/0.20/0.15 scoring, exact-match
+override, Ebbinghaus decay, seen/use separation, every-fifth-use consolidation,
+lifecycle, provenance, and a rebuildable memory projection.
 
-### 0.4 — Reasoning semantic engine
+The engine owns semantics only. Canonical admission and persistence remain Host
+and storage concerns.
 
-Ouroboros remains the behavioral oracle. The graph, critic, branching,
-reducer, diagnostics, and verification port remains sound.
+**Gate:** `gate:0.3` with differential Ola fixtures.
 
-The refresh is mostly about its public boundary. Reasoning should be an
-owned semantic engine:
+### 0.4 — Reasoning semantic engine — CLOSED
 
-```text
-proposal / evidence
-       ↓
-Reasoning engine
-       ↓
-validated domain transition
-       ↓
-canonical reasoning.* event
-```
+Ported the source-faithful Ouroboros reasoning core into
+`@alcode/reasoning`: graph vocabulary and validation, deterministic reducer,
+cognitive transition intents, critic, branching/grafting, diagnostics,
+falsifier evaluation, verification matching, and rebuildable reasoning
+nodes/edges.
 
-Not: Agent directly edits reasoning tables.
+Phase 0.4 explicitly did **not** port Ouroboros `session_store`, MCP/runtime
+adapters, Host execution authority, scheduler, or context compilation. Those
+belong outside the reasoning engine under ADR 0005. See
+[`phase-0.4-exclusion-rationale.md`](./phase-0.4-exclusion-rationale.md).
 
-ZCode's persistent goal model is a useful secondary reference (objective
-continuity, verification state, budget/accounting boundaries, cross-session
-continuation). Do not mechanically import its goal/workflow model.
+**Gate:** `gate:0.4` with pinned Ouroboros golden evidence and migration/replay
+proofs.
 
-A key contract question to settle during 0.4: does objective identity
-deserve a stronger durable abstraction than `reasoning node kind = objective`?
-Only promote it if the port/integration evidence requires it.
+### 0.5 — Host runtime + durable cognition integration — CLOSED
 
-**Gate:** `gate:0.4`, Ouroboros differential families. See [`phase-0-spec.md`](./phase-0-spec.md) §0.4.
+Established the Host control plane and bound the semantic engines to the Agent
+loop without moving durable authority into the Agent. The completed surfaces
+include:
 
-### 0.5 — Host runtime + durable cognition integration
+- `@alcode/agent-protocol` — explicit Host ↔ Agent semantic messages and local
+  Node IPC adapters;
+- `@alcode/host-runtime` — canonical admission, Host session lifetime, Agent
+  supervision, capability policy/brokerage, durable-work dispatch, completion
+  authority, and cognition gateway;
+- `@alcode/cognition-runtime` — orientation, recall/verification/reinforcement
+  policy, and completion assessment semantics;
+- `@alcode/cognition-extension` — thin Agent-side proxy/lifecycle adapter;
+- bounded storage read models without exposing the SQLite handle;
+- environmental reasoning integration events (`action.recorded`,
+  `evidence.recorded`, `verification.result.correlated`);
+- bounded event-sourced `memory.consolidation` work with retry-safe semantic
+  idempotency.
 
-This is where the roadmap changes most. The old framing was "cognition
-extension + coordinator." The refreshed framing is: establish the Host
-control plane and prove that cognition operates through it without
-becoming it.
-
-The Host owns the authoritative mechanics:
-
-- Session Manager
-- Agent Supervisor
-- Execution Contract Manager
-- Input Admission
-- Permission / Policy
-- Capability Broker
-- Workspace Manager
-- Scheduler Dispatcher
-- Durable Store
-
-These are logical components, not necessarily separate processes or packages
-initially.
-
-Cognition owns semantics (orientation, recall policy, verification policy,
-evidence interpretation, reasoning updates, reinforcement decisions,
-consolidation policy, completion assessment evidence). It does not own OS
-process lifecycle, workspace authority, operation persistence, permissions,
-scheduler claims, terminal/browser processes, or the final lifecycle
-transition.
-
-**Agent Protocol starts here.** The first explicit Host ↔ Agent semantic
-boundary: hello/capabilities, session.open, session.resume, input.admitted,
-context.provide, capability.request, capability.result, criterion.evidence,
-agent.idle, agent.error, cancel, shutdown. The exact encoding stays unfrozen.
-
-**Transactional scheduler starts here** — only the amount needed for
-supervised cognition work, consolidation, recoverable background tasks,
-claim/run identity, and retry eligibility. Do not build the full automation
-product here.
-
-**Closure authority.** The Agent/verifier produces criterion evidence; the
-Host evaluates the frozen contract and performs the ACTIVE → COMPLETE
-transition. The Host owns the lifecycle transition; it does not invent
-semantic evidence.
-
-**0.5 exit proof.** Keep the existing continuity goal (kill → reopen →
-resume → orient → act) but now explicitly prove that Agent
-replacement/restart does not invalidate Host-owned execution identity or
-durable state.
-
-**Gate:** `gate:0.5`. See [`phase-0-spec.md`](./phase-0-spec.md) §0.5.
-
-### 0.6 — Durable verbatim context delivery
-
-Rebuild pi-equivalent model context from the transcript projection. This
-phase establishes that context compilation belongs to the Host/control
-boundary:
+The signature proof is now executable:
 
 ```text
-Durable State
-      ↓
-Context Compiler
-      ↓
-Host
-      ↓ Agent Protocol
-      ↓
-Agent/model
+kill Agent A while Host-owned work is in flight
+→ Host durably completes the operation
+→ launch Agent B
+→ resume the same session
+→ orient from durable cognition
+→ continue acting
 ```
 
-Rather than the agent reconstructing canonical state for itself. This makes
-the Agent replaceable because the Host can reconstruct what the new Agent
-needs after restart.
+Agent death does not stop the Host session or erase operation/memory/reasoning
+identity. Host death after an uncertain external mutation reuses Phase 0.2's
+indeterminate/pending recovery doctrine and does not automatically retry.
 
-ZCode's compaction/resume semantics are a useful secondary reference; pi
-remains the parity oracle for verbatim behavior.
+**Gate:** `gate:0.5`, composing `gate:0.4`. Frozen plan and closure evidence:
+[`phase-0.5-plan.md`](./phase-0.5-plan.md).
 
-**Gate:** `gate:0.6`. See [`phase-0-spec.md`](./phase-0-spec.md) §0.6.
+---
 
-### 0.7 — Graph context compiler
+## Next roadmap unit
 
-Graph-distilled context, required inclusions, projection receipts, fail-safe
-fallback, preregistered evaluation, and the graph remains non-default until
-measured.
+### 0.6 — Durable verbatim context reconstruction — NEXT / NOT STARTED
 
-The architectural refinement: context compilation belongs to the Host/control
-boundary. Both verbatim and graph are Host-selected context strategies. That
-makes A/B tests cleaner because the same Agent can be tested against
-alternative context projections.
+The next architectural problem is model-visible conversational continuity.
+Phase 0.5 proved that durable cognition survives Agent replacement; Phase 0.6
+must make the provider-facing conversation reconstructable from canonical
+durable state rather than ephemeral Agent memory.
 
-**Gate:** `gate:0.7`. See [`phase-0-spec.md`](./phase-0-spec.md) §0.7.
+Target boundary:
+
+```text
+canonical transcript/events
+        ↓
+Host-owned verbatim reconstruction
+        ↓
+provider-compatible message sequence
+        ↓ Agent Protocol / model boundary
+replacement Agent
+```
+
+pi remains the behavioral parity reference for verbatim conversion. The phase
+should prove ordering, role/content fidelity, tool-call/result pairing,
+restart reconstruction, and continuation from durability alone.
+
+**Not 0.6:** graph-distilled selection, semantic compression, token-budget
+optimization, compaction strategy, or making graph context default. Those
+belong to 0.7.
+
+**Gate:** `gate:0.6` after the phase is planned, authorized, and implemented.
+See [`phase-0-spec.md`](./phase-0-spec.md) §0.6.
+
+---
+
+## Later roadmap
+
+### 0.7 — Graph-distilled context strategy
+
+Introduce graph-distilled context behind a toggle with required inclusions,
+projection receipts, fail-safe verbatim fallback, and preregistered evaluation.
+The graph strategy remains non-default until measured evidence justifies it.
+
+Both 0.6 verbatim and 0.7 graph context are Host-selected strategies; neither
+moves canonical state ownership into the Agent.
 
 ### 0.8 — Application Protocol + React experience
 
-The transport contract must be defined before UI build. The frontend
-consumes ordered application events rather than reading the DB. This
-becomes the Application Protocol.
-
-Formalize `START_NOW`, `GUIDE`, `QUEUE` as distinct admission semantics.
-Every admitted user input gets durable identity/state (input_id, session_id,
-sequence, requested_mode, admitted_mode, submitted_at, admitted_at,
-dispatch_state, source).
-
-This phase also formalizes reconnect/resume/subscription semantics. ZCode is
-an important reference here.
-
-**Gate:** `gate:0.8`. See [`phase-0-spec.md`](./phase-0-spec.md) §0.8.
+Define the application transport contract before the UI, then build the React
+experience as a client of ordered Host events. This phase also owns the
+product-level `START_NOW`, `GUIDE`, and `QUEUE` admission semantics rather than
+smuggling them into the 0.5 Agent Protocol.
 
 ### 0.9 — External adapters
 
-Integration scope: user hooks, MCP, ACP, code intelligence. Treat all of
-them as adapters onto the Host. The invariant stays: integration ≠ state
-owner. Do not force SSH/WSL/Docker into the gate unless an actual product
-requirement activates them.
-
-**Gate:** `gate:0.9`. See [`phase-0-spec.md`](./phase-0-spec.md) §0.9.
+Add hooks, MCP, ACP, and code-intelligence adapters onto the Host. Integration
+remains an adapter role, never a canonical state owner.
 
 ---
 
-## Workspace abstraction — cross-cutting, implementation deferred
+## Workspace abstraction
 
-The Workspace contract should be designed incrementally while capabilities
-are extracted:
+The current concrete implementation is `LocalWorkspace`, with filesystem and
+terminal authority mediated through owned capability contracts. The invariant
+remains:
 
 ```text
-Workspace
-├── identity
-├── filesystem
-├── terminal
-├── git
-├── metadata
-└── capability availability
+workspace identity != transport != location
 ```
 
-Initially `LocalWorkspace`. Later: SSHWorkspace, WSLWorkspace,
-DockerWorkspace, RemoteServerWorkspace.
-
-Freeze: `workspace identity ≠ transport ≠ location`. Do not require multiple
-remote implementations during Phase 0. The backlog already defers several
-environment/isolation identities (including `worktree_id`) until their
-triggers exist.
+SSH, WSL, Docker, remote-server backends, browser capability, and other remote
+execution mechanisms remain deferred until a product requirement activates
+them. They are not Phase 0.6 prerequisites.
 
 ---
 
-## Bounded checkpoint before 0.3/0.4 implementation
+## Ownership checkpoint — completed
 
-Not a new phase. Not a new gate. Before large semantic ports begin, freeze
-only the owned boundaries:
+The pre-semantic-port checkpoint is no longer pending. ADR 0005 froze:
 
 - Host ↔ Agent
 - Host ↔ Capability
@@ -340,46 +277,46 @@ only the owned boundaries:
 - Host ↔ Memory engine
 - Host ↔ Reasoning engine
 
-Do not freeze these until their phases actually need them:
+Phase 0.5 then exercised those boundaries in production code and gates.
+Still intentionally unfrozen/deferred:
 
-- Wire encoding
-- Remote transport
-- Scheduler automation schema
-- Subagent protocol
-- Browser protocol
-- Full workflow model
-
-This gives enough architectural discipline to avoid importing
-Ola/Ouroboros/ZCode internals into the wrong layers without creating
-speculative infrastructure.
+- public/remote wire encoding;
+- remote Agent transport;
+- general scheduler/automation schema;
+- subagent protocol;
+- browser protocol;
+- full workflow/task model.
 
 ---
 
 ## Deliberately deferred
 
-Do not promote attractive ZCode capabilities merely because they exist. Keep
-deferred unless activated by an existing phase:
+Do not promote attractive reference-system features merely because they exist.
+Keep them deferred unless activated by an authorized phase or concrete product
+requirement:
 
-- Full workflow product
-- Recurring automation UI
-- Subagent worktree isolation
-- Dynamic extension loading
-- Vector memory retrieval
-- Auto-skill minting
-- Full graph visualization
-- Multi-agent kanban
-- Multi-writer durable store
-- Remote workspace backends
+- full workflow product;
+- recurring automation UI;
+- subagent worktree isolation;
+- dynamic user-installed extension loading;
+- vector memory retrieval;
+- auto-skill minting;
+- full graph visualization;
+- multi-agent kanban;
+- multi-writer durable store;
+- remote workspace backends.
 
-The existing backlog already follows this trigger-based philosophy.
+The backlog remains trigger-based rather than calendar-based.
 
 ---
 
 ## Document roles
 
-- **This file** (`docs/roadmap.md`): architecture orientation and sequencing.
+- **This file** (`docs/roadmap.md`): current architecture orientation and sequencing.
 - [`docs/phase-0-spec.md`](./phase-0-spec.md): executable specification with
-  authoritative gate definitions.
+  authoritative gate definitions and historical phase contracts.
+- [`docs/phase-0.5-plan.md`](./phase-0.5-plan.md): completed frozen 0.5 contract
+  and closure evidence.
 - [`docs/constitution.md`](./constitution.md): the 10 frozen principles.
 - [`docs/rules.md`](./rules.md): hard rules.
 - [`docs/backlog.md`](./backlog.md): trigger-based deferred work.

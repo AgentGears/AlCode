@@ -1,7 +1,11 @@
 # Phase 0.5 — Host runtime + durable cognition integration
 
-Status: **AUTHORIZED / IMPLEMENTATION OPEN**
+Status: **CLOSED**
 Base: Phase 0.4 closed on `main` at `4c82c8c`.
+Closure: PR #7 merged on 2026-08-11; source head `82aac97ceb74f0ae6151f27ab352d20c5b2e053d`; squash/main commit `9b06f4ace2921db599d5bbecce1bd21c73748d39`.
+Verification: CI run `31522355607` completed successfully; `pnpm gate:0.5` passed while composing `gate:0.4`, including the replaceable-Agent, Host-recovery, durable-work, completion-authority, and ownership-boundary proofs.
+
+This file is the frozen implementation plan and completed contract for Phase 0.5. The body is retained as the authoritative scope that was executed; it is not an open work list.
 
 ## Objective
 
