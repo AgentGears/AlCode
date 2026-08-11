@@ -36,6 +36,8 @@ export interface AttachedAgent {
   detach(): void;
 }
 
+export type AgentResumeReason = "agent_replaced" | "host_reopened" | "reattach";
+
 export class HostRuntime {
   readonly admission: CanonicalAdmissionQueue;
   readonly cognitionGateway: CognitionGateway;
@@ -96,6 +98,7 @@ export class HostRuntime {
     connection: AgentConnection,
     session: HostSessionHandle,
     systemPrompt: string,
+    resumeReason: AgentResumeReason = "reattach",
   ): Promise<AttachedAgent> {
     const transport = connection.transport;
     await transport.send({
@@ -110,7 +113,7 @@ export class HostRuntime {
         requestId: sessionRequestId,
         sessionId: session.sessionId as string,
         workspaceId: this.store.store.workspaceId,
-        reason: "reattach",
+        reason: resumeReason,
       });
     } else {
       await transport.send({
@@ -233,7 +236,16 @@ export class HostRuntime {
           }
           this.requestCache.set(cacheKey, response);
         }
-        await transport.send(response);
+
+        // Once a Host request reaches this point, any state-changing effect is
+        // already canonical and projection barriers have run. A dead/replaced
+        // Agent therefore cannot turn successful Host completion into a Host
+        // failure merely because result delivery races process exit.
+        try {
+          await transport.send(response);
+        } catch {
+          // Durable Host state is authoritative; replacement Agent will orient.
+        }
         break;
       }
 
@@ -253,7 +265,11 @@ export class HostRuntime {
       case "agent.idle": {
         const completion = await this.assessAndComplete(sessionId, true);
         if (completion.completed) {
-          await transport.send({ type: "shutdown", requestId: uuidv7(), sessionId: sessionId as string, reason: "completed" });
+          try {
+            await transport.send({ type: "shutdown", requestId: uuidv7(), sessionId: sessionId as string, reason: "completed" });
+          } catch {
+            // Session completion is canonical even if the Agent already exited.
+          }
         }
         break;
       }
