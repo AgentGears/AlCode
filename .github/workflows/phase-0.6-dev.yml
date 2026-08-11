@@ -1,0 +1,41 @@
+name: Phase 0.6 Dev
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  dev:
+    if: github.head_ref == 'phase-0.6/durable-verbatim-context'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.17.0"
+          cache: pnpm
+      - name: Bootstrap install
+        run: pnpm install --no-frozen-lockfile
+      - name: Phase 0.6 typechecks
+        run: |
+          pnpm --filter @alcode/transcript exec tsc --noEmit -p tsconfig.json
+          pnpm --filter @alcode/agent-core exec tsc --noEmit -p tsconfig.json
+          pnpm --filter @alcode/agent-protocol exec tsc --noEmit -p tsconfig.json
+          pnpm --filter @alcode/cognition-extension exec tsc --noEmit -p tsconfig.json
+          pnpm --filter @alcode/storage exec tsc --noEmit -p tsconfig.json
+          pnpm --filter @alcode/host-runtime exec tsc --noEmit -p tsconfig.json
+          pnpm --filter @alcode/coding-agent exec tsc --noEmit -p tsconfig.json
+      - name: Phase 0.6 tests
+        run: |
+          pnpm --filter @alcode/transcript exec vitest run
+          pnpm --filter @alcode/agent-core exec vitest run
+          pnpm --filter @alcode/agent-protocol exec vitest run
+          pnpm --filter @alcode/storage exec vitest run
+          pnpm --filter @alcode/host-runtime exec vitest run
+          pnpm --filter @alcode/coding-agent exec vitest run
