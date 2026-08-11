@@ -67,9 +67,12 @@ governed by one codebase.
 
 ## Status
 
-Phases 0.0, 0.1A, and 0.2 are **closed** — the durable event/recovery spine
-is proven (`gate:0.2` green on `main`). See `docs/roadmap.md` for architecture
-orientation and `docs/phase-0-spec.md` for the executable specification.
+Phases 0.0, 0.1A, 0.1B, 0.2, 0.3, 0.4, and 0.5 are **closed**. The durable
+event/recovery spine, memory and reasoning semantic engines, Host control
+plane, durable cognition integration, and replaceable-Agent property are
+proven. Phase 0.5 closed in merge commit `9b06f4a` with `gate:0.5` green.
+Phase 0.6 has not started. See `docs/roadmap.md` for architecture orientation
+and `docs/phase-0-spec.md` for the executable specification.
 
 ## Relationship to the prior work
 
