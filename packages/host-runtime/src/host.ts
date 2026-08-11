@@ -58,7 +58,7 @@ export class HostRuntime {
     this.admission = new CanonicalAdmissionQueue(options.store.store);
     this.cognitionGateway = new CognitionGateway(options.store);
     this.workDispatcher = new DurableWorkDispatcher(options.store.store, this.admission);
-    this.sessions = new HostSessionManager(options.store);
+    this.sessions = new HostSessionManager(options.store, this.admission);
     this.cognition = new HostCognitionService(options.store.store, this.admission, this.cognitionGateway, this.workDispatcher);
     this.capabilityBroker = new CapabilityBroker(
       options.store.store,
@@ -237,10 +237,6 @@ export class HostRuntime {
           this.requestCache.set(cacheKey, response);
         }
 
-        // Once a Host request reaches this point, any state-changing effect is
-        // already canonical and projection barriers have run. A dead/replaced
-        // Agent therefore cannot turn successful Host completion into a Host
-        // failure merely because result delivery races process exit.
         try {
           await transport.send(response);
         } catch {
