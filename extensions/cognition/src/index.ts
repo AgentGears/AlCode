@@ -12,6 +12,8 @@ export interface CognitionExtensionOptions {
   sessionId: () => string;
   toolNames: readonly string[];
   readOnlyTools?: ReadonlySet<string>;
+  /** Defaults true; false exists only for pre-0.6 compatibility paths. */
+  durableTranscript?: boolean;
 }
 
 export function createCognitionExtension(options: CognitionExtensionOptions): AgentExtension {
@@ -26,7 +28,11 @@ export function createCognitionExtension(options: CognitionExtensionOptions): Ag
           ...(options.readOnlyTools ? { isReadOnly: options.readOnlyTools.has(name) } : {}),
         }));
       }
-      context.onEvent(createAgentEventForwarder(options.transport, options.sessionId));
+      context.onEvent(createAgentEventForwarder(
+        options.transport,
+        options.sessionId,
+        options.durableTranscript ?? true,
+      ));
     },
   };
 }
