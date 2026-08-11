@@ -3,14 +3,15 @@
 Constraints that apply to every phase. These operationalize the constitution.
 Violations are bugs, not style preferences. Foundational event shape,
 identity, and serialization live in `docs/event-contract.md`; transaction,
-locking, uncertainty, and secret rules live here.
+locking, uncertainty, secret, and runtime-ownership rules live here and in the
+ADRs.
 
 ## Runtime and process
 
 - **One writer per workspace.** A workspace state root has exactly one owning
-  runtime at a time. Exclusion is enforced by a **process-held OS lock** under
-  `~/.alcode/` (never inside the repository); owner metadata is written to
-  `registry.sqlite` for diagnostics. A database row alone is insufficient —
+  Host/runtime at a time. Exclusion is enforced by a **process-held OS lock**
+  under `~/.alcode/` (never inside the repository); owner metadata is written
+  to `registry.sqlite` for diagnostics. A database row alone is insufficient —
   PID reuse and abrupt termination leave stale ownership ambiguous. The OS
   lock releases on process exit; PID metadata is never sufficient evidence for
   forcibly breaking a lock. See `docs/adr/0002-workspace-identity-and-locking.md`.
@@ -21,19 +22,24 @@ locking, uncertainty, and secret rules live here.
   termination release semantics, and behavior on networked or unsupported
   filesystems (fail closed: do not pretend to hold a lock that is not real).
 
-- **No detached, unowned production workers.** Every child process is:
-  recorded (spawn event in the log); bounded (timeout enforced); cancellable
-  (the runtime retains a handle); observed to exit (exit code captured); and
-  absent after cleanup (verified, not assumed). Background work runs under a
-  supervised scheduler that owns the lease, materialization, commit, and
-  completion observation. The prior detached-worker failure class
-  (~1,100 orphaned spawns) must not recur.
+- **No detached, unowned production workers.** Every child process is bounded,
+  cancellable, retained/observed by its owning Host subsystem, and observed to
+  exit. Background cognition work uses the Host-owned durable-work dispatcher
+  and canonical `runtime.work.*` state; Phase 0.5 activates only bounded
+  `memory.consolidation`. General scheduler leases, remote workers, cron, and
+  recurring automation are not implied by this rule.
+
+- **Agent process lifetime is not session lifetime.** The Host owns the durable
+  session. Agent exit/replacement does not by itself append
+  `runtime.session.stopped`, discard operation identity, or erase canonical
+  cognition. A replacement Agent resumes through the Agent Protocol and orients
+  from Host-owned durable state. See ADR 0005 and `docs/phase-0.5-plan.md`.
 
 - **No compatibility process whose purpose is to preserve an obsolete boundary.**
   "No bridge, no sidecar" means no process exists solely to keep a Python or
   ZCode-era boundary alive. It does NOT mean the entire application must be one
-  OS process — supervised child processes for risky tool execution are allowed
-  and the runtime retains handles.
+  OS process — supervised Agent/tool child processes are allowed when the Host
+  retains authority and lifecycle observation.
 
 ## State, storage, and transactions
 
@@ -43,10 +49,14 @@ locking, uncertainty, and secret rules live here.
   `repository_id` independent of path (see identity, below).
 
 - **One SQLite database per workspace** (`~/.alcode/workspaces/<id>/workspace.sqlite`).
-  Tables: `events`, `projection_cursors`, `sessions`, `operations`,
+  Tables include `events`, `projection_cursors`, `sessions`, `operations`,
   `reasoning_nodes`, `reasoning_edges`, `memories`, `memory_stats`, `artifacts`,
-  `projection_receipts`, `schema_migrations`. The event log remains canonical
-  even when projection tables are updated in the same or separate transactions.
+  `projection_receipts`, and `schema_migrations`. The event log remains
+  canonical even when projection tables are updated separately.
+
+- **The locked store remains opaque outside storage/Host-owned facades.**
+  Agent/extension code does not receive the raw SQLite handle. Host cognition
+  uses bounded read models for operations, transcript, memory, and reasoning.
 
 - **Strictly increasing event sequence per workspace.** `event_sequence` is
   monotonic; resume must not duplicate events; `append` is idempotent on
@@ -58,6 +68,12 @@ locking, uncertainty, and secret rules live here.
   2. Apply each projection **idempotently** in a **separate transaction**.
   3. Advance that projection's cursor **in the same transaction** as its updates.
   4. On startup, replay from every lagging cursor.
+
+- **Host state-changing admission is serialized.** Phase 0.5 routes canonical
+  Host writes through one admission queue so semantic validation, symbolic
+  reasoning-reference resolution, and event append observe a stable ordering.
+  Semantic engines return intents/effects; they do not append canonical events
+  directly.
 
 - **Projections have three states, not two:**
   - **Inline state** — updated atomically with event append; part of the write
@@ -77,6 +93,12 @@ locking, uncertainty, and secret rules live here.
 
 ## Tool operations and uncertainty
 
+- **Environmental capability execution is Host authority.** The Agent may
+  request a capability through the Agent Protocol; it does not directly own the
+  environmental process or durable operation lifecycle. Before execution, Host
+  policy runs and requested/started/action state is durably visible. A denied
+  request must not start the operation or execute the capability.
+
 - **Operations have a state machine across three dimensions** (see ADR 0003):
   - **ExecutionOutcome:** `succeeded` | `failed` | `cancelled` | `timed_out`
   - **EffectStatus:** `confirmed` | `absent` | `indeterminate` | `not_applicable`
@@ -87,8 +109,7 @@ locking, uncertainty, and secret rules live here.
   repository but before `tool.completed` persisted; on restart the runtime
   cannot know whether the command ran, failed, or partially ran. `failed`,
   `cancelled`, and `timed_out` default to `indeterminate` — failure does not
-  prove the effect did not occur (a shell can modify files then exit non-zero).
-  Read-only tools declare `not_applicable`.
+  prove the effect did not occur. Read-only tools declare `not_applicable`.
 
 - **`indeterminate` resolves only via reconciliation.** It does not transition
   to `confirmed` merely because the process restarted. Reconciliation produces
@@ -136,25 +157,68 @@ locking, uncertainty, and secret rules live here.
 
 ## Cognition boundaries
 
-- **The cognition extension is a thin orchestration adapter.** It binds
-  lifecycle events to coordinator calls. It must NOT contain memory policy,
-  reducer semantics, evidence rules, or consolidation algorithms. Those live
-  in `packages/cognition-runtime`. Flow:
-  `extension event adapter → cognition coordinator → memory/reasoning commands → domain events`.
+- **The cognition extension is a thin Agent-side adapter.** It may register
+  Agent-facing proxy tools and translate selected Agent lifecycle evidence onto
+  `@alcode/agent-protocol`. It must NOT own storage, workspace locking, memory
+  policy, reasoning reduction, evidence semantics, capability execution, or
+  consolidation algorithms.
+
+- **The Host is the authority boundary between Agent and cognition state.**
+  The implemented flow is:
+
+  ```text
+  Agent / cognition extension
+          ↓ Agent Protocol request
+  Host cognition gateway + canonical admission
+          ↓
+  cognition-runtime + memory/reasoning semantic engines
+          ↓ validated semantic effect
+  Host-owned canonical event(s)
+          ↓
+  rebuildable projections
+  ```
+
+  `@alcode/cognition-runtime` returns orientation/policy/assessment results; it
+  does not own SQLite or append canonical events.
+
+- **Memory retrieval is not memory truth mutation.** Search recall records
+  `seen`; direct explicit use records `used`; every fifth use may request the
+  bounded consolidation work proven in 0.5. Search visibility alone must not
+  strengthen a memory as if it were applied.
+
+- **Verification linking remains conservative.** Trusted unique verification
+  may add epistemic support/contradiction; untrusted unique matching records
+  execution correlation only; ambiguous/unmatched outcomes do not create a
+  verification correlation event.
+
+- **Agent idle is evidence, not completion authority.** Only the Host performs
+  the final durable session stop after the frozen completion policy is
+  satisfied.
 
 - **Hooks must not silently become authoritative state owners.** User-facing
   hooks are an integration layer over owned lifecycle events; their outputs are
   advisory unless explicitly promoted.
 
-- **MCP stays external.** ALCODE may consume external MCP tools (as MCP client)
-  and expose selected capabilities (as MCP server), but memory and reasoning
-  internally use typed calls, never MCP.
+- **MCP stays external.** ALCODE may consume external MCP tools and expose
+  selected capabilities later, but internal memory/reasoning/Host cognition
+  uses owned typed contracts, never MCP as the internal state boundary.
+
+## Context boundaries
+
+- **Phase 0.5 orientation is not a context compiler.** The Host may provide
+  structured bootstrap/orientation state across Agent replacement, but durable
+  transcript→provider reconstruction belongs to Phase 0.6 and graph-distilled
+  context selection belongs to Phase 0.7.
+
+- **Verbatim context remains the safety baseline.** Graph-distilled context may
+  not silently replace it; any later graph strategy must retain fail-safe
+  verbatim fallback under the constitution.
 
 ## Security
 
-- **Local runtime security** (for GUI/backend split): bind to loopback only;
-  use an ephemeral auth token; restrict state-file permissions; reject foreign
-  origins; validate workspace paths; prevent path traversal.
+- **Local runtime security** (for future GUI/backend split): bind to loopback
+  only; use an ephemeral auth token; restrict state-file permissions; reject
+  foreign origins; validate workspace paths; prevent path traversal.
 
 - **Extension trust:** declared permissions; capability restrictions;
   installation provenance; version pinning; disable/recovery mode.
