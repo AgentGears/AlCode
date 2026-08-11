@@ -12,7 +12,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
-import { asWorkspaceId, uuidv7, mkEventId } from "@alcode/events";
+import { asWorkspaceId, uuidv7, mkEventId, canonicalStringify } from "@alcode/events";
 import {
   openLockedWorkspaceStore,
   createReasoningProjection,
@@ -118,30 +118,51 @@ describeLocked("reasoning projection integration proofs", () => {
       occurred_at TEXT NOT NULL, recorded_at TEXT NOT NULL, event_digest TEXT NOT NULL,
       request_fingerprint TEXT NOT NULL
     )`);
-    // Insert a real canonical legacy objective.set event
-    const legacyPayload = JSON.stringify({
+    // Insert a real canonical legacy objective.set event. Its integrity fields
+    // must be constructed exactly as the Phase 0.2 event store verifies them.
+    const legacyPayloadObject = {
       nodeId: "legacy-obj-1", kind: "objective", label: "original objective",
       data: { statement: "fix the bug" }, confidence: 0.9,
-    });
+    };
+    const legacyPayload = JSON.stringify(legacyPayloadObject);
+    const legacyProducer = { kind: "runtime", component: "test" };
+    const legacyOccurredAt = "2026-01-01T00:00:00.000Z";
+    const legacyRecordedAt = "2026-01-01T00:00:00.000Z";
     const { createHash } = await import("node:crypto");
-    const digestInput = JSON.stringify({
-      eventId: "legacy-evt-1", workspaceId: TEST_WS, sessionId: "legacy-session",
-      operationId: null, type: "objective.set", payload: JSON.parse(legacyPayload),
-      payloadSchemaVersion: 1, producer: { kind: "runtime", component: "test" },
-      causationEventId: null, correlationId: null, occurredAt: "2026-01-01T00:00:00.000Z",
-    });
-    const fingerprint = createHash("sha256").update(digestInput).digest("hex");
-    const eventDigest = createHash("sha256").update(
-      JSON.stringify({ eventId: "legacy-evt-1", workspaceId: TEST_WS, sessionId: "legacy-session",
-        occurredAt: "2026-01-01T00:00:00.000Z", type: "objective.set", payload: JSON.parse(legacyPayload),
-        payloadSchemaVersion: 1, producer: { kind: "runtime", component: "test" },
-        sequence: 1, recordedAt: "2026-01-01T00:00:00.000Z" }),
-    ).digest("hex");
+    const fingerprintInput = {
+      workspaceId: TEST_WS,
+      sessionId: "legacy-session",
+      operationId: null,
+      type: "objective.set",
+      payload: legacyPayloadObject,
+      payloadSchemaVersion: 1,
+      producer: legacyProducer,
+      causationEventId: null,
+      correlationId: null,
+      occurredAt: legacyOccurredAt,
+    };
+    const fingerprint = createHash("sha256")
+      .update(canonicalStringify(fingerprintInput))
+      .digest("hex");
+    const eventDigestInput = {
+      eventId: "legacy-evt-1",
+      workspaceId: TEST_WS,
+      sessionId: "legacy-session",
+      occurredAt: legacyOccurredAt,
+      type: "objective.set",
+      payload: legacyPayloadObject,
+      payloadSchemaVersion: 1,
+      producer: legacyProducer,
+      sequence: 1,
+      recordedAt: legacyRecordedAt,
+    };
+    const eventDigest = createHash("sha256")
+      .update(canonicalStringify(eventDigestInput))
+      .digest("hex");
     rawDb.prepare(
       "INSERT INTO events (event_id, idempotency_key, sequence, workspace_id, session_id, operation_id, type, payload, payload_schema_version, producer, causation_event_id, correlation_id, occurred_at, recorded_at, event_digest, request_fingerprint) VALUES (?, NULL, ?, ?, ?, NULL, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)",
     ).run("legacy-evt-1", 1, TEST_WS, "legacy-session", "objective.set", legacyPayload, 1,
-      JSON.stringify({ kind: "runtime", component: "test" }),
-      "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z", eventDigest, fingerprint);
+      JSON.stringify(legacyProducer), legacyOccurredAt, legacyRecordedAt, eventDigest, fingerprint);
     rawDb.close();
 
     // Step 2: Open via openLockedWorkspaceStore — this triggers v6→v7 migration
