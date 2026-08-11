@@ -14,8 +14,11 @@ condition under which they become relevant.
 - The full identity model. Phase 0 has implemented `workspace_id`,
   `repository_id`/`repositoryId`, `session_id`, `event_id`, `operation_id`,
   `memory_id`, `reasoning_node_id`, `event_sequence`, and `schema_version`.
+  Phase 0.6 also preserves the provider/model `toolCallId` end-to-end as a
+  conversational/protocol correlation identity, distinct from `operation_id`.
   Still deferred until required: `installation_id`, `worktree_id`, `task_id`,
-  `turn_id`, `model_request_id`, `tool_call_id`, `artifact_id`.
+  `turn_id`, `model_request_id`, promotion of `tool_call_id` into the
+  foundational branded/event-envelope identity set, and `artifact_id`.
 - Multi-agent identity. The current foundation proves one supervised Agent at a
   time behind a replaceable protocol boundary, one workspace writer, and
   Host-owned durable authority.
@@ -56,15 +59,23 @@ condition under which they become relevant.
 - **Remote Agent transport/public wire encoding.** Phase 0.5 implements the
   semantic Agent Protocol with local Node IPC; remote transports remain later
   adapters.
-- **Verbatim durable context reconstruction before 0.6.** Phase 0.5 orientation
-  is structured bootstrap state, not transcript→provider context compilation.
-- **Making graph projection default.** Projection B belongs to 0.7, ships behind
-  a toggle, and stays non-default until it measurably wins.
+- **Replacing or weakening the closed `verbatim-v1` safety baseline as a side
+  effect of context experimentation.** Phase 0.6 owns durable verbatim
+  reconstruction; a later graph strategy must remain Host-selected and retain
+  fail-safe verbatim behavior unless an explicit promotion decision changes the
+  product default.
+- **LLM-generated context summarization/semantic compaction as implicit Phase
+  0.7 scope.** The current 0.7 plan is only a draft and proposes deterministic
+  selection/rendering; provider-exact tokenizers and generated compaction remain
+  deferred unless the reviewed/frozen plan explicitly activates them.
+- **Making graph projection default.** A graph strategy may be evaluated behind
+  an explicit Host strategy boundary, but product-default promotion requires a
+  separate evidence-based decision after measured results.
 - **Full graph visualization in the GUI.** 0.8 ships inspectors, not a graph UI.
 - **Multi-agent kanban** (agent-teams-ai style). That is a v2 product direction,
   not a current Phase 0 foundation item.
 
-## Migration (post-0.5, when worth doing)
+## Migration (post-0.6, when worth doing)
 
 - Pointing the new runtime at old live Ola/Ouroboros databases. Migration uses
   explicit export/import contracts with receipts — never direct DB reuse.

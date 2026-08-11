@@ -31,9 +31,10 @@ ADRs.
 
 - **Agent process lifetime is not session lifetime.** The Host owns the durable
   session. Agent exit/replacement does not by itself append
-  `runtime.session.stopped`, discard operation identity, or erase canonical
-  cognition. A replacement Agent resumes through the Agent Protocol and orients
-  from Host-owned durable state. See ADR 0005 and `docs/phase-0.5-plan.md`.
+  `runtime.session.stopped`, discard operation identity, erase canonical
+  cognition, or erase canonical transcript history. A replacement Agent
+  resumes through the Agent Protocol and is hydrated/oriented from Host-owned
+  durable state. See ADR 0005 and the closed Phase 0.5/0.6 plans.
 
 - **No compatibility process whose purpose is to preserve an obsolete boundary.**
   "No bridge, no sidecar" means no process exists solely to keep a Python or
@@ -50,13 +51,15 @@ ADRs.
 
 - **One SQLite database per workspace** (`~/.alcode/workspaces/<id>/workspace.sqlite`).
   Tables include `events`, `projection_cursors`, `sessions`, `operations`,
-  `reasoning_nodes`, `reasoning_edges`, `memories`, `memory_stats`, `artifacts`,
-  `projection_receipts`, and `schema_migrations`. The event log remains
-  canonical even when projection tables are updated separately.
+  `reasoning_nodes`, `reasoning_edges`, `memories`, `memory_stats`,
+  `transcript_messages`, `artifacts`, `projection_receipts`, and
+  `schema_migrations`. The event log remains canonical even when projection
+  tables are updated separately.
 
 - **The locked store remains opaque outside storage/Host-owned facades.**
   Agent/extension code does not receive the raw SQLite handle. Host cognition
-  uses bounded read models for operations, transcript, memory, and reasoning.
+  and context reconstruction use bounded read models rather than crossing the
+  database handle into the Agent.
 
 - **Strictly increasing event sequence per workspace.** `event_sequence` is
   monotonic; resume must not duplicate events; `append` is idempotent on
@@ -69,11 +72,17 @@ ADRs.
   3. Advance that projection's cursor **in the same transaction** as its updates.
   4. On startup, replay from every lagging cursor.
 
-- **Host state-changing admission is serialized.** Phase 0.5 routes canonical
-  Host writes through one admission queue so semantic validation, symbolic
-  reasoning-reference resolution, and event append observe a stable ordering.
-  Semantic engines return intents/effects; they do not append canonical events
-  directly.
+- **Host state-changing admission is serialized.** Canonical Host writes route
+  through one admission queue so semantic validation, symbolic reasoning
+  reference resolution, transcript transition validation, and event append
+  observe a stable ordering. Semantic engines return intents/effects; they do
+  not append canonical events directly.
+
+- **Transcript validation and append are one Host admission critical section.**
+  Rich assistant/tool-result transcript transitions are validated against a
+  stable canonical transcript state and appended under the same serialized
+  Host admission operation. A separate read-validate-append sequence is a
+  TOCTOU bug.
 
 - **Projections have three states, not two:**
   - **Inline state** — updated atomically with event append; part of the write
@@ -81,10 +90,10 @@ ADRs.
     time (e.g. the sequence allocator).
   - **Critical projection** — separate transaction, but the operation is **not
     reported complete** until this projection has caught up to the event.
-    Example: the operation registry (an operation's status must be readable
-    before a tool call returns).
+    Example: the operation registry, and transcript admission where the ACK
+    promises a readable durable result.
   - **Derived projection** — separate transaction, may lag without blocking
-    operation completion. Example: reasoning graph, memory store, transcript.
+    operation completion. Example: reasoning graph or memory materialization.
     Rebuilt from events on demand.
 
 - **Every projection maintains a cursor** (`projection_name`,
@@ -98,6 +107,12 @@ ADRs.
   environmental process or durable operation lifecycle. Before execution, Host
   policy runs and requested/started/action state is durably visible. A denied
   request must not start the operation or execute the capability.
+
+- **Provider tool-call identity and Host operation identity are distinct.** The
+  provider/model `toolCallId` is preserved end-to-end through Agent tool
+  execution, Host capability request/result correlation, and durable transcript
+  tool results. `operationId` remains the separate Host-owned durable execution
+  identity; neither substitutes for the other.
 
 - **Operations have a state machine across three dimensions** (see ADR 0003):
   - **ExecutionOutcome:** `succeeded` | `failed` | `cancelled` | `timed_out`
@@ -160,8 +175,8 @@ ADRs.
 - **The cognition extension is a thin Agent-side adapter.** It may register
   Agent-facing proxy tools and translate selected Agent lifecycle evidence onto
   `@alcode/agent-protocol`. It must NOT own storage, workspace locking, memory
-  policy, reasoning reduction, evidence semantics, capability execution, or
-  consolidation algorithms.
+  policy, reasoning reduction, evidence semantics, capability execution,
+  context selection, or consolidation algorithms.
 
 - **The Host is the authority boundary between Agent and cognition state.**
   The implemented flow is:
@@ -186,6 +201,10 @@ ADRs.
   bounded consolidation work proven in 0.5. Search visibility alone must not
   strengthen a memory as if it were applied.
 
+- **Context inclusion is not memory reinforcement.** Merely selecting or
+  rendering a memory into model context does not mean the model used it and
+  must not record `seen`, `used`, or consolidation state by itself.
+
 - **Verification linking remains conservative.** Trusted unique verification
   may add epistemic support/contradiction; untrusted unique matching records
   execution correlation only; ambiguous/unmatched outcomes do not create a
@@ -203,16 +222,39 @@ ADRs.
   selected capabilities later, but internal memory/reasoning/Host cognition
   uses owned typed contracts, never MCP as the internal state boundary.
 
-## Context boundaries
+## Transcript and context boundaries
 
-- **Phase 0.5 orientation is not a context compiler.** The Host may provide
-  structured bootstrap/orientation state across Agent replacement, but durable
-  transcript→provider reconstruction belongs to Phase 0.6 and graph-distilled
-  context selection belongs to Phase 0.7.
+- **Durable transcript is Host-canonical before later inference.** Newly
+  admitted rich assistant and tool-result messages must cross the serialized,
+  Host-validated, Host-acknowledged transcript barrier before the Agent may
+  begin the subsequent model request. `transport.send()` alone is not durable
+  acknowledgement.
 
-- **Verbatim context remains the safety baseline.** Graph-distilled context may
-  not silently replace it; any later graph strategy must retain fail-safe
-  verbatim fallback under the constitution.
+- **Incomplete transcript is reconstructable but not continuable.** An
+  outstanding durable assistant tool call without a durable matching tool
+  result is preserved as incomplete state. The runtime does not fabricate a
+  result, silently discard the call, or auto-retry it to manufacture a
+  continuable transcript.
+
+- **The Agent's conversation cache is disposable.** Canonical transcript state
+  and context authority remain Host-owned. Replacement Host/Agent processes can
+  reconstruct `verbatim-v1` from durable state; no Agent-local transcript or
+  checkpoint file may become authoritative.
+
+- **Verbatim context is the closed safety baseline.** `verbatim-v1` is
+  reconstructable from canonical events and remains the product/default context
+  strategy unless a later explicitly authorized decision changes that default.
+  A graph-distilled strategy may not silently replace it.
+
+- **Context strategy is Host authority.** Any later graph/context compiler may
+  consume bounded memory/reasoning/workspace state, but the Agent does not own
+  selection, fallback, or receipt persistence. Context compilation must not
+  mutate cognition merely because a durable fact was presented to the model.
+
+- **Phase 0.7 is not implied by Phase 0.6 closure.** The current 0.7 plan is a
+  draft for review. Graph selection, projection receipts, estimated budgeting,
+  and A/B evaluation become implementation scope only after that plan is
+  frozen and explicitly authorized.
 
 ## Security
 

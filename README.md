@@ -8,11 +8,12 @@ reasoning, tools, model access, persistence, and UI are governed by one
 codebase. The append-only event log is the source of truth; reasoning, memory,
 the transcript, the UI, and the LLM context window are all projections of it.
 
-**Status:** Phases 0.0 through 0.5 are **closed**. The durable event/recovery
+**Status:** Phases 0.0 through 0.6 are **closed**. The durable event/recovery
 spine, memory semantics, reasoning semantics, Host control plane, durable
-cognition integration, and replaceable-Agent property are proven. Phase 0.5
-closed in merge commit `9b06f4a`; `gate:0.5` is green. Phase 0.6 has not
-started. See [`docs/roadmap.md`](docs/roadmap.md) for architecture orientation.
+cognition integration, replaceable-Agent property, and durable verbatim model
+context are proven. Phase 0.6 closed in merge commit `98c764c`; `gate:0.6` is
+green. Phase 0.7 is being drafted and is **not authorized for implementation**.
+See [`docs/roadmap.md`](docs/roadmap.md) for architecture orientation.
 
 `ref/` (gitignored) holds studied reference codebases — not part of this repo.
 
@@ -27,8 +28,10 @@ started. See [`docs/roadmap.md`](docs/roadmap.md) for architecture orientation.
 5. [`docs/rules.md`](docs/rules.md) — hard constraints applying to every phase.
 6. [`docs/non-goals.md`](docs/non-goals.md) — what Phase 0 deliberately does not do.
 7. [`docs/backlog.md`](docs/backlog.md) — deferred items with reactivation conditions.
-8. [`docs/phase-0.5-plan.md`](docs/phase-0.5-plan.md) — frozen and completed
-   Host-runtime/cognition integration plan and closure evidence.
+8. [`docs/phase-0.6-plan.md`](docs/phase-0.6-plan.md) — frozen and completed
+   durable verbatim context reconstruction plan and closure evidence.
+9. [`docs/phase-0.7-plan.md`](docs/phase-0.7-plan.md) — **draft**, not-yet-frozen
+   graph-distilled context compiler and experiment plan.
 
 ### Architecture decisions (ADRs)
 
@@ -51,6 +54,9 @@ started. See [`docs/roadmap.md`](docs/roadmap.md) for architecture orientation.
 - **Reasoning:** Ouroboros's core (Py→TS) — reasoning graph, falsifiers, verification contracts, critic, diagnostics.
 - **Host/runtime:** ALCODE-owned Agent Protocol, Host runtime, cognition runtime,
   canonical admission, capability brokerage, recovery, and bounded durable work.
+- **Transcript/context baseline:** ALCODE-owned rich transcript domain,
+  Host-acknowledged transcript admission, `verbatim-v1` reconstruction, and
+  replaceable-Agent hydration from canonical events.
 - **GUI streaming layer (planned for 0.8):** open-harness's `ui-stream.ts` + React provider (MIT).
 - **Code intelligence (later):** codebase-memory-mcp (MIT, pure C).
 
@@ -74,8 +80,8 @@ and ADR 0005 for the ownership model.
 0.3  Memory semantic engine:                     [CLOSED]
 0.4  Reasoning semantic engine:                  [CLOSED]
 0.5  Host + cognition integration:               [CLOSED]
-0.6  Durable verbatim context reconstruction:    [NEXT — NOT STARTED]
-0.7  Graph context compiler + experiment:        [PLANNED]
+0.6  Durable verbatim context reconstruction:    [CLOSED]
+0.7  Graph context compiler + experiment:        [DRAFT — NOT AUTHORIZED]
 0.8  React GUI / application protocol:           [PLANNED]
 0.9  External integrations:                      [PLANNED]
 ```
@@ -86,11 +92,12 @@ the schema. Gates drive sequencing, not calendars.
 
 ## Next
 
-The completed foundation is 0.0 through 0.5. The next roadmap unit is
-**Phase 0.6 — durable verbatim context reconstruction**: reconstruct the
-provider-facing conversation from canonical durable state so Host and Agent
-replacement do not lose model-visible conversational continuity.
+The completed foundation is 0.0 through 0.6. The next roadmap unit is
+**Phase 0.7 — graph-distilled context compiler and experiment framework**:
+select bounded Host-owned context from durable transcript, reasoning, memory,
+operation, and workspace state while retaining `verbatim-v1` as the fail-safe
+and product default.
 
-Phase 0.6 is not authorized or in implementation merely because 0.5 is
-closed. See [`docs/roadmap.md`](docs/roadmap.md) for orientation and
-[`docs/phase-0-spec.md`](docs/phase-0-spec.md) for the executable specification.
+The Phase 0.7 plan is currently a **draft for architectural review**. It is not
+frozen acceptance criteria and does not authorize implementation. See
+[`docs/phase-0.7-plan.md`](docs/phase-0.7-plan.md).

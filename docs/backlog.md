@@ -17,8 +17,13 @@ Frozen now: `workspace_id`, `repository_id`/`repositoryId`, `session_id`,
 - `task_id` — when a unit of work spans sessions (long-horizon tasks).
 - `turn_id` — when turn-level attribution is needed for receipts/analytics.
 - `model_request_id` — when per-request tracing/provenance is needed.
-- `tool_call_id` — when tool-call correlation across events needs a stable id
-  (currently `operation_id` covers the single-tool case).
+- **branded/global `tool_call_id` identity** — Phase 0.6 now preserves the
+  provider/model `toolCallId` end-to-end across assistant content,
+  `ToolExecutionContext`, Agent Protocol capability request/result, and durable
+  tool-result transcript state. It is explicitly distinct from Host
+  `operation_id`. Promoting it into the foundational branded identity set or
+  event envelope remains deferred until cross-domain identity guarantees
+  require that stronger contract.
 - `artifact_id` — if content-addressed digests are insufficient as handles.
 
 ## Required before Phase 0.2 (completed promotion)
@@ -82,11 +87,12 @@ extend the accepted reasoning-port gate.
   requires additional oracle evidence; do not expand the closed 0.4 corpus by
   default.
 
-## Host/runtime (deferred after 0.5)
+## Host/runtime (deferred after 0.6)
 
-Phase 0.5 proved a local Node IPC Agent Protocol, Host-owned capability
-execution, bounded event-sourced cognition work, and replaceable-Agent
-continuity. The following remain deliberately outside that phase:
+Phases 0.5–0.6 proved a local Node IPC Agent Protocol, Host-owned capability
+execution, bounded event-sourced cognition work, replaceable-Agent continuity,
+and Host-owned durable transcript/context reconstruction. The following remain
+deliberately outside the closed foundation:
 
 - remote Agent transport / public wire encoding;
 - general scheduler or recurring automation;
@@ -99,8 +105,16 @@ Activate only when a later authorized product requirement needs them.
 
 ## Context projection (deferred from 0.7)
 
-- Making graph projection default. Stays non-default until it measurably wins
-  on the A/B task suite.
+Phase 0.7 is currently a draft and has not started. Regardless of the eventual
+implementation shape, these remain deferred until their triggers fire:
+
+- Making graph projection the product default. Stays non-default until an
+  explicit post-evaluation promotion decision is authorized after measurable
+  evidence.
+- Provider-exact tokenization/context-window management. Activate if the
+  deterministic planning estimator is insufficient for safe provider limits.
+- LLM-generated summarization/semantic compaction. Activate only when bounded
+  deterministic selection cannot meet context-cost requirements safely.
 - Graph visualization UI (full). 0.8 ships inspectors only.
 
 ## GUI (deferred from 0.8)
