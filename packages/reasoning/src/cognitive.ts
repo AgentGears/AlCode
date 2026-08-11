@@ -80,6 +80,7 @@ export interface FalsifierEvaluationPayload {
   evaluatedSequence: number;
   explanation: string;
   falsifierId: string;
+  evidenceNodeIds: string[];
 }
 
 // ---------------------------------------------------------------------------

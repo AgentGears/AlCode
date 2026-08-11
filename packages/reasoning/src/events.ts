@@ -13,14 +13,15 @@
 // ---------------------------------------------------------------------------
 
 export const REASONING_EVENT_TYPES = {
-  OBJECTIVE_SET: "objective.set",
-  HYPOTHESIS_CREATED: "hypothesis.created",
-  ASSUMPTION_RECORDED: "assumption.recorded",
-  ALTERNATIVE_DEFERRED: "alternative.deferred",
-  DECISION_RECORDED: "decision.recorded",
-  EVIDENCE_LINKED: "evidence.linked",
-  FALSIFIER_EVALUATED: "falsifier.evaluated",
-  VERIFICATION_PLANNED: "verification.planned",
+  OBJECTIVE_SET: "objective.set", // Legacy Phase 0.2 compat (handled by reducer + projection)
+  OBJECTIVE: "objective",
+  HYPOTHESIS: "hypothesis",
+  ASSUMPTION: "assumption",
+  ALTERNATIVE: "alternative",
+  DECISION: "decision",
+  LINK_EVIDENCE: "link_evidence",
+  VERIFICATION_CONTRACT: "verification_contract",
+  FALSIFIER_EVALUATION: "falsifier_evaluation",
 } as const;
 
 // ---------------------------------------------------------------------------

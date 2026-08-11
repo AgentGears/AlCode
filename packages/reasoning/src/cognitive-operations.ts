@@ -116,16 +116,17 @@ export function commit_hypothesis(
     throw new ReasoningValidationError("Falsifier statement must be non-empty if provided");
   }
 
-  const payload: HypothesisPayload = {
+  const payload: Record<string, unknown> = {
     claim,
     predicts,
     confidence,
     ...(options?.objectiveId ? { objectiveId: options.objectiveId } : {}),
     ...(options?.supersedesHypothesisId ? { supersedesHypothesisId: options.supersedesHypothesisId } : {}),
+    ...(options?.falsifier ? { falsifier: options.falsifier } : {}),
   };
 
   return {
-    intent: { type: "hypothesis", payload },
+    intent: { type: "hypothesis", payload: payload as unknown as HypothesisPayload },
     // The falsifierId is resolved during Host admission; we signal whether
     // a falsifier was included.
     result: { nodeId: "", falsifierId: options?.falsifier ? "" : null },
@@ -350,6 +351,7 @@ export function evaluate_falsifier(
       evaluatedSequence: 0, // resolved during Host admission
       explanation: options?.explanation ?? "",
       falsifierId,
+      evidenceNodeIds,
     },
   };
 }
@@ -397,18 +399,26 @@ export function plan_verification(
   };
 }
 
-/** Compute a canonical input digest. For Bash commands, hash only the 'command' field. */
+/** Compute a canonical input digest matching Ouroboros verification.py.
+ * SHA-256 of canonical JSON (sort_keys, compact separators), truncated to 16 hex chars.
+ * For Bash commands, only the 'command' field is hashed.
+ */
 export function canonicalInputDigest(toolInput: Record<string, unknown>): string {
-  const command = typeof toolInput.command === "string" ? toolInput.command : JSON.stringify(toolInput);
-  // Simple hash — in production this would be sha256 hex 16 chars.
-  // For Phase 0.4 semantic equivalence, use a deterministic hash.
-  let hash = 0;
-  for (let i = 0; i < command.length; i++) {
-    const char = command.charCodeAt(i);
-    hash = (hash << 5) - hash + char;
-    hash |= 0;
+  const { createHash } = require("node:crypto");
+  let normalized: Record<string, unknown>;
+  if (typeof toolInput === "object" && toolInput !== null && "command" in toolInput) {
+    normalized = { command: toolInput.command };
+  } else {
+    normalized = toolInput;
   }
-  return Math.abs(hash).toString(16).padStart(8, "0").slice(0, 16);
+  // Canonical JSON: sorted keys, compact separators, ensure_ascii=false
+  const canonical = JSON.stringify(
+    Object.keys(normalized).sort().reduce((obj: Record<string, unknown>, key: string) => {
+      obj[key] = (normalized as Record<string, unknown>)[key];
+      return obj;
+    }, {}),
+  );
+  return createHash("sha256").update(canonical, "utf8").digest("hex").slice(0, 16);
 }
 
 // ---------------------------------------------------------------------------
