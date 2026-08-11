@@ -1,16 +1,6 @@
 // @alcode/reasoning — the Ouroboros-equivalent reasoning semantic engine.
-//
-// Owns: graph semantics, cognitive artifacts, deterministic reduction,
-// critic behavior, branching/grafting, diagnostics, falsifiers, and
-// verification semantics.
-//
-// Does NOT own: event admission, SQLite, agent-tool APIs, environmental
-// execution, scheduling, governance, or context compilation.
-//
-// See docs/adr/0005-runtime-ownership-boundaries.md §Host↔Reasoning.
-// See docs/phase-0.4-exclusion-rationale.md.
+// Owns semantics only; Host owns admission, durability, execution and lifecycle.
 
-// Vocabulary
 export {
   NodeKind,
   EdgeKind,
@@ -50,7 +40,6 @@ export {
   type ReasoningEdge,
 } from "./schema.ts";
 
-// Cognitive types
 export type {
   ObjectivePayload,
   HypothesisPayload,
@@ -71,13 +60,11 @@ export type {
   OpenInvestigationResult,
 } from "./cognitive.ts";
 
-// Transition intents
 export type {
   ReasoningTransitionIntent,
   ReasoningBatchIntent,
 } from "./operations.ts";
 
-// Graph
 export {
   GraphValidationError,
   createReasoningGraph,
@@ -100,7 +87,6 @@ export {
   type GraphJSON,
 } from "./graph.ts";
 
-// Cognitive operations
 export {
   ReasoningValidationError,
   set_objective,
@@ -115,7 +101,6 @@ export {
   canonicalInputDigest,
 } from "./cognitive-operations.ts";
 
-// Reducer
 export {
   createReductionIndex,
   reduceEvent,
@@ -128,7 +113,12 @@ export {
   type StreamEvent,
 } from "./reducer.ts";
 
-// Critic
+export {
+  REASONING_INTEGRATION_EVENT_TYPES,
+  normalizeToolNameForReasoning,
+  reduceIntegrationEvent,
+} from "./integration.ts";
+
 export {
   BranchCritic,
   DEFAULT_CRITIC_WEIGHTS,
@@ -139,7 +129,6 @@ export {
   type WeightedTerm,
 } from "./critic.ts";
 
-// Branching
 export {
   DeterministicBranchIdFactory,
   RuleBasedBranchGenerator,
@@ -149,7 +138,6 @@ export {
   type GraftDecision,
 } from "./branching.ts";
 
-// Diagnostics
 export {
   DiagnosticEngine,
   GraphView,
@@ -157,7 +145,6 @@ export {
   type DiagnosticFinding,
 } from "./diagnostics.ts";
 
-// Verification
 export {
   VerificationLinker,
   indexPendingContracts,
@@ -169,7 +156,6 @@ export {
   canonicalSignature,
 } from "./verification.ts";
 
-// Domain events
 export {
   REASONING_EVENT_TYPES,
   CANONICAL_TO_REDUCER,
@@ -181,4 +167,7 @@ export {
   type EvidenceLinkedPayload,
   type FalsifierEvaluatedPayload,
   type VerificationPlannedPayload,
+  type ActionRecordedPayload,
+  type EvidenceRecordedPayload,
+  type VerificationResultCorrelatedPayload,
 } from "./events.ts";
