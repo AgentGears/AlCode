@@ -107,7 +107,7 @@ export class AgentSupervisor {
         clearTimeout(timer);
         unsubscribe();
         if (message.protocolVersion !== AGENT_PROTOCOL_VERSION) {
-          reject(new Error(`Agent protocol version ${message.protocolVersion} is incompatible`);
+          reject(new Error(`Agent protocol version ${message.protocolVersion} is incompatible`));
           return;
         }
         if (message.generationId !== connection.generationId) {
