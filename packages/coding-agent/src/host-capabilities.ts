@@ -15,18 +15,29 @@ import { createLsTool } from "./tools/ls.ts";
 import { createReadTool } from "./tools/read.ts";
 import { createWriteTool } from "./tools/write.ts";
 
+// Heterogeneous owned tool collection. This does not widen any tool's own
+// execute contract; the Host adapter casts the already-validated protocol
+// payload at the single model-facing boundary.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyAgentTool = AgentTool<any, any>;
+
 function extractNumber(details: unknown, key: string): number | null | undefined {
   if (typeof details !== "object" || details === null || Array.isArray(details)) return undefined;
   const value = (details as Record<string, unknown>)[key];
   return typeof value === "number" || value === null ? value : undefined;
 }
 
-export function agentToolAsHostCapability(tool: AgentTool): HostCapability {
+export function agentToolAsHostCapability<TInput, TResult>(
+  tool: AgentTool<TInput, TResult>,
+): HostCapability {
   return {
     name: tool.name,
     isReadOnly: tool.isReadOnly ?? false,
     async execute(args, context): Promise<HostCapabilityResult> {
-      const result = await tool.execute(args as Record<string, unknown>, context.signal ? { signal: context.signal } : {});
+      const result = await tool.execute(
+        args as TInput,
+        context.signal ? { signal: context.signal } : {},
+      );
       const text = result.content
         .filter((block) => block.type === "text")
         .map((block) => block.text)
@@ -46,7 +57,7 @@ export function agentToolAsHostCapability(tool: AgentTool): HostCapability {
 }
 
 export function createDefaultHostCapabilities(workspace: Workspace): HostCapability[] {
-  const tools: AgentTool[] = [
+  const tools: AnyAgentTool[] = [
     createReadTool(workspace.filesystem),
     createWriteTool(workspace.filesystem),
     createEditTool(workspace.filesystem),
@@ -55,5 +66,5 @@ export function createDefaultHostCapabilities(workspace: Workspace): HostCapabil
     createFindTool(workspace.filesystem),
     createBashTool({ workingDirectory: workspace.identity.root }),
   ];
-  return tools.map(agentToolAsHostCapability);
+  return tools.map((tool) => agentToolAsHostCapability(tool));
 }
