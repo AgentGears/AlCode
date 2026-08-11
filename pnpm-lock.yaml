@@ -38,7 +38,11 @@ importers:
 
   packages/agent-core: {}
 
-  packages/agent-protocol: {}
+  packages/agent-protocol:
+    dependencies:
+      '@alcode/transcript':
+        specifier: workspace:*
+        version: link:../transcript
 
   packages/ai:
     dependencies:
@@ -111,6 +115,9 @@ importers:
       '@alcode/storage':
         specifier: workspace:*
         version: link:../storage
+      '@alcode/transcript':
+        specifier: workspace:*
+        version: link:../transcript
 
   packages/memory:
     dependencies:
@@ -153,6 +160,9 @@ importers:
       '@alcode/secrets':
         specifier: workspace:*
         version: link:../secrets
+      '@alcode/transcript':
+        specifier: workspace:*
+        version: link:../transcript
       '@alcode/workspace':
         specifier: workspace:*
         version: link:../workspace
@@ -168,6 +178,12 @@ importers:
         version: 2.1.1
 
   packages/test-provider: {}
+
+  packages/transcript:
+    dependencies:
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
 
   packages/workspace:
     dependencies:
