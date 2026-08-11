@@ -21,6 +21,7 @@
     "@alcode/events": "workspace:*",
     "@alcode/memory": "workspace:*",
     "@alcode/reasoning": "workspace:*",
-    "@alcode/storage": "workspace:*"
+    "@alcode/storage": "workspace:*",
+    "@alcode/transcript": "workspace:*"
   }
 }
