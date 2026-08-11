@@ -18,5 +18,8 @@
   "dependencies": {
     "@alcode/memory": "workspace:*",
     "@alcode/reasoning": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "latest"
   }
 }
