@@ -290,15 +290,18 @@ export class HostApplicationService implements ApplicationServicePort {
     const duplicate = await this.findCommand(command.sessionId, command.commandId);
     if (duplicate) {
       const payload = record(duplicate.payload);
+      const admittedDisposition = optionalString(payload.admittedDisposition);
+      const queueItemId = optionalString(payload.queueItemId);
+      const targetExecutionId = optionalString(payload.targetExecutionId);
       return {
         protocolVersion: APPLICATION_PROTOCOL_VERSION,
         commandId: command.commandId,
         sessionId: command.sessionId,
         decision: "duplicate",
         cursor: (await this.getSnapshot(command.sessionId)).cursor,
-        ...(optionalString(payload.admittedDisposition) ? { admittedDisposition: optionalString(payload.admittedDisposition) as AdmittedDisposition } : {}),
-        ...(optionalString(payload.queueItemId) ? { queueItemId: optionalString(payload.queueItemId) } : {}),
-        ...(optionalString(payload.targetExecutionId) ? { targetExecutionId: optionalString(payload.targetExecutionId) } : {}),
+        ...(admittedDisposition !== undefined ? { admittedDisposition: admittedDisposition as AdmittedDisposition } : {}),
+        ...(queueItemId !== undefined ? { queueItemId } : {}),
+        ...(targetExecutionId !== undefined ? { targetExecutionId } : {}),
       };
     }
 
