@@ -61,13 +61,17 @@ condition under which they become relevant.
   adapters.
 - **Replacing or weakening the closed `verbatim-v1` safety baseline as a side
   effect of context experimentation.** Phase 0.6 owns durable verbatim
-  reconstruction; a later graph strategy must remain Host-selected and retain
-  fail-safe verbatim behavior unless an explicit promotion decision changes the
-  product default.
-- **LLM-generated context summarization/semantic compaction as implicit Phase
-  0.7 scope.** The current 0.7 plan is only a draft and proposes deterministic
-  selection/rendering; provider-exact tokenizers and generated compaction remain
-  deferred unless the reviewed/frozen plan explicitly activates them.
+  reconstruction; frozen Phase 0.7 keeps graph Host-selected and requires
+  fail-safe verbatim behavior. Product-default promotion remains separate.
+- **LLM-generated context summarization/semantic compaction in Phase 0.7.** The
+  frozen 0.7 contract uses deterministic selection/rendering only. Generated
+  compaction remains deferred.
+- **Provider-specific tokenizer/window enforcement in Phase 0.7.** The frozen
+  design uses a hard post-render serialized-character graph bound and records
+  approximate `chars4-v1` token cost for comparison only.
+- **Static-turn-selection + dynamic-overlay optimization in Phase 0.7.** The
+  frozen design recompiles Host context before every inference boundary; split
+  overlays require a later measured need and explicit authorization.
 - **Making graph projection default.** A graph strategy may be evaluated behind
   an explicit Host strategy boundary, but product-default promotion requires a
   separate evidence-based decision after measured results.
