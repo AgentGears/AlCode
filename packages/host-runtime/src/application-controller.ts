@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { ApplicationServicePort } from "@alcode/application-protocol";
 import type { SessionId } from "@alcode/events";
+import type { LockedWorkspaceStore } from "@alcode/storage";
 import type { AgentConnection } from "./agent-supervisor.ts";
 import { HostApplicationService } from "./application-service.ts";
 import type { AgentResumeReason, AttachedAgent, HostRuntime } from "./host.ts";
 import type { HostSessionHandle } from "./session-manager.ts";
-import type { LockedWorkspaceStore } from "@alcode/storage";
 
 /**
  * Application-facing facade around HostRuntime.
@@ -32,6 +32,9 @@ export class HostApplicationController {
           await host.sendInput(transport, sessionId, text);
           return true;
         },
+        // The current Agent Protocol has no truthful mid-turn steering seam.
+        // Phase 0.8 therefore rejects GUIDE explicitly rather than silently
+        // degrading it to queue/send semantics.
         guide: async () => false,
         cancel: async (sessionId, executionId) => {
           const transport = this.transports.get(sessionId as string);
@@ -45,6 +48,14 @@ export class HostApplicationController {
           return true;
         },
       },
+    });
+
+    host.capabilityBroker.setApprovalHandler(async (request) => {
+      return this.application.requestPermission({
+        sessionId: request.sessionId,
+        toolName: request.toolName,
+        description: request.reason,
+      });
     });
   }
 
