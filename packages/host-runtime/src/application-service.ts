@@ -626,15 +626,18 @@ export class HostApplicationService implements ApplicationServicePort {
       if (event.type === "application.input.admitted") {
         const requestedDisposition = payload.requestedDisposition as RequestedDisposition;
         const admittedDisposition = payload.admittedDisposition as AdmittedDisposition;
+        const fallbackReasonCode = optionalString(payload.fallbackReasonCode);
+        const targetExecutionId = optionalString(payload.targetExecutionId);
+        const queueItemId = optionalString(payload.queueItemId);
         push({
           type: "input.admitted",
           commandId: stringValue(payload.commandId),
           text: stringValue(payload.text),
           requestedDisposition,
           admittedDisposition,
-          ...(optionalString(payload.fallbackReasonCode) ? { fallbackReasonCode: optionalString(payload.fallbackReasonCode) } : {}),
-          ...(optionalString(payload.targetExecutionId) ? { targetExecutionId: optionalString(payload.targetExecutionId) } : {}),
-          ...(optionalString(payload.queueItemId) ? { queueItemId: optionalString(payload.queueItemId) } : {}),
+          ...(fallbackReasonCode !== undefined ? { fallbackReasonCode } : {}),
+          ...(targetExecutionId !== undefined ? { targetExecutionId } : {}),
+          ...(queueItemId !== undefined ? { queueItemId } : {}),
         }, event);
         continue;
       }
@@ -689,13 +692,14 @@ export class HostApplicationService implements ApplicationServicePort {
         continue;
       }
       if (event.type === "application.permission.requested") {
+        const operationId = optionalString(payload.operationId);
         const interaction: PublicPermissionInteraction = {
           interactionId: stringValue(payload.interactionId),
           kind: "permission",
           status: "pending",
           toolName: stringValue(payload.toolName),
           description: stringValue(payload.description),
-          ...(optionalString(payload.operationId) ? { operationId: optionalString(payload.operationId) } : {}),
+          ...(operationId !== undefined ? { operationId } : {}),
         };
         permissions.set(interaction.interactionId, interaction);
         push({ type: "permission.interaction.upserted", interaction }, event);
