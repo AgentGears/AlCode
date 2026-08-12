@@ -68,7 +68,9 @@ async function main(): Promise<void> {
 
   // 2. Storage tests (event store, operations, projections, crash matrix, recovery)
   {
-    const result = run("npx", ["vitest", "run", "packages/storage/src"], {
+    // Run through pnpm's workspace filter so process.cwd() remains the storage
+    // package, which is part of the cross-process workspace-lock test contract.
+    const result = run("pnpm", ["--filter", "@alcode/storage", "exec", "vitest", "run"], {
       cwd: ROOT, throwOnError: false,
     });
     const passed = result.exitCode === 0;
