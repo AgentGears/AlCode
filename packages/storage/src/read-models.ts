@@ -1,4 +1,4 @@
-import type { PersistedDomainEvent } from "@alcode/events";
+import { isContextEvidenceEventType, type PersistedDomainEvent } from "@alcode/events";
 import {
   isTranscriptEventType,
   reduceTranscript,
@@ -33,7 +33,14 @@ export interface TranscriptSnapshot {
   fidelity: TranscriptFidelity;
 }
 
+export interface StableEventSnapshot {
+  sourceEventSequence: number;
+  events: PersistedDomainEvent<string, unknown>[];
+}
+
 export interface WorkspaceReadModels {
+  getStableEventSnapshot(): Promise<StableEventSnapshot>;
+  getContextEventSnapshot(): Promise<StableEventSnapshot>;
   getAllEvents(): Promise<PersistedDomainEvent<string, unknown>[]>;
   getSessionEvents(sessionId: string): Promise<PersistedDomainEvent<string, unknown>[]>;
   getReasoningEvents(sessionId: string): Promise<PersistedDomainEvent<string, unknown>[]>;
@@ -61,7 +68,7 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
-function reduceOperations(events: readonly PersistedDomainEvent<string, unknown>[]): OperationRecord[] {
+export function reduceOperationsFromEvents(events: readonly PersistedDomainEvent<string, unknown>[]): OperationRecord[] {
   const operations = new Map<string, OperationRecord>();
 
   for (const event of events) {
@@ -131,12 +138,9 @@ function reduceOperations(events: readonly PersistedDomainEvent<string, unknown>
 }
 
 export function createWorkspaceReadModels(store: WorkspaceEventStore): WorkspaceReadModels {
-  async function getEventsThroughStableHead(): Promise<{
-    head: number;
-    events: PersistedDomainEvent<string, unknown>[];
-  }> {
+  async function getStableEventSnapshot(): Promise<StableEventSnapshot> {
     const head = await store.headSequence();
-    if (head === 0) return { head, events: [] };
+    if (head === 0) return { sourceEventSequence: head, events: [] };
 
     const events: PersistedDomainEvent<string, unknown>[] = [];
     let cursor = 0;
@@ -148,14 +152,24 @@ export function createWorkspaceReadModels(store: WorkspaceEventStore): Workspace
       events.push(...batch);
       cursor = batch[batch.length - 1]!.sequence;
     }
-    return { head, events };
+    return { sourceEventSequence: head, events };
+  }
+
+  async function getContextEventSnapshot(): Promise<StableEventSnapshot> {
+    const snapshot = await getStableEventSnapshot();
+    return {
+      sourceEventSequence: snapshot.sourceEventSequence,
+      events: snapshot.events.filter((event) => isContextEvidenceEventType(event.type)),
+    };
   }
 
   async function getAllEvents(): Promise<PersistedDomainEvent<string, unknown>[]> {
-    return (await getEventsThroughStableHead()).events;
+    return (await getStableEventSnapshot()).events;
   }
 
   return Object.freeze({
+    getStableEventSnapshot,
+    getContextEventSnapshot,
     getAllEvents,
 
     async getSessionEvents(sessionId: string) {
@@ -173,7 +187,7 @@ export function createWorkspaceReadModels(store: WorkspaceEventStore): Workspace
     },
 
     async getOperations(sessionId?: string) {
-      const reduced = reduceOperations(await getAllEvents());
+      const reduced = reduceOperationsFromEvents(await getAllEvents());
       return sessionId === undefined ? reduced : reduced.filter((record) => record.sessionId === sessionId);
     },
 
@@ -207,7 +221,7 @@ export function createWorkspaceReadModels(store: WorkspaceEventStore): Workspace
     },
 
     async getTranscriptSnapshot(sessionId: string) {
-      const { head, events } = await getEventsThroughStableHead();
+      const { sourceEventSequence, events } = await getStableEventSnapshot();
       const transcriptEvents: TranscriptEventRecord[] = events
         .filter((event) => event.sessionId === sessionId && isTranscriptEventType(event.type))
         .map((event) => ({
@@ -220,7 +234,7 @@ export function createWorkspaceReadModels(store: WorkspaceEventStore): Workspace
         }));
       const reduced = reduceTranscript(transcriptEvents);
       return {
-        sourceEventSequence: head,
+        sourceEventSequence,
         messages: reduced.messages,
         status: reduced.status,
         pendingToolCallIds: reduced.pendingToolCallIds,

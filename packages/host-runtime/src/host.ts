@@ -6,8 +6,10 @@ import {
 } from "@alcode/events";
 import {
   DURABLE_TRANSCRIPT_CAPABILITY,
+  GRAPH_CONTEXT_CAPABILITY,
   type AgentToHostMessage,
   type CapabilityResult,
+  type ContextUpdate,
   type HostToAgentMessage,
   type ProtocolTransport,
 } from "@alcode/agent-protocol";
@@ -22,6 +24,8 @@ import { type AgentConnection } from "./agent-supervisor.ts";
 import { CapabilityBroker, type HostCapability } from "./capability-broker.ts";
 import { CognitionGateway } from "./cognition-gateway.ts";
 import { COGNITION_TOOL_NAMES, HostCognitionService } from "./cognition-service.ts";
+import { HostContextService, type HostContextServiceOptions } from "./context-service.ts";
+import { HostContextSourceReader } from "./context-source.ts";
 import { DefaultHostPolicy, type HostPolicy } from "./policy.ts";
 import { HostSessionManager, type HostSessionHandle } from "./session-manager.ts";
 import { TranscriptAdmissionService } from "./transcript-admission.ts";
@@ -33,6 +37,7 @@ export interface HostRuntimeOptions {
   capabilities: readonly HostCapability[];
   policy?: HostPolicy;
   hostInstanceId?: string;
+  context?: HostContextServiceOptions;
 }
 
 export interface AttachedAgent {
@@ -50,22 +55,43 @@ export class HostRuntime {
   readonly cognition: HostCognitionService;
   readonly capabilityBroker: CapabilityBroker;
   readonly transcriptAdmission: TranscriptAdmissionService;
+  readonly contextSource: HostContextSourceReader;
+  readonly contextService: HostContextService;
 
   private readonly store: LockedWorkspaceStore;
   private readonly hostInstanceId: string;
   private readonly capabilityNames: string[];
+  private readonly modelToolDefinitions: Array<{
+    name: string;
+    description: string;
+    inputSchema: { type: "object"; properties: Record<string, unknown> };
+  }>;
   private readonly requestCache = new Map<string, CapabilityResult>();
+  private readonly contextRequestCache = new Map<string, ContextUpdate>();
 
   constructor(options: HostRuntimeOptions) {
     this.store = options.store;
     this.hostInstanceId = options.hostInstanceId ?? uuidv7();
     this.capabilityNames = options.capabilities.map((capability) => capability.name);
+    const toolNames = [...COGNITION_TOOL_NAMES, ...this.capabilityNames];
+    this.modelToolDefinitions = toolNames.map((name) => ({
+      name,
+      description: `Request Host-owned ${name} capability or cognition operation.`,
+      inputSchema: { type: "object" as const, properties: {} },
+    }));
     this.admission = new CanonicalAdmissionQueue(options.store.store);
     this.cognitionGateway = new CognitionGateway(options.store);
     this.workDispatcher = new DurableWorkDispatcher(options.store.store, this.admission);
     this.sessions = new HostSessionManager(options.store, this.admission);
     this.cognition = new HostCognitionService(options.store.store, this.admission, this.cognitionGateway, this.workDispatcher);
     this.transcriptAdmission = new TranscriptAdmissionService(options.store.store, this.admission);
+    this.contextSource = new HostContextSourceReader(options.store);
+    this.contextService = new HostContextService(
+      options.store.store.workspaceId,
+      this.contextSource,
+      this.admission,
+      options.context,
+    );
     this.capabilityBroker = new CapabilityBroker(
       options.store.store,
       this.admission,
@@ -109,9 +135,7 @@ export class HostRuntime {
     resumeReason: AgentResumeReason = "reattach",
   ): Promise<AttachedAgent> {
     const durableTranscript = connection.capabilities?.includes(DURABLE_TRANSCRIPT_CAPABILITY) ?? false;
-    // Real supervised processes always report capabilities. A supervised old
-    // worker is refused rather than silently claiming 0.6 fidelity. Test/custom
-    // transports that omit capability metadata retain the closed 0.5 path.
+    const graphContext = connection.capabilities?.includes(GRAPH_CONTEXT_CAPABILITY) ?? false;
     if (connection.capabilities !== undefined && !durableTranscript) {
       throw new Error(`Agent missing required capability: ${DURABLE_TRANSCRIPT_CAPABILITY}`);
     }
@@ -155,6 +179,8 @@ export class HostRuntime {
       session.sessionId,
       message,
       durableTranscript,
+      graphContext,
+      systemPrompt,
     ));
     return { generationId: connection.generationId, detach: unsubscribe };
   }
@@ -197,8 +223,33 @@ export class HostRuntime {
     sessionId: SessionId,
     message: AgentToHostMessage,
     durableTranscript: boolean,
+    graphContext: boolean,
+    baseSystemPrompt: string,
   ): Promise<void> {
     switch (message.type) {
+      case "context.refresh.request": {
+        if (message.sessionId !== (sessionId as string)) throw new Error("Agent session mismatch");
+        if (!graphContext) throw new Error(`Agent missing required capability: ${GRAPH_CONTEXT_CAPABILITY}`);
+        const cacheKey = `${generationId}:${message.requestId}`;
+        let update = this.contextRequestCache.get(cacheKey);
+        if (!update) {
+          update = await this.contextService.refresh({
+            requestId: message.requestId,
+            sessionId: sessionId as string,
+            baseSystemPrompt,
+            toolDefinitions: this.modelToolDefinitions,
+            graphCapable: graphContext,
+          });
+          this.contextRequestCache.set(cacheKey, update);
+        }
+        try {
+          await transport.send(update);
+        } catch {
+          // The receipt is canonical; a replacement Agent asks for a fresh decision.
+        }
+        break;
+      }
+
       case "assistant.message": {
         if (message.sessionId !== (sessionId as string)) throw new Error("Agent session mismatch");
         if (!durableTranscript) {
@@ -224,9 +275,7 @@ export class HostRuntime {
             eventId: persisted.eventId,
             sequence: persisted.sequence,
           });
-        } catch {
-          // Canonical admission is authoritative even if ACK delivery is cut.
-        }
+        } catch {}
         break;
       }
 
@@ -242,9 +291,7 @@ export class HostRuntime {
             eventId: persisted.eventId,
             sequence: persisted.sequence,
           });
-        } catch {
-          // Replacement Host/Agent reconstructs from the canonical event.
-        }
+        } catch {}
         break;
       }
 
@@ -256,64 +303,30 @@ export class HostRuntime {
           if (COGNITION_TOOL_NAMES.has(message.toolName)) {
             try {
               const result = await this.cognition.invoke(sessionId, message.toolName, message.args);
-              response = {
-                type: "capability.result",
-                requestId: message.requestId,
-                sessionId: sessionId as string,
-                toolCallId: message.toolCallId,
-                toolName: message.toolName,
-                outcome: "succeeded",
-                result,
-              };
+              response = { type: "capability.result", requestId: message.requestId, sessionId: sessionId as string, toolCallId: message.toolCallId, toolName: message.toolName, outcome: "succeeded", result };
             } catch (error) {
-              response = {
-                type: "capability.result",
-                requestId: message.requestId,
-                sessionId: sessionId as string,
-                toolCallId: message.toolCallId,
-                toolName: message.toolName,
-                outcome: "failed",
-                error: error instanceof Error ? error.message : String(error),
-              };
+              response = { type: "capability.result", requestId: message.requestId, sessionId: sessionId as string, toolCallId: message.toolCallId, toolName: message.toolName, outcome: "failed", error: error instanceof Error ? error.message : String(error) };
             }
           } else {
-            const result = await this.capabilityBroker.execute({
-              sessionId,
-              toolCallId: message.toolCallId,
-              toolName: message.toolName,
-              args: message.args,
-            });
+            const result = await this.capabilityBroker.execute({ sessionId, toolCallId: message.toolCallId, toolName: message.toolName, args: message.args });
             response = {
-              type: "capability.result",
-              requestId: message.requestId,
-              sessionId: sessionId as string,
-              toolCallId: message.toolCallId,
-              toolName: message.toolName,
-              ...(result.operationId ? { operationId: result.operationId as string } : {}),
-              outcome: result.outcome,
-              ...(result.result !== undefined ? { result: result.result } : {}),
-              ...(result.error !== undefined ? { error: result.error } : {}),
+              type: "capability.result", requestId: message.requestId, sessionId: sessionId as string,
+              toolCallId: message.toolCallId, toolName: message.toolName,
+              ...(result.operationId ? { operationId: result.operationId as string } : {}), outcome: result.outcome,
+              ...(result.result !== undefined ? { result: result.result } : {}), ...(result.error !== undefined ? { error: result.error } : {}),
             };
           }
           this.requestCache.set(cacheKey, response);
         }
-        try {
-          await transport.send(response);
-        } catch {
-          // Durable Host state is authoritative; replacement Agent will reconstruct/orient.
-        }
+        try { await transport.send(response); } catch {}
         break;
       }
 
       case "criterion.evidence":
         await this.admission.append([{
-          eventId: mkEventId(),
-          workspaceId: asWorkspaceId(this.store.store.workspaceId),
-          sessionId,
-          occurredAt: new Date().toISOString(),
-          type: "runtime.criterion.evidence",
-          payload: { evidenceType: message.evidenceType, data: message.data ?? null, generationId },
-          payloadSchemaVersion: 1,
+          eventId: mkEventId(), workspaceId: asWorkspaceId(this.store.store.workspaceId), sessionId,
+          occurredAt: new Date().toISOString(), type: "runtime.criterion.evidence",
+          payload: { evidenceType: message.evidenceType, data: message.data ?? null, generationId }, payloadSchemaVersion: 1,
           producer: { kind: "runtime", component: `agent:${generationId}` },
         }]);
         break;
@@ -321,24 +334,16 @@ export class HostRuntime {
       case "agent.idle": {
         const completion = await this.assessAndComplete(sessionId, true);
         if (completion.completed) {
-          try {
-            await transport.send({ type: "shutdown", requestId: uuidv7(), sessionId: sessionId as string, reason: "completed" });
-          } catch {
-            // Session completion is canonical even if the Agent already exited.
-          }
+          try { await transport.send({ type: "shutdown", requestId: uuidv7(), sessionId: sessionId as string, reason: "completed" }); } catch {}
         }
         break;
       }
 
       case "agent.error":
         await this.admission.append([{
-          eventId: mkEventId(),
-          workspaceId: asWorkspaceId(this.store.store.workspaceId),
-          sessionId,
-          occurredAt: new Date().toISOString(),
-          type: "runtime.agent.error",
-          payload: { message: message.message, generationId },
-          payloadSchemaVersion: 1,
+          eventId: mkEventId(), workspaceId: asWorkspaceId(this.store.store.workspaceId), sessionId,
+          occurredAt: new Date().toISOString(), type: "runtime.agent.error",
+          payload: { message: message.message, generationId }, payloadSchemaVersion: 1,
           producer: { kind: "runtime", component: `agent:${generationId}` },
         }]);
         break;

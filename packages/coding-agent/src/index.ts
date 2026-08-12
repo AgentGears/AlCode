@@ -27,6 +27,7 @@ export {
   type TerminalExecuteResult,
   createLocalWorkspace,
 } from "./capabilities/index.ts";
+export { GitWorkspaceContextProvider, type GitCommandRunner } from "./workspace-context.ts";
 export {
   agentToolAsHostCapability,
   createDefaultHostCapabilities,

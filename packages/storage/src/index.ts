@@ -18,9 +18,11 @@ export {
 
 export {
   createWorkspaceReadModels,
+  reduceOperationsFromEvents,
   type WorkspaceReadModels,
   type TranscriptReadRecord,
   type TranscriptSnapshot,
+  type StableEventSnapshot,
 } from "./read-models.ts";
 
 export {
@@ -88,5 +90,12 @@ export {
   type MemoryRecord,
   type MemoryStatsRecord,
 } from "./reasoning-memory-projections.ts";
+
+export {
+  createContextReceiptProjection,
+  createContextReceiptQuery,
+  contextReceiptStatements,
+  type ContextReceiptSummary,
+} from "./context-receipt-projection.ts";
 
 export { SecretAdmissionError } from "@alcode/secrets";

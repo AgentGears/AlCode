@@ -1,6 +1,7 @@
 export {
   AGENT_PROTOCOL_VERSION,
   DURABLE_TRANSCRIPT_CAPABILITY,
+  GRAPH_CONTEXT_CAPABILITY,
   VERBATIM_COMPILER_VERSION,
   type ProtocolRequestId,
   type AgentGenerationId,
@@ -8,6 +9,7 @@ export {
   type AssistantMessageProduced,
   type ToolResultProduced,
   type CapabilityRequest,
+  type ContextRefreshRequest,
   type CriterionEvidence,
   type AgentIdle,
   type AgentError,
@@ -18,6 +20,7 @@ export {
   type InputAdmitted,
   type VerbatimContextEnvelope,
   type ContextProvide,
+  type ContextUpdate,
   type TranscriptAdmitted,
   type CapabilityResult,
   type Cancel,

@@ -68,8 +68,10 @@ async function main(): Promise<void> {
 
   // 2. Storage tests (event store, operations, projections, crash matrix, recovery)
   {
-    const result = run("npx", ["vitest", "run"], {
-      cwd: join(ROOT, "packages/storage"), throwOnError: false,
+    // Run through pnpm's workspace filter so process.cwd() remains the storage
+    // package, which is part of the cross-process workspace-lock test contract.
+    const result = run("pnpm", ["--filter", "@alcode/storage", "exec", "vitest", "run"], {
+      cwd: ROOT, throwOnError: false,
     });
     const passed = result.exitCode === 0;
     const summaryMatch = result.stdout.match(/Tests\s+(\d+ passed|\d+ failed)/);
@@ -83,8 +85,8 @@ async function main(): Promise<void> {
 
   // 3. Coding-agent tests (including crash-vertical integration)
   {
-    const result = run("npx", ["vitest", "run"], {
-      cwd: join(ROOT, "packages/coding-agent"), throwOnError: false,
+    const result = run("npx", ["vitest", "run", "packages/coding-agent/src"], {
+      cwd: ROOT, throwOnError: false,
     });
     const passed = result.exitCode === 0;
     const summaryMatch = result.stdout.match(/Tests\s+(\d+ passed|\d+ failed)/);
@@ -98,8 +100,8 @@ async function main(): Promise<void> {
 
   // 3b. Exact Phase 0.2 vertical test — the frozen gate sequence as an explicit check
   {
-    const result = run("npx", ["vitest", "run", "src/phase-0.2-vertical.test.ts"], {
-      cwd: join(ROOT, "packages/coding-agent"), throwOnError: false,
+    const result = run("npx", ["vitest", "run", "packages/coding-agent/src/phase-0.2-vertical.test.ts"], {
+      cwd: ROOT, throwOnError: false,
     });
     const passed = result.exitCode === 0;
     const summaryMatch = result.stdout.match(/Tests\s+(\d+ passed|\d+ failed)/);

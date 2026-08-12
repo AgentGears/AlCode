@@ -4,7 +4,6 @@
 // the verified reference slice and docs/provenance/pi.md for provenance), but
 // the public API is fresh owned TypeScript — no pi-ai dependency.
 
-// Contracts
 export type {
   TextContent,
   ImageContent,
@@ -31,10 +30,8 @@ export type {
   AgentEventSink,
 } from "./contracts.ts";
 
-// Agent loop
-export { runAgentLoop, type AgentLoopOptions } from "./agent-loop.ts";
+export { runAgentLoop, type AgentLoopOptions, type InferenceContext } from "./agent-loop.ts";
 
-// Extension host
 export {
   type ExtensionContext,
   type AgentExtension,

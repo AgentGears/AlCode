@@ -50,9 +50,12 @@ describe("Phase 0.5 ownership boundaries", () => {
     expect(worker).toContain("@alcode/cognition-extension");
   });
 
-  it("does not introduce Phase 0.6/0.7 context compilers into Phase 0.5 surfaces", () => {
+  it("does not introduce Phase 0.6/0.7 context compilers into Phase 0.5 cognition surfaces", () => {
+    // Later phases are allowed to extend the Host runtime because the Host is
+    // the durable semantic authority. Preserve the Phase 0.5 exclusion where
+    // it matters: cognition runtime/extension code must not acquire context
+    // compilation or projection authority.
     const dirs = [
-      join(repoRoot, "packages/host-runtime/src"),
       join(repoRoot, "packages/cognition-runtime/src"),
       join(repoRoot, "extensions/cognition/src"),
     ];

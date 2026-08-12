@@ -18,6 +18,12 @@ export {
   type VerificationEvaluation,
 } from "./cognition-gateway.ts";
 export { COGNITION_TOOL_NAMES, HostCognitionService } from "./cognition-service.ts";
+export { HostContextSourceReader } from "./context-source.ts";
+export {
+  HostContextService,
+  type HostContextServiceOptions,
+  type RefreshContextInput,
+} from "./context-service.ts";
 export {
   DefaultHostPolicy,
   type HostPolicy,
