@@ -67,9 +67,22 @@ export async function runAgentLoop(
       systemPrompt,
       messages: (messages as Message[]).map((message) => structuredClone(message)),
     };
-    const authorized = options.beforeInference
-      ? await options.beforeInference(localInference)
-      : localInference;
+    let authorized: InferenceContext;
+    try {
+      authorized = options.beforeInference
+        ? await options.beforeInference(localInference)
+        : localInference;
+    } catch (error) {
+      if (signal?.aborted) {
+        await emit({ type: "turn_end" });
+        break;
+      }
+      throw error;
+    }
+    if (signal?.aborted) {
+      await emit({ type: "turn_end" });
+      break;
+    }
 
     const assistantMessage = await streamAssistant(
       authorized.systemPrompt,
