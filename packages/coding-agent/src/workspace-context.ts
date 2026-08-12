@@ -36,8 +36,13 @@ function parsePorcelainZ(raw: string): string[] {
     const status = entry.slice(0, 2);
     paths.push(entry.slice(3));
     if (/[RC]/.test(status)) {
-      const source = entries[++i];
-      if (source) paths.push(source);
+      const sourceIndex = i + 1;
+      const source = entries[sourceIndex];
+      if (source === undefined || source.length === 0) {
+        throw new Error("malformed git porcelain rename/copy record: missing source path");
+      }
+      i = sourceIndex;
+      paths.push(source);
     }
   }
   return paths;
