@@ -30,9 +30,14 @@ export interface InputSubmitCommand extends ApplicationCommandBase {
   requestedDisposition: RequestedDisposition;
 }
 
-export interface OperationCancelCommand extends ApplicationCommandBase {
-  type: "operation.cancel";
-  expectedOperationId: string;
+export interface ExecutionCancelCommand extends ApplicationCommandBase {
+  type: "execution.cancel";
+  expectedExecutionId: string;
+}
+
+export interface QueuePromoteCommand extends ApplicationCommandBase {
+  type: "queue.promote";
+  queueItemId: string;
 }
 
 export type PermissionDecision = "allow_once" | "allow_always" | "deny";
@@ -45,7 +50,8 @@ export interface PermissionRespondCommand extends ApplicationCommandBase {
 
 export type ApplicationCommand =
   | InputSubmitCommand
-  | OperationCancelCommand
+  | ExecutionCancelCommand
+  | QueuePromoteCommand
   | PermissionRespondCommand;
 
 export interface CommandDecision {
@@ -57,7 +63,7 @@ export interface CommandDecision {
   reasonCode?: string;
   admittedDisposition?: AdmittedDisposition;
   queueItemId?: string;
-  targetOperationId?: string;
+  targetExecutionId?: string;
 }
 
 export type PublicTranscriptRole = "user" | "assistant" | "tool_result";
@@ -85,6 +91,14 @@ export interface PublicOperation {
   completedAt: string | null;
 }
 
+export interface PublicForegroundExecution {
+  executionId: string;
+  sourceCommandId: string;
+  status: "running" | "cancel_requested" | "completed";
+  startedAt: string;
+  completedAt?: string;
+}
+
 export interface PublicQueueItem {
   queueItemId: string;
   sourceCommandId: string;
@@ -106,7 +120,7 @@ export interface PublicPermissionInteraction {
 export interface PublicSessionState {
   sessionId: string;
   status: "active" | "stopped";
-  activeOperationId?: string;
+  activeExecutionId?: string;
 }
 
 export interface ApplicationSnapshot {
@@ -115,6 +129,7 @@ export interface ApplicationSnapshot {
   cursor: ApplicationCursor;
   session: PublicSessionState;
   transcript: PublicTranscriptMessage[];
+  executions: PublicForegroundExecution[];
   operations: PublicOperation[];
   queue: PublicQueueItem[];
   pendingInteractions: PublicPermissionInteraction[];
@@ -123,6 +138,9 @@ export interface ApplicationSnapshot {
 export interface ApplicationEventBase {
   protocolVersion: ApplicationProtocolVersion;
   sessionId: string;
+  /** Public cursor immediately before this event. */
+  fromCursor: ApplicationCursor;
+  /** Public cursor after this event. Cursors may skip private Host event sequences. */
   sequence: ApplicationCursor;
   occurredAt: string;
   cause: "user" | "host" | "agent" | "capability" | "recovery";
@@ -131,6 +149,11 @@ export interface ApplicationEventBase {
 export interface TranscriptMessageAppendedEvent extends ApplicationEventBase {
   type: "transcript.message.appended";
   message: PublicTranscriptMessage;
+}
+
+export interface ExecutionUpsertedEvent extends ApplicationEventBase {
+  type: "execution.upserted";
+  execution: PublicForegroundExecution;
 }
 
 export interface OperationUpsertedEvent extends ApplicationEventBase {
@@ -145,7 +168,7 @@ export interface InputAdmittedEvent extends ApplicationEventBase {
   admittedDisposition: AdmittedDisposition;
   text: string;
   fallbackReasonCode?: string;
-  targetOperationId?: string;
+  targetExecutionId?: string;
   queueItemId?: string;
 }
 
@@ -171,7 +194,7 @@ export interface SessionStateUpdatedEvent extends ApplicationEventBase {
 
 export interface OutputDeltaEvent extends ApplicationEventBase {
   type: "output.delta";
-  operationId?: string;
+  executionId?: string;
   text: string;
 }
 
@@ -182,6 +205,7 @@ export interface ProtocolTerminalEvent extends ApplicationEventBase {
 
 export type ApplicationEvent =
   | TranscriptMessageAppendedEvent
+  | ExecutionUpsertedEvent
   | OperationUpsertedEvent
   | InputAdmittedEvent
   | QueueItemUpsertedEvent
