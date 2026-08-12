@@ -7,6 +7,7 @@ import type {
   ApplicationSnapshot,
   CommandDecision,
 } from "./types.ts";
+import { parseApplicationCommand } from "./validation.ts";
 
 /**
  * Local transport adapter used by an in-process/desktop Experience Plane.
@@ -19,7 +20,7 @@ import type {
 export function createLoopbackApplicationTransport(service: ApplicationServicePort): ApplicationServicePort {
   return {
     async execute(command: ApplicationCommand): Promise<CommandDecision> {
-      const input = structuredClone(command);
+      const input = parseApplicationCommand(structuredClone(command));
       return structuredClone(await service.execute(input));
     },
 
