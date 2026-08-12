@@ -16,7 +16,9 @@ Frozen now: `workspace_id`, `repository_id`/`repositoryId`, `session_id`,
 - `worktree_id` — when subagent isolation uses git worktrees.
 - `task_id` — when a unit of work spans sessions (long-horizon tasks).
 - `turn_id` — when turn-level attribution is needed for receipts/analytics.
-- `model_request_id` — when per-request tracing/provenance is needed.
+- `model_request_id` — when per-request tracing/provenance is needed. Phase 0.7
+  deliberately uses protocol correlation + durable context receipt identity
+  rather than promoting this identity solely for inference refresh.
 - **branded/global `tool_call_id` identity** — Phase 0.6 now preserves the
   provider/model `toolCallId` end-to-end across assistant content,
   `ToolExecutionContext`, Agent Protocol capability request/result, and durable
@@ -105,16 +107,21 @@ Activate only when a later authorized product requirement needs them.
 
 ## Context projection (deferred from 0.7)
 
-Phase 0.7 is currently a draft and has not started. Regardless of the eventual
-implementation shape, these remain deferred until their triggers fire:
+Phase 0.7 now has a frozen design but has not started. These remain explicitly
+deferred outside that frozen acceptance boundary:
 
 - Making graph projection the product default. Stays non-default until an
   explicit post-evaluation promotion decision is authorized after measurable
   evidence.
 - Provider-exact tokenization/context-window management. Activate if the
-  deterministic planning estimator is insufficient for safe provider limits.
+  deterministic hard rendered-character bound plus approximate planning metric
+  is insufficient for provider-window safety.
 - LLM-generated summarization/semantic compaction. Activate only when bounded
   deterministic selection cannot meet context-cost requirements safely.
+- Static-turn-selection + dynamic-overlay optimization. The frozen 0.7 design
+  uses full Host recompilation at every inference boundary; split overlays may
+  be considered only after measured compilation cost justifies the added policy
+  layer.
 - Graph visualization UI (full). 0.8 ships inspectors only.
 
 ## GUI (deferred from 0.8)
