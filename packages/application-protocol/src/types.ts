@@ -232,5 +232,5 @@ export interface ApplicationServicePort {
   execute(command: ApplicationCommand): Promise<CommandDecision>;
   getSnapshot(sessionId: string): Promise<ApplicationSnapshot>;
   recover(sessionId: string, cursor?: ApplicationCursor): Promise<ApplicationRecoveryResult>;
-  subscribe(sessionId: string, listener: (event: ApplicationEvent) => void): () => void;
+  subscribe(sessionId: string, cursor: ApplicationCursor, listener: (event: ApplicationEvent) => void): () => void;
 }
