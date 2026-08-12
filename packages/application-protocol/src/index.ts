@@ -49,4 +49,9 @@ export {
   reduceApplicationEvents,
 } from "./reducer.ts";
 
+export {
+  ApplicationProtocolValidationError,
+  parseApplicationCommand,
+} from "./validation.ts";
+
 export { createLoopbackApplicationTransport } from "./loopback.ts";
