@@ -257,6 +257,7 @@ describe("Phase 0.7 governed selective context", () => {
     const b = compileGraphContext(request(sourceFixture({ manyOldTurns: true }), 4_000));
     expect(a.receipt.attempt.candidateUniverseDigest).toBe(b.receipt.attempt.candidateUniverseDigest);
     expect(a.receipt.source.requestEnvironmentDigest).toBe(b.receipt.source.requestEnvironmentDigest);
+    expect(a.receipt).toEqual(b.receipt);
     expect(a.receipt.attempt.selected.length).toBeLessThanOrEqual(a.receipt.attempt.candidateCount);
     expect(a.receipt.attempt.excludedSummary.transcript.excludedCount).toBeGreaterThan(0);
     expect(Object.keys(a.receipt.attempt.excludedSummary.transcript.reasonCounts).length).toBeLessThanOrEqual(2);

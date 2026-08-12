@@ -215,7 +215,7 @@ export class HostContextService {
       receiptId,
       requestedMode: receipt.attempt.requestedMode,
       effectiveMode: receipt.delivery.effectiveMode,
-      compilerVersion: effectiveMode,
+      compilerVersion: this.requestedMode === "graph" ? "graph-v1" : "verbatim-v1",
       source: receipt.source,
       attempt: receipt.attempt,
       delivery: receipt.delivery,
