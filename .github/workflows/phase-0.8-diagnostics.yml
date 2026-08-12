@@ -12,8 +12,6 @@ permissions:
 jobs:
   diagnose:
     runs-on: ubuntu-latest
-    env:
-      ALCODE_HOME: ${{ runner.temp }}/alcode-home
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -26,6 +24,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Reproduce CI Phase 0.0 then 0.1A
         continue-on-error: true
+        env:
+          ALCODE_HOME: ${{ runner.temp }}/alcode-home
         shell: bash
         run: |
           set +e
@@ -42,9 +42,10 @@ jobs:
           exit $code
       - name: Reproduce Phase 0.8 CI on clean ALCODE_HOME
         continue-on-error: true
+        env:
+          ALCODE_HOME: ${{ runner.temp }}/alcode-home-08
         shell: bash
         run: |
-          rm -rf "$ALCODE_HOME"
           set +e
           out=$(pnpm gate:0.8 2>&1); code=$?
           printf '%s\n' "$out"
