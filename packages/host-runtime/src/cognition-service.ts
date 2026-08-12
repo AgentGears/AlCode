@@ -1,5 +1,6 @@
 import {
   asWorkspaceId,
+  isContextEvidenceEventType,
   mkEventId,
   type SessionId,
 } from "@alcode/events";
@@ -252,15 +253,7 @@ export class HostCognitionService {
     const sourceEventIds = await this.resolveProvenance(sessionId, optionalStringArray(input.sourceEventIds));
     const body = typeof fields.content === "string" ? fields.content : "";
 
-    const payload = {
-      memoryId,
-      type: memoryType,
-      body,
-      name,
-      confidence,
-      fields,
-      sourceEventIds,
-    };
+    const payload = { memoryId, type: memoryType, body, name, confidence, fields, sourceEventIds };
     await this.admission.append([{
       eventId: mkEventId(),
       idempotencyKey: `memory.created:${memoryId}`,
@@ -280,8 +273,8 @@ export class HostCognitionService {
     if (requested && requested.length > 0) {
       for (const eventId of requested) {
         const event = await this.store.get(eventId);
-        if (!event || event.sessionId !== (sessionId as string)) {
-          throw new Error(`memory provenance event is not canonical in this session: ${eventId}`);
+        if (!event || event.sessionId !== (sessionId as string) || !isContextEvidenceEventType(event.type)) {
+          throw new Error(`memory provenance event is not canonical task-world evidence in this session: ${eventId}`);
         }
       }
       return requested;
@@ -289,7 +282,13 @@ export class HostCognitionService {
 
     let last: string | null = null;
     for await (const event of this.store.replay()) {
-      if (event.sessionId === (sessionId as string) && !event.type.startsWith("memory.")) last = event.eventId;
+      if (
+        event.sessionId === (sessionId as string) &&
+        !event.type.startsWith("memory.") &&
+        isContextEvidenceEventType(event.type)
+      ) {
+        last = event.eventId;
+      }
     }
     return last ? [last] : [];
   }

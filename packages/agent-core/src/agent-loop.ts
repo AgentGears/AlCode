@@ -1,14 +1,5 @@
 // ALCODE-owned agent loop. Implements the same core semantics as pi v0.81.1's
-// agent-loop.ts (stream an assistant response, execute tool calls, loop until
-// the assistant stops calling tools), but against owned contracts — no pi-ai
-// dependency. The imported pi slice under ./imported/ is the reference.
-//
-// Differences from pi's loop (intentional simplifications for Phase 0.1A):
-//   - sequential tool execution only (pi supports parallel; defer)
-//   - no steering/follow-up queues (defer to when the session layer exists)
-//   - hooks are via the StaticExtensionHost, not a separate LoopConfig
-//   - no prepareNextTurn / shouldStopAfterTurn / transformContext (defer)
-// These are deliberate Phase 0.1A scope reductions, tracked in backlog.
+// agent-loop.ts against owned contracts.
 
 import type {
   AgentEventSink,
@@ -24,6 +15,11 @@ import type {
   ToolResultMessage,
 } from "./contracts.ts";
 
+export interface InferenceContext {
+  systemPrompt: string;
+  messages: readonly Message[];
+}
+
 export interface AgentLoopOptions {
   systemPrompt: string;
   provider: ModelProvider;
@@ -35,12 +31,15 @@ export interface AgentLoopOptions {
   initialMessages?: readonly Message[];
   /** Canonical timestamp for the newly admitted user prompt. */
   promptTimestamp?: number;
+  /**
+   * Phase 0.7 Host-authority seam. When present, this is awaited immediately
+   * before every provider inference, including subsequent tool-loop requests.
+   * The returned values shape that one ModelRequest only; local Agent history
+   * remains disposable and continues to collect transcript lifecycle events.
+   */
+  beforeInference?: (local: InferenceContext) => Promise<InferenceContext>;
 }
 
-/**
- * Run the agent loop with a user prompt. Returns the full transcript visible to
- * the model during the run, including any caller-supplied durable prefix.
- */
 export async function runAgentLoop(
   prompt: string,
   options: AgentLoopOptions,
@@ -50,7 +49,7 @@ export async function runAgentLoop(
   const signal = options.signal;
 
   const messages: AgentMessage[] = [
-    ...(options.initialMessages ?? []),
+    ...(options.initialMessages ?? []).map((message) => structuredClone(message)),
     {
       role: "user",
       content: [{ type: "text", text: prompt }],
@@ -64,16 +63,23 @@ export async function runAgentLoop(
     if (signal?.aborted) break;
     await emit({ type: "turn_start" });
 
-    const assistantMessage = await streamAssistant(
+    const localInference: InferenceContext = {
       systemPrompt,
-      messages as Message[],
+      messages: (messages as Message[]).map((message) => structuredClone(message)),
+    };
+    const authorized = options.beforeInference
+      ? await options.beforeInference(localInference)
+      : localInference;
+
+    const assistantMessage = await streamAssistant(
+      authorized.systemPrompt,
+      [...authorized.messages].map((message) => structuredClone(message)),
       tools,
       provider,
       signal,
     );
     messages.push(assistantMessage);
     await emit({ type: "message_start", message: assistantMessage });
-    // Phase 0.6 transcript adapters may block this event until Host durable ACK.
     await emit({ type: "message_end", message: assistantMessage });
 
     const toolCalls = assistantMessage.content.filter(
@@ -130,7 +136,6 @@ export async function runAgentLoop(
       };
       messages.push(toolResult);
       await emit({ type: "message_start", message: toolResult });
-      // Phase 0.6 transcript adapters may block this event until Host durable ACK.
       await emit({ type: "message_end", message: toolResult });
     }
 

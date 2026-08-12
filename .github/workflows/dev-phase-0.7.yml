@@ -1,0 +1,55 @@
+name: Dev Phase 0.7
+on:
+  push:
+    branches:
+      - phase-0.7/governed-selective-context
+permissions:
+  contents: read
+jobs:
+  phase07:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --no-frozen-lockfile
+      - name: Typecheck Phase 0.7 surfaces
+        run: |
+          set +e
+          {
+            pnpm --filter @alcode/context typecheck
+            pnpm --filter @alcode/events typecheck
+            pnpm --filter @alcode/agent-core typecheck
+            pnpm --filter @alcode/agent-protocol typecheck
+            pnpm --filter @alcode/storage typecheck
+            pnpm --filter @alcode/host-runtime typecheck
+            pnpm --filter @alcode/coding-agent typecheck
+          } > phase07-typecheck.txt 2>&1
+          code=$?
+          cat phase07-typecheck.txt
+          exit $code
+      - name: Run Phase 0.7 tests
+        run: |
+          set +e
+          pnpm exec vitest run \
+            packages/context/src/context.test.ts \
+            packages/context/src/evaluation.test.ts \
+            packages/agent-core/src/agent-core.test.ts \
+            packages/agent-protocol/src/protocol.test.ts \
+            packages/storage/src/context-receipt-projection.test.ts \
+            packages/host-runtime/src/context-integration.test.ts \
+            > phase07-tests.txt 2>&1
+          code=$?
+          cat phase07-tests.txt
+          exit $code
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase07-diagnostics
+          path: |
+            phase07-typecheck.txt
+            phase07-tests.txt

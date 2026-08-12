@@ -22,6 +22,7 @@
     "@alcode/agent-core": "workspace:*",
     "@alcode/agent-protocol": "workspace:*",
     "@alcode/cognition-extension": "workspace:*",
+    "@alcode/context": "workspace:*",
     "@alcode/events": "workspace:*",
     "@alcode/host-runtime": "workspace:*",
     "@alcode/storage": "workspace:*",

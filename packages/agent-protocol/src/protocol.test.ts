@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AGENT_PROTOCOL_VERSION,
   DURABLE_TRANSCRIPT_CAPABILITY,
+  GRAPH_CONTEXT_CAPABILITY,
   createInMemoryTransportPair,
   isAgentToHostMessage,
   isHostToAgentMessage,
@@ -94,6 +95,34 @@ describe("Agent Protocol v1", () => {
         fidelity: "exact",
       },
     })).toBe(true);
+  });
+
+  it("validates graph capability and requires a durable receipt identity on each inference update", () => {
+    expect(GRAPH_CONTEXT_CAPABILITY).toBe("graph_context_v1");
+    expect(isAgentToHostMessage({
+      type: "context.refresh.request",
+      requestId: "ctx-1",
+      sessionId: "s1",
+    })).toBe(true);
+    expect(isHostToAgentMessage({
+      type: "context.update",
+      requestId: "ctx-1",
+      sessionId: "s1",
+      receiptId: "receipt-1",
+      effectiveMode: "graph-v1",
+      sourceEventSequence: 12,
+      systemPrompt: "host-authorized",
+      messages: [{ role: "user", content: [{ type: "text", text: "hello" }], timestamp: 1 }],
+    })).toBe(true);
+    expect(isHostToAgentMessage({
+      type: "context.update",
+      requestId: "ctx-1",
+      sessionId: "s1",
+      effectiveMode: "graph-v1",
+      sourceEventSequence: 12,
+      systemPrompt: "host-authorized",
+      messages: [],
+    })).toBe(false);
   });
 
   it("rejects incompatible protocol versions and malformed messages", () => {

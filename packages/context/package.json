@@ -1,5 +1,5 @@
 {
-  "name": "@alcode/host-runtime",
+  "name": "@alcode/context",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -17,13 +17,7 @@
   },
   "dependencies": {
     "@alcode/agent-core": "workspace:*",
-    "@alcode/agent-protocol": "workspace:*",
-    "@alcode/cognition-runtime": "workspace:*",
-    "@alcode/context": "workspace:*",
-    "@alcode/events": "workspace:*",
     "@alcode/memory": "workspace:*",
-    "@alcode/reasoning": "workspace:*",
-    "@alcode/storage": "workspace:*",
-    "@alcode/transcript": "workspace:*"
+    "@alcode/reasoning": "workspace:*"
   }
 }

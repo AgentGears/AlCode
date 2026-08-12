@@ -3,14 +3,8 @@ import { AGENT_PROTOCOL_VERSION, type AgentToHostMessage, type HostToAgentMessag
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-
-function hasString(value: Record<string, unknown>, key: string): boolean {
-  return typeof value[key] === "string";
-}
-
-function hasNumber(value: Record<string, unknown>, key: string): boolean {
-  return typeof value[key] === "number" && Number.isFinite(value[key]);
-}
+function hasString(value: Record<string, unknown>, key: string): boolean { return typeof value[key] === "string"; }
+function hasNumber(value: Record<string, unknown>, key: string): boolean { return typeof value[key] === "number" && Number.isFinite(value[key]); }
 
 export function isAgentToHostMessage(value: unknown): value is AgentToHostMessage {
   if (!isObject(value) || typeof value.type !== "string") return false;
@@ -27,6 +21,8 @@ export function isAgentToHostMessage(value: unknown): value is AgentToHostMessag
         && hasNumber(value, "timestamp");
     case "capability.request":
       return hasString(value, "requestId") && hasString(value, "sessionId") && hasString(value, "toolCallId") && hasString(value, "toolName");
+    case "context.refresh.request":
+      return hasString(value, "requestId") && hasString(value, "sessionId");
     case "criterion.evidence":
       return hasString(value, "requestId") && hasString(value, "sessionId") && hasString(value, "evidenceType");
     case "agent.idle":
@@ -60,6 +56,11 @@ export function isHostToAgentMessage(value: unknown): value is HostToAgentMessag
           && ["complete", "incomplete"].includes(String(value.verbatim.status))
           && Array.isArray(value.verbatim.pendingToolCallIds)
           && ["exact", "legacy_text_only"].includes(String(value.verbatim.fidelity))));
+    case "context.update":
+      return hasString(value, "requestId") && hasString(value, "sessionId") && hasString(value, "receiptId")
+        && ["verbatim-v1", "graph-v1"].includes(String(value.effectiveMode))
+        && hasNumber(value, "sourceEventSequence") && hasString(value, "systemPrompt")
+        && Array.isArray(value.messages);
     case "transcript.admitted":
       return hasString(value, "requestId") && hasString(value, "sessionId") && hasString(value, "eventId") && hasNumber(value, "sequence");
     case "capability.result":
@@ -76,7 +77,6 @@ export function isHostToAgentMessage(value: unknown): value is HostToAgentMessag
 export function assertAgentToHostMessage(value: unknown): asserts value is AgentToHostMessage {
   if (!isAgentToHostMessage(value)) throw new Error("Invalid Agent→Host protocol message");
 }
-
 export function assertHostToAgentMessage(value: unknown): asserts value is HostToAgentMessage {
   if (!isHostToAgentMessage(value)) throw new Error("Invalid Host→Agent protocol message");
 }
