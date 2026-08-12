@@ -67,12 +67,18 @@ governed by one codebase.
 
 ## Status
 
-Phases 0.0, 0.1A, 0.1B, 0.2, 0.3, 0.4, and 0.5 are **closed**. The durable
-event/recovery spine, memory and reasoning semantic engines, Host control
-plane, durable cognition integration, and replaceable-Agent property are
-proven. Phase 0.5 closed in merge commit `9b06f4a` with `gate:0.5` green.
-Phase 0.6 has not started. See `docs/roadmap.md` for architecture orientation
-and `docs/phase-0-spec.md` for the executable specification.
+Phases 0.0 through 0.8 are **closed**. The durable event/recovery spine, memory
+and reasoning semantic engines, Host control plane, durable cognition
+integration, replaceable-Agent property, durable transcript reconstruction,
+governed selective context, Host-owned Application Protocol, and React
+Experience Plane are proven under their executable phase gates. Phase 0.8 source
+PR #19 final head `99ea7dc524e8a3be608c6ab8f4aaf0e631a3cb14` passed
+`gate:0.8` and full composed CI, then squash-merged as
+`c4d41028d964155e0f5bb808f49e57385fed80fb`. Phase 0.9 is the next planned
+roadmap unit and is not authorized by Phase 0.8 closure. `verbatim-v1` remains
+the product default and `graph-v1` remains opt-in. See `docs/roadmap.md` for
+architecture orientation and `docs/phase-0-spec.md` for the executable
+specification.
 
 ## Relationship to the prior work
 
