@@ -1,9 +1,8 @@
 # ALCODE Roadmap — Architecture Orientation
 
-Status: **active; Phases 0.0 through 0.7 closed**. Phase 0.7 closed in merge
-commit `eae55ae657b850ab77dbbb1ba0951fe41a1c3285`; exact-head PR CI run
-`31589327975` passed `gate:0.7` and all composed foundation gates. Phase 0.8 is
-the next planned roadmap unit. This document orients the architecture and
+Status: **active; Phases 0.0 through 0.8 closed**. Phase 0.8 source PR #19 final head
+`99ea7dc524e8a3be608c6ab8f4aaf0e631a3cb14` passed `gate:0.8` in exact-head run `31642583639` and full CI run
+`31642583653`, then squash-merged as `c4d41028d964155e0f5bb808f49e57385fed80fb`. Phase 0.9 is the next planned roadmap unit. This document orients the architecture and
 sequencing; the executable specification with authoritative gate definitions
 lives in [`phase-0-spec.md`](./phase-0-spec.md).
 
@@ -14,7 +13,7 @@ mediates environmental capabilities, owns execution policy and canonical state,
 schedules bounded durable work, and exposes a consistent workspace contract
 across execution environments.
 
-The governing ownership model is implemented through Phase 0.7:
+The governing ownership model is implemented through Phase 0.8:
 
 ```text
 Experience Plane
@@ -84,12 +83,12 @@ continues to govern ownership.
 0.7   Governed selective context / graph-v1   CLOSED
                                                  │
                                                  ▼
-0.8   Application protocol + React UI          PLANNED
+0.8   Application protocol + React UI          CLOSED
 0.9   External adapters                        PLANNED
 ```
 
 The completed foundation must not be reopened absent concrete defect evidence.
-Phase 0.7 closure does not authorize Phase 0.8 implementation and does not
+Phase 0.8 closure does not authorize Phase 0.9 implementation and does not
 promote `graph-v1` to the product default.
 
 ---
@@ -317,17 +316,39 @@ green.
 
 ---
 
+### 0.8 — Application Protocol + React experience — CLOSED
+
+Established the public Host-owned Application Protocol and a React Experience
+Plane without moving canonical authority into the frontend. The completed
+surface includes:
+
+- versioned/validated public commands and typed Host decisions;
+- explicit requested/admitted `START_NOW`, `GUIDE`, and `QUEUE` semantics;
+- Host-owned queue identity/order, duplicate protection, and target-sensitive
+  cancellation;
+- authoritative public snapshots, ordered cursor events, replay, gap detection,
+  and snapshot fallback;
+- structured Host-owned permission interactions independent of admission mode;
+- public operation/effect/reconciliation projection preserving uncertainty;
+- a replaceable local loopback transport seam;
+- a React 19 coding shell consuming only the Application Protocol;
+- executable protocol, reconnect, permission, rendering, and ownership proofs.
+
+The current Agent Protocol has no truthful mid-turn steering seam, so GUIDE is
+explicitly rejected with `guide_not_supported` rather than silently changing
+its semantics. Full graph/memory/context inspectors, voice, notifications,
+automations, workflows, remote workspaces, and external adapters remain outside
+this closed phase.
+
+**Gate:** `gate:0.8`, composing `gate:0.7`. Frozen/completed contract:
+[`phase-0.8-plan.md`](./phase-0.8-plan.md).
+
+**Closure:** PR #19 final source head `99ea7dc524e8a3be608c6ab8f4aaf0e631a3cb14` passed dedicated exact-head
+run `31642583639` and full CI run `31642583653`, then squash-merged as `c4d41028d964155e0f5bb808f49e57385fed80fb`.
+
+---
+
 ## Next planned roadmap unit
-
-### 0.8 — Application Protocol + React experience — PLANNED
-
-Define the application transport contract before the UI, then build the React
-experience as a client of ordered Host events. This phase also owns the
-product-level `START_NOW`, `GUIDE`, and `QUEUE` admission semantics rather than
-smuggling them into the Agent Protocol/context compiler.
-
-Phase 0.8 was not started by Phase 0.7 closure. Its implementation requires its
-own explicit authorization and acceptance boundary.
 
 ### 0.9 — External adapters — PLANNED
 
@@ -356,7 +377,7 @@ the context compiler arbitrary filesystem/terminal authority.
 
 ---
 
-## Ownership checkpoint — completed through 0.7
+## Ownership checkpoint — completed through 0.8
 
 ADR 0005 freezes:
 
@@ -368,10 +389,11 @@ ADR 0005 freezes:
 
 Phase 0.5 exercised those boundaries in production code and gates; Phase 0.6
 extended the same ownership model to durable transcript/context reconstruction;
-Phase 0.7 extended it to selective model observation. The Host owns source
-acquisition, context strategy, fallback, receipt admission, and delivery; the
-Agent consumes a disposable context decision and never owns graph traversal or
-memory search.
+Phase 0.7 extended it to selective model observation; Phase 0.8 extended it to
+the public Application Protocol and disposable React projections. The Host owns
+source acquisition, context strategy, admission, capability policy, canonical
+state, recovery, and completion; the Agent and Experience Plane remain clients
+of Host-owned decisions.
 
 Still intentionally unfrozen/deferred:
 
@@ -418,6 +440,8 @@ The backlog remains trigger-based rather than calendar-based.
   and closure evidence.
 - [`docs/phase-0.7-plan.md`](./phase-0.7-plan.md): completed frozen 0.7
   design/acceptance contract and closure evidence.
+- [`docs/phase-0.8-plan.md`](./phase-0.8-plan.md): completed frozen 0.8
+  Application Protocol/React contract and closure evidence.
 - [`docs/constitution.md`](./constitution.md): the 10 frozen principles.
 - [`docs/rules.md`](./rules.md): hard rules.
 - [`docs/backlog.md`](./backlog.md): trigger-based deferred work.

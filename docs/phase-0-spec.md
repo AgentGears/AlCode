@@ -1,10 +1,9 @@
 # ALCODE — Phase 0 Specification (executable)
 
-Status: **active; Phases 0.0, 0.1A, 0.1B, 0.2, 0.3, 0.4, 0.5, 0.6, and 0.7 closed**.
-Phase 0.7 closed in merge commit
-`eae55ae657b850ab77dbbb1ba0951fe41a1c3285`; exact-head PR CI run
-`31589327975` completed with `pnpm gate:0.7` and all composed foundation gates
-green. Phase 0.8 is the next planned roadmap unit. See `docs/roadmap.md` for
+Status: **active; Phases 0.0, 0.1A, 0.1B, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, and 0.8 closed**.
+Phase 0.8 source PR #19 final head `99ea7dc524e8a3be608c6ab8f4aaf0e631a3cb14` passed `pnpm gate:0.8` in
+exact-head run `31642583639` and full CI run `31642583653`, then squash-merged as
+`c4d41028d964155e0f5bb808f49e57385fed80fb`. Phase 0.9 is the next planned roadmap unit. See `docs/roadmap.md` for
 architecture orientation.
 
 This is the executable build order. Each implemented phase has an objective,
@@ -24,6 +23,7 @@ References:
 - Phase 0.5 frozen/completed plan: `docs/phase-0.5-plan.md`
 - Phase 0.6 frozen/completed plan: `docs/phase-0.6-plan.md`
 - Phase 0.7 frozen/completed plan: `docs/phase-0.7-plan.md`
+- Phase 0.8 frozen/completed plan: `docs/phase-0.8-plan.md`
 - Non-goals: `docs/non-goals.md`
 - Backlog: `docs/backlog.md`
 
@@ -64,6 +64,7 @@ alcode/
 ├── packages/
 │   ├── agent-core/        ← owned Agent loop + per-inference Host authority seam
 │   ├── agent-protocol/    ← Host ↔ Agent semantic protocol + local IPC
+│   ├── application-protocol/ ← Host ↔ Experience Plane public semantics (0.8)
 │   ├── ai/                ← provider adapters (0.1B)
 │   ├── coding-agent/      ← app layer, tools, capabilities, worker/CLI/workspace seams
 │   ├── cognition-runtime/ ← orientation/recall/verification/completion policy
@@ -76,6 +77,7 @@ alcode/
 │   ├── storage/           ← locked event store + projections/read models
 │   ├── test-provider/     ← deterministic offline provider
 │   ├── transcript/        ← durable conversational semantics (0.6)
+│   ├── web/               ← React Application Protocol client (0.8)
 │   └── workspace/         ← repository/workspace identity + ownership
 ├── extensions/
 │   └── cognition/         ← thin Agent-side protocol adapter
@@ -85,7 +87,7 @@ alcode/
 ```
 
 `packages/context` is implemented and closed under Phase 0.7.
-`packages/web` is planned for 0.8 and does not exist yet.
+`packages/application-protocol` and `packages/web` are implemented and closed under Phase 0.8.
 
 ### Ownership/dependency direction
 
@@ -93,6 +95,9 @@ The architectural direction is authority-based rather than a single linear
 package chain:
 
 ```text
+web
+  └─ application-protocol
+
 coding-agent
   ├─ agent-core
   ├─ agent-protocol
@@ -106,6 +111,7 @@ cognition-extension
 
 host-runtime
   ├─ agent-protocol
+  ├─ application-protocol
   ├─ cognition-runtime
   ├─ context
   ├─ transcript
@@ -576,41 +582,50 @@ started or authorized by this closure.
 
 ---
 
-## Phase 0.8 — Application Protocol + React GUI
+## Phase 0.8 — Application Protocol + React GUI — CLOSED
 
-**Objective:** streaming React experience over a stable Host-owned application
-transport.
+**Objective:** establish a stable Host-owned public Application Protocol and a
+usable React Experience Plane over the same durable Host runtime, with explicit
+input admission, cancellation, permission interaction, and reconnect/resume.
 
-**Inputs:** open-harness `ui-stream.ts` + React provider (MIT); qwen web UI
-patterns (reference only); stable Host/runtime contracts.
+**As built:**
 
-**Implementation scope:**
-- Define the application transport contract before UI build: ordered event
-  sequence, reconnect/resume cursor, cancellation, duplicate handling, tool
-  progress, permissions, and terminal completion.
-- Build UI primitives: transcript, reasoning stream, tool cards, permission
-  prompts, diffs, cancellation, session switching, resumability, diagnostics,
-  memory/reasoning inspectors, and projection mode/receipt view.
-- Formalize `START_NOW`, `GUIDE`, and `QUEUE` as distinct input-admission
-  semantics at the application/Host boundary.
-- Frontend consumes ordered application events; it never reads the durable DB
-  as an authority source.
+- `@alcode/application-protocol` with protocol versioning, runtime command
+  validation, typed command decisions, public snapshots/cursors/events, pure
+  public reducer, and replaceable local loopback transport;
+- Host Application service/controller with serialized command handling,
+  duplicate/stale/noop distinctions, Host-owned queue identity/order, explicit
+  requested/admitted `START_NOW|GUIDE|QUEUE`, and expected-execution cancel;
+- authoritative public recovery through ordered cursor replay with gap/stale
+  snapshot fallback;
+- structured Host-owned pending permission interactions and typed responses;
+- Capability policy escalation that keeps execution authority in the Host;
+- React 19 client/shell with session selection, transcript, structured current
+  work/tool cards, queue, permission surface, admission controls, Stop,
+  reconnect state, and honest uncertain-effect presentation;
+- static ownership guards preventing Application/UI packages from importing
+  storage/Host/Agent implementation authority;
+- React TSX rendering discovery and dedicated `gate:0.8` CI.
 
-**Explicit exclusions:** full graph visualization; multi-agent kanban.
+`GUIDE` is explicit even though the current Agent Protocol has no safe mid-turn
+steering seam: attempts are rejected as `guide_not_supported` rather than
+silently becoming QUEUE or START_NOW.
 
-**Required tests:** transport reconnect/resume/duplicate-event behavior plus
-rendering tests for each primitive.
+**Explicit exclusions retained:** public remote wire encoding; remote Agent or
+workspace transports; full graph/memory/context/trace inspectors; notifications;
+voice; scheduler/automation UI; workflow/task DAG; subagent/multi-agent product
+protocol; dynamic extension marketplace; exact token-delta playback; provider
+redesign; `graph-v1` default promotion; Phase 0.9 adapters.
 
-**Exit gate:** `pnpm gate:0.8` emits `status: "passed"` with a streaming React
-client driving the same Host runtime and resumability observable.
+**Exit gate:** `pnpm gate:0.8` composes `gate:0.7` and passes the frozen
+AC-08-01 through AC-08-10 protocol, Host authority, admission, cancellation,
+recovery, permission, rendering, and ownership proofs.
 
-**Failure/rollback rule:** UI remains a client of the runtime; no domain logic
-moves into the frontend.
+**Closure:** frozen/completed contract in `docs/phase-0.8-plan.md`. PR #19 final
+source head `99ea7dc524e8a3be608c6ab8f4aaf0e631a3cb14` passed exact-head Phase 0.8 run `31642583639` and
+full CI run `31642583653`, then squash-merged as `c4d41028d964155e0f5bb808f49e57385fed80fb`.
 
-**Dependencies:** stable Host/runtime contracts; context strategies as required
-by the product surface.
-
-**Status:** PLANNED. Phase 0.7 closure does not itself authorize implementation.
+**Status:** CLOSED.
 
 ---
 
@@ -634,7 +649,7 @@ work against the Host without violating the security/ownership model.
 
 ---
 
-## Migration (post-0.7, when worth doing)
+## Migration (post-0.8, when worth doing)
 
 Ola/Ouroboros repositories remain behavioral references. Any future migration
 uses explicit export/import contracts with count/ID/digest/graph/provenance
@@ -655,7 +670,7 @@ databases.**
 0.5   Host + cognition integration            CLOSED
 0.6   Durable verbatim context reconstruction CLOSED
 0.7   Governed selective context / graph-v1   CLOSED
-0.8   Application Protocol + React GUI        PLANNED
+0.8   Application Protocol + React GUI        CLOSED
 0.9   External integrations                   PLANNED
 ```
 

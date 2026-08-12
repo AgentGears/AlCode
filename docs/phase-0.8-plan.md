@@ -1,8 +1,8 @@
 # ALCODE Phase 0.8 — Application Protocol + React Experience
 
-**Status:** **FROZEN IMPLEMENTATION CONTRACT — implementation not started**
+**Status:** **CLOSED**
 
-**Frozen:** 2026-08-12 following the Phase 0.8 pattern normalization, decision memo, and four-scenario contract pressure test.
+**Frozen:** 2026-08-12 following the Phase 0.8 pattern normalization, decision memo, and four-scenario contract pressure test. **Closed:** source PR #19 head `99ea7dc524e8a3be608c6ab8f4aaf0e631a3cb14` passed `gate:0.8` in exact-head run `31642583639` and the full CI workflow in `31642583653`, then squash-merged to `main` as `c4d41028d964155e0f5bb808f49e57385fed80fb`.
 
 This plan is the bounded implementation contract for Phase 0.8. It does not reopen Phases 0.0–0.7 and does not authorize successor Phase 0.9 work.
 
@@ -328,8 +328,22 @@ A demonstrated blocker may change this frozen contract only under project change
 
 ---
 
+## As built / closure evidence
+
+Phase 0.8 shipped the frozen contract without reopening the 0.0–0.7 foundation:
+
+- `@alcode/application-protocol` owns the public, versioned semantic contract, runtime command validation, public cursor/event reducer, snapshot/recovery types, and a replaceable loopback local transport adapter;
+- `@alcode/host-runtime` owns the Application service/controller, command idempotence, requested/admitted input routing, Host queue identity/order, expected-execution cancellation guards, public snapshot/replay projection, and Host-owned permission interactions;
+- Capability approval remains Host policy: mutating capabilities can be escalated to a Host-owned pending interaction, while React only returns a typed decision;
+- `@alcode/web` is a React 19 Experience Plane client using only the Application Protocol for authoritative state; it provides session selection, transcript, structured work/Capability cards, queue, permission surface, START_NOW/GUIDE/QUEUE controls, Stop, reconnect state, and honest uncertain-effect presentation;
+- disconnect/unmount does not issue cancellation; cursor gaps cause resync/snapshot rather than guessed local state;
+- the current Agent Protocol has no truthful mid-turn steering seam, so `GUIDE` is explicitly rejected as `guide_not_supported` rather than silently degrading to START_NOW or QUEUE;
+- React TSX rendering tests were added to the root Vitest discovery and ownership-boundary tests prevent UI/Application Protocol packages from importing Host/storage/Agent authority.
+
+**Closure:** PR #19 final source head `99ea7dc524e8a3be608c6ab8f4aaf0e631a3cb14` passed the dedicated Phase 0.8 run `31642583639` (`pnpm gate:0.8`) and full composed CI run `31642583653`. PR #19 squash-merged as `c4d41028d964155e0f5bb808f49e57385fed80fb`.
+
 ## Completion definition
 
-Phase 0.8 is complete when `pnpm gate:0.8` passes AC-08-01 through AC-08-10. Attractive later surfaces do not delay closure.
+Phase 0.8 is complete: `pnpm gate:0.8` passed AC-08-01 through AC-08-10 at the exact PR head. Attractive later surfaces remain outside the closed phase.
 
 Implementation of Phase 0.9 or any excluded feature requires a distinct authorized objective.
