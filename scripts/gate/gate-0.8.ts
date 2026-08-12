@@ -44,6 +44,10 @@ function recordCombined(checks: GateCheck[], id: string, results: readonly RunRe
   checks.push({ id, status: failed ? "failed" : "passed", evidence: failed ? evidence(failed) : success });
 }
 
+function workflowAnnotation(value: string): string {
+  return value.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A").slice(0, 8000);
+}
+
 async function main(): Promise<void> {
   const startedAt = new Date().toISOString();
   const sha = commitSha();
@@ -117,6 +121,12 @@ async function main(): Promise<void> {
   const receiptPath = join(receiptsDir, `0.8-${safeSha}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
   writeFileSync(receiptPath, JSON.stringify(receipt, null, 2));
   console.log(`\nreceipt: ${receiptPath}`);
+
+  if (receipt.status === "failed" && process.env.GITHUB_ACTIONS === "true") {
+    for (const check of receipt.checks.filter((item) => item.status === "failed")) {
+      console.log(`::error title=${workflowAnnotation(check.id)}::${workflowAnnotation(check.evidence ?? "check failed")}`);
+    }
+  }
 
   process.exit(receipt.status === "passed" ? 0 : 1);
 }
