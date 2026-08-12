@@ -179,7 +179,10 @@ describeLocked("Phase 0.8 Host Application Protocol", () => {
     const rebuilt = reduceApplicationEvents(initial, recovery.events);
     expect(rebuilt).toEqual(await service.getSnapshot(sessionId));
 
-    const stale = await service.recover(sessionId, initial.cursor + 1);
+    // A cursor beyond the authoritative head is always stale. Using
+    // `initial.cursor + 1` was nondeterministic because private Host events may
+    // make that integer a legitimate later public cursor in some runs.
+    const stale = await service.recover(sessionId, Number.MAX_SAFE_INTEGER);
     expect(stale.mode).toBe("snapshot");
     if (stale.mode !== "snapshot") throw new Error("expected snapshot");
     expect(stale.reason).toBe("stale");
