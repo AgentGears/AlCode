@@ -1,13 +1,22 @@
 # Phase 0.7 — Governed selective context / `graph-v1`
 
-Status: **FROZEN DESIGN — NOT STARTED — NOT AUTHORIZED**.
+Status: **CLOSED — FROZEN CONTRACT SATISFIED**.
 
 Baseline: documentation-synchronized closed Phase 0.6 foundation on `main` at
 `d555cc6` (runtime baseline `98c764c`).
 
-This document freezes the Phase 0.7 implementation and acceptance boundary
-after deep architectural review. It does **not** authorize implementation and
-does not reopen the closed contracts of Phases 0.0–0.6.
+Closure: PR #17 final source head
+`7103aa5578a014ee37948d9b966638408aec0a44` squash-merged to `main` as
+`eae55ae657b850ab77dbbb1ba0951fe41a1c3285` on 2026-08-12. Exact-head PR CI
+run `31589327975` completed successfully with `pnpm gate:0.7` and all composed
+foundation gates green.
+
+This document originally froze the Phase 0.7 implementation and acceptance
+boundary after deep architectural review. Implementation was separately
+authorized, executed against these frozen criteria, and is now closed. The
+criteria below remain the historical acceptance contract; closure does not
+reopen the closed contracts of Phases 0.0–0.6, authorize Phase 0.8, or promote
+`graph-v1` to the product default.
 
 The phase separation remains:
 
@@ -24,7 +33,7 @@ The architectural milestone is broader than a graph feature:
 
 `graph-v1` is the first selective observation strategy used to prove that
 boundary. `verbatim-v1` remains the safety/reference strategy and the product
-default even after 0.7 closes.
+default after 0.7 closure.
 
 ---
 
@@ -1663,13 +1672,36 @@ frozen large-history fixture
 > evidence-based authorization decision, and `pnpm gate:0.7` must emit `passed`
 > while composing the closed Phase 0.6 gate.**
 
+This criterion was satisfied by the exact-head Phase 0.7 gate on PR #17.
+
 ---
 
-## 39. Authorization boundary
+## 39. Historical authorization boundary and closure record
 
-This document freezes **design and acceptance criteria only**.
+At freeze time, this document authorized **design and acceptance criteria only**;
+implementation required separate explicit client authorization. That
+authorization was later given and the phase was executed without adding a
+successor-phase gate.
 
-Phase 0.7 implementation is **NOT STARTED** and **NOT AUTHORIZED** by this
-change. Implementation requires a separate explicit client authorization.
+Closure evidence:
 
-No Phase 0.8 work or graph-default promotion is authorized by this plan.
+```text
+preregistered corpus commit
+83c084a8654536cf9dc21494b1d67cc9fb6b6c90
+
+final Phase 0.7 source head
+7103aa5578a014ee37948d9b966638408aec0a44
+
+exact-head PR CI
+31589327975 → gate:0.7 PASSED + composed gates green
+
+merge to main
+eae55ae657b850ab77dbbb1ba0951fe41a1c3285
+```
+
+The final review correction addressed demonstrated cancellation/context-refresh
+failure modes and malformed Git porcelain input handling, then reran the frozen
+gate successfully before merge. No Phase 0.8 work was included.
+
+Phase 0.7 is therefore **CLOSED**. Closure does not authorize Phase 0.8 work and
+does not authorize `graph-v1` product-default promotion.
