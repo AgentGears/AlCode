@@ -56,6 +56,15 @@ export interface CapabilityBrokerResult {
   error?: string;
 }
 
+export type CapabilityApprovalDecision = "allow_once" | "allow_always" | "deny";
+export type CapabilityApprovalHandler = (request: {
+  sessionId: string;
+  toolName: string;
+  isReadOnly: boolean;
+  args: unknown;
+  reason: string;
+}) => Promise<CapabilityApprovalDecision>;
+
 function freezeCanonical<T>(value: T): T {
   return JSON.parse(canonicalStringify(value)) as T;
 }
@@ -81,6 +90,8 @@ function verificationResultData(execution: HostCapabilityResult, outcome: Execut
 
 export class CapabilityBroker {
   private readonly byName: Map<string, HostCapability>;
+  private readonly alwaysApproved = new Set<string>();
+  private approvalHandler: CapabilityApprovalHandler | undefined;
 
   constructor(
     private readonly store: WorkspaceEventStore,
@@ -90,6 +101,18 @@ export class CapabilityBroker {
     capabilities: readonly HostCapability[],
   ) {
     this.byName = new Map(capabilities.map((capability) => [capability.name, capability]));
+  }
+
+  /**
+   * Installs an application-layer human approval coordinator. The broker keeps
+   * capability authority; the renderer only answers a Host-owned interaction.
+   */
+  setApprovalHandler(handler: CapabilityApprovalHandler | undefined): void {
+    this.approvalHandler = handler;
+  }
+
+  private approvalKey(sessionId: SessionId, toolName: string): string {
+    return `${sessionId as string}:${toolName}`;
   }
 
   private catchUpBarriers(): void {
@@ -106,14 +129,31 @@ export class CapabilityBroker {
 
     const frozenArgs = freezeCanonical(request.args);
     const isReadOnly = capability.isReadOnly ?? false;
-    const authorization = await this.policy.authorizeCapability({
-      sessionId: request.sessionId as string,
-      toolName: request.toolName,
-      isReadOnly,
-      args: frozenArgs,
-    });
-    if (!authorization.allowed) {
-      return { outcome: "denied", error: authorization.reason };
+    const approvalKey = this.approvalKey(request.sessionId, request.toolName);
+    const alreadyApproved = this.alwaysApproved.has(approvalKey);
+    if (!alreadyApproved) {
+      const authorization = await this.policy.authorizeCapability({
+        sessionId: request.sessionId as string,
+        toolName: request.toolName,
+        isReadOnly,
+        args: frozenArgs,
+      });
+      if (!authorization.allowed) {
+        if (!authorization.approvalRequired || !this.approvalHandler) {
+          return { outcome: "denied", error: authorization.reason };
+        }
+        const decision = await this.approvalHandler({
+          sessionId: request.sessionId as string,
+          toolName: request.toolName,
+          isReadOnly,
+          args: frozenArgs,
+          reason: authorization.reason,
+        });
+        if (decision === "deny") {
+          return { outcome: "denied", error: authorization.reason };
+        }
+        if (decision === "allow_always") this.alwaysApproved.add(approvalKey);
+      }
     }
 
     const verificationPlan = await this.cognition.matchVerification(
@@ -254,7 +294,6 @@ export class CapabilityBroker {
           hypothesisId: verification.hypothesisId,
           matchStatus: verification.match.status,
           matchMethod: verification.match.method,
-          // Unknown trust values fail closed rather than upgrading evidence.
           outcomeTrust: verification.match.outcomeTrust === "trusted" ? "trusted" : "untrusted",
           outcome: verification.outcome,
         };
