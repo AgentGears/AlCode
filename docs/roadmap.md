@@ -1,10 +1,11 @@
 # ALCODE Roadmap — Architecture Orientation
 
-Status: **active; Phases 0.0 through 0.6 closed**. Phase 0.6 closed in merge
-commit `98c764c` with `gate:0.6` green. Phase 0.7 is the next roadmap unit; its
-reviewed design is **FROZEN / NOT STARTED / NOT AUTHORIZED**. This document
-orients the architecture and sequencing; the executable specification with
-authoritative gate definitions lives in [`phase-0-spec.md`](./phase-0-spec.md).
+Status: **active; Phases 0.0 through 0.7 closed**. Phase 0.7 closed in merge
+commit `eae55ae657b850ab77dbbb1ba0951fe41a1c3285`; exact-head PR CI run
+`31589327975` passed `gate:0.7` and all composed foundation gates. Phase 0.8 is
+the next planned roadmap unit. This document orients the architecture and
+sequencing; the executable specification with authoritative gate definitions
+lives in [`phase-0-spec.md`](./phase-0-spec.md).
 
 ## North star
 
@@ -13,13 +14,13 @@ mediates environmental capabilities, owns execution policy and canonical state,
 schedules bounded durable work, and exposes a consistent workspace contract
 across execution environments.
 
-The governing ownership model is implemented through Phase 0.6:
+The governing ownership model is implemented through Phase 0.7:
 
 ```text
 Experience Plane
 CLI / Desktop / Web / API
       │
-      │ Application Protocol (later)
+      │ Application Protocol (0.8)
       ▼
 ┌────────────────────────────────────┐
 │            ALCODE HOST             │
@@ -54,16 +55,18 @@ CLI / Desktop / Web / API
               └──────────┬────────────┘
                          ▼
                 Host context strategy
-                verbatim-v1 (closed)
-                graph-v1 (frozen 0.7)
+                verbatim-v1 (default)
+                graph-v1 (opt-in)
 ```
 
 The load-bearing architectural shift is complete: durable execution and
 canonical state are Host authority; the Agent is a replaceable reasoning
-process. Memory and reasoning are semantic engines behind Host-owned admission,
-not independent state-owning runtimes. Phase 0.6 additionally proves that model
-conversation continuity is reconstructable from canonical events rather than
-old Agent process memory. ADR 0005 continues to govern ownership.
+process. Memory, reasoning, transcript reconstruction, and selective context
+remain semantic/control-plane capabilities behind Host-owned admission rather
+than independent state-owning runtimes. Phase 0.7 additionally proves that
+provider-visible observation can be recomputed and authorized at every
+inference boundary without moving context selection into the Agent. ADR 0005
+continues to govern ownership.
 
 ---
 
@@ -78,18 +81,16 @@ old Agent process memory. ADR 0005 continues to govern ownership.
 0.4   Reasoning semantic engine               CLOSED
 0.5   Host + cognition integration            CLOSED
 0.6   Durable verbatim context reconstruction CLOSED
+0.7   Governed selective context / graph-v1   CLOSED
                                                  │
                                                  ▼
-0.7   Governed selective context / graph-v1    FROZEN — NOT STARTED
-                                                 │
-                              ┌──────────────────┴──────────────────┐
-                              ▼                                     ▼
-0.8   Application protocol + React UI          PLANNED     0.9 External adapters PLANNED
+0.8   Application protocol + React UI          PLANNED
+0.9   External adapters                        PLANNED
 ```
 
 The completed foundation must not be reopened absent concrete defect evidence.
-A frozen successor design still does not start the phase; implementation
-requires separate explicit authorization.
+Phase 0.7 closure does not authorize Phase 0.8 implementation and does not
+promote `graph-v1` to the product default.
 
 ---
 
@@ -238,17 +239,42 @@ phase.
 **Closure:** PR #12 source head `303a0c4` merged as `98c764c`; post-merge CI run
 `31542403984` completed successfully.
 
----
+### 0.7 — Governed selective context / `graph-v1` — CLOSED
 
-## Next roadmap unit
+Phase 0.7 answers "what should the model see **at this inference boundary**?"
+without moving context authority into the Agent. The completed surfaces include:
 
-### 0.7 — Governed selective context / `graph-v1` — FROZEN / NOT STARTED
+- `@alcode/context` with deterministic source/candidate contracts, trust classes,
+  objective-scoped reasoning-frontier derivation, relevance-gated memory
+  selection, canonical rendering, post-render cost accounting, bounded receipts,
+  and isolated evaluation helpers;
+- Host-owned stable canonical source reads plus explicit bounded workspace/Git
+  observation and provenance;
+- a Host context service that authorizes every graph-capable provider inference,
+  durably admits `context.projection_compiled`, and delivers `context.update`;
+- `graph_context_v1`, `context.refresh.request`, and `context.update` Agent
+  Protocol semantics;
+- Agent-core `beforeInference` authority seam immediately before every provider
+  stream, including later tool-loop inference;
+- trust containment preventing persisted source text from acquiring
+  `host_control` authority;
+- current-turn/prior-turn transcript preservation with tool-call/result
+  atomicity;
+- objective-scoped reasoning selection including operative hypotheses,
+  falsifiers, decisions, verification obligations, blockers, implicated paths,
+  and decisive evidence;
+- positive-relevance memory eligibility with no strength-only selection and no
+  context-triggered reinforcement;
+- deterministic hard post-render graph bounds with explicit verbatim fallback;
+- bounded canonical receipts with candidate-universe and request-environment
+  digests, plus rebuildable receipt projection;
+- audit-meta isolation so context receipts do not contaminate reasoning or
+  memory provenance;
+- Agent replacement and Host reopen continuity at the context boundary;
+- preregistered 14-family isolated evaluation with a non-vacuous effective
+  `graph-v1` reduction proof.
 
-Phase 0.6 answers "what did the model previously see?". Phase 0.7 is frozen to
-answer "what should the model see **at this inference boundary**?" without moving
-context authority into the Agent.
-
-The reviewed contract is:
+The signature policy is executable:
 
 ```text
 Agent reaches inference boundary
@@ -275,48 +301,35 @@ context.update
 ModelProvider.stream()
 ```
 
-Frozen load-bearing decisions:
+`verbatim-v1` remains both the safety fallback and product default. Closing
+Phase 0.7 did **not** promote graph mode, add LLM summarization, add a provider
+exact tokenizer/window policy, introduce Phase 0.8 dispatch semantics, or start
+Phase 0.8.
 
-- Host refreshes context before **every** provider inference, including later
-  tool-loop requests in the same user turn;
-- source-derived text can never implicitly become Host control merely because it
-  is stored; graph items carry explicit trust/provenance classes;
-- the hard graph bound is deterministic post-render serialized characters;
-  `chars4-v1` remains approximate diagnostic token cost only;
-- workspace state is an explicitly timed/provenanced observation, not falsely
-  described as transactionally atomic with the event log;
-- reasoning context is an objective-scoped causal frontier including linked
-  hypotheses, falsifiers, active decisions, verification obligations, blockers,
-  implicated paths and decisive evidence rather than "all active reasoning";
-- automatic memory insertion requires positive relevance/structural/exact
-  eligibility and never reinforces memory;
-- context receipts are bounded using selected entries, exclusion summaries,
-  candidate-universe digest and request-environment digest;
-- `context.projection_compiled` is an audit/meta-event and must not accidentally
-  become cognition evidence or memory provenance;
-- Phase 0.7 cannot close through vacuous all-fallback behavior: a preregistered
-  deterministic fixture must actually deliver graph-v1, preserve required
-  facts, use fewer serialized characters than verbatim, and succeed.
+**Gate:** `gate:0.7`, composing `gate:0.6`. Frozen/completed contract and
+closure evidence: [`phase-0.7-plan.md`](./phase-0.7-plan.md).
 
-`verbatim-v1` remains both the safety fallback and product default. Phase 0.7
-closure does not promote graph mode; promotion remains a separate evidence-based
-authorization decision.
-
-See [`phase-0.7-plan.md`](./phase-0.7-plan.md). The design is **frozen**;
-implementation is **not started and not authorized**.
+**Closure:** PR #17 final source head
+`7103aa5578a014ee37948d9b966638408aec0a44` squash-merged as
+`eae55ae657b850ab77dbbb1ba0951fe41a1c3285`; exact-head PR CI run
+`31589327975` completed successfully with `gate:0.7` and all composed gates
+green.
 
 ---
 
-## Later roadmap
+## Next planned roadmap unit
 
-### 0.8 — Application Protocol + React experience
+### 0.8 — Application Protocol + React experience — PLANNED
 
 Define the application transport contract before the UI, then build the React
 experience as a client of ordered Host events. This phase also owns the
 product-level `START_NOW`, `GUIDE`, and `QUEUE` admission semantics rather than
 smuggling them into the Agent Protocol/context compiler.
 
-### 0.9 — External adapters
+Phase 0.8 was not started by Phase 0.7 closure. Its implementation requires its
+own explicit authorization and acceptance boundary.
+
+### 0.9 — External adapters — PLANNED
 
 Add hooks, MCP, ACP, and code-intelligence adapters onto the Host. Integration
 remains an adapter role, never a canonical state owner.
@@ -335,15 +348,15 @@ workspace identity != transport != location
 
 SSH, WSL, Docker, remote-server backends, browser capability, and other remote
 execution mechanisms remain deferred until a product requirement activates
-them. They are not Phase 0.7 prerequisites.
+them. They were not Phase 0.7 prerequisites.
 
-Phase 0.7 freezes only a bounded, read-only Host workspace-observation port. It
-does not promote a remote workspace backend or give the context compiler
-arbitrary filesystem/terminal authority.
+Phase 0.7 implemented only a bounded, read-only Host workspace-observation port
+for selective context. It did not promote a remote workspace backend or give
+the context compiler arbitrary filesystem/terminal authority.
 
 ---
 
-## Ownership checkpoint — completed
+## Ownership checkpoint — completed through 0.7
 
 ADR 0005 freezes:
 
@@ -354,9 +367,11 @@ ADR 0005 freezes:
 - Host ↔ Reasoning engine
 
 Phase 0.5 exercised those boundaries in production code and gates; Phase 0.6
-extended the same ownership model to durable transcript/context reconstruction.
-Phase 0.7 preserves that authority model: the Host owns observation policy and
-the Agent consumes a disposable context decision.
+extended the same ownership model to durable transcript/context reconstruction;
+Phase 0.7 extended it to selective model observation. The Host owns source
+acquisition, context strategy, fallback, receipt admission, and delivery; the
+Agent consumes a disposable context decision and never owns graph traversal or
+memory search.
 
 Still intentionally unfrozen/deferred:
 
@@ -401,8 +416,8 @@ The backlog remains trigger-based rather than calendar-based.
   authoritative gate definitions and historical phase contracts.
 - [`docs/phase-0.6-plan.md`](./phase-0.6-plan.md): completed frozen 0.6 contract
   and closure evidence.
-- [`docs/phase-0.7-plan.md`](./phase-0.7-plan.md): frozen 0.7 design/acceptance
-  contract; implementation not started or authorized.
+- [`docs/phase-0.7-plan.md`](./phase-0.7-plan.md): completed frozen 0.7
+  design/acceptance contract and closure evidence.
 - [`docs/constitution.md`](./constitution.md): the 10 frozen principles.
 - [`docs/rules.md`](./rules.md): hard rules.
 - [`docs/backlog.md`](./backlog.md): trigger-based deferred work.

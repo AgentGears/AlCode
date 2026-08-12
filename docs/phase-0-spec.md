@@ -1,17 +1,19 @@
 # ALCODE — Phase 0 Specification (executable)
 
-Status: **active; Phases 0.0, 0.1A, 0.1B, 0.2, 0.3, 0.4, 0.5, and 0.6 closed**.
-Phase 0.6 closed in merge commit `98c764c` with `pnpm gate:0.6` green. Phase
-0.7 is the next roadmap unit; its reviewed design is **FROZEN / NOT STARTED /
-NOT AUTHORIZED**. See `docs/roadmap.md` for architecture orientation.
+Status: **active; Phases 0.0, 0.1A, 0.1B, 0.2, 0.3, 0.4, 0.5, 0.6, and 0.7 closed**.
+Phase 0.7 closed in merge commit
+`eae55ae657b850ab77dbbb1ba0951fe41a1c3285`; exact-head PR CI run
+`31589327975` completed with `pnpm gate:0.7` and all composed foundation gates
+green. Phase 0.8 is the next planned roadmap unit. See `docs/roadmap.md` for
+architecture orientation.
 
 This is the executable build order. Each implemented phase has an objective,
 scope, explicit exclusions, required evidence, and an **executable exit gate**
 (`pnpm gate:X.Y`). A phase is complete when its frozen gate emits
 `status: "passed"`; documentation does not substitute for executable evidence.
 Closed-phase sections below record the as-built contract rather than reopening
-their implementation plans. A frozen successor design defines acceptance but
-does not authorize implementation by itself.
+their implementation plans. A planned successor does not become authorized by
+closure of its predecessor.
 
 References:
 - Constitution (10 principles, frozen): `docs/constitution.md`
@@ -21,7 +23,7 @@ References:
 - Runtime ownership boundaries: `docs/adr/0005-runtime-ownership-boundaries.md`
 - Phase 0.5 frozen/completed plan: `docs/phase-0.5-plan.md`
 - Phase 0.6 frozen/completed plan: `docs/phase-0.6-plan.md`
-- Phase 0.7 frozen/not-started plan: `docs/phase-0.7-plan.md`
+- Phase 0.7 frozen/completed plan: `docs/phase-0.7-plan.md`
 - Non-goals: `docs/non-goals.md`
 - Backlog: `docs/backlog.md`
 
@@ -60,12 +62,13 @@ command emits `status: "passed"`.
 ```text
 alcode/
 ├── packages/
-│   ├── agent-core/        ← owned minimal Agent loop + durable-prefix seam
+│   ├── agent-core/        ← owned Agent loop + per-inference Host authority seam
 │   ├── agent-protocol/    ← Host ↔ Agent semantic protocol + local IPC
 │   ├── ai/                ← provider adapters (0.1B)
-│   ├── coding-agent/      ← app layer, tools, capabilities, worker/CLI seams
+│   ├── coding-agent/      ← app layer, tools, capabilities, worker/CLI/workspace seams
 │   ├── cognition-runtime/ ← orientation/recall/verification/completion policy
-│   ├── events/            ← canonical event envelope/contracts
+│   ├── context/           ← deterministic selective-context semantics/compiler (0.7)
+│   ├── events/            ← canonical event envelope/contracts + semantic classes
 │   ├── host-runtime/      ← Host control plane + transcript/context authority
 │   ├── memory/            ← Ola-derived memory semantics (0.3)
 │   ├── reasoning/         ← Ouroboros-derived reasoning semantics (0.4)
@@ -81,7 +84,7 @@ alcode/
 └── .github/workflows/ci.yml
 ```
 
-`packages/context` is frozen for Phase 0.7 but does not exist yet.
+`packages/context` is implemented and closed under Phase 0.7.
 `packages/web` is planned for 0.8 and does not exist yet.
 
 ### Ownership/dependency direction
@@ -94,6 +97,7 @@ coding-agent
   ├─ agent-core
   ├─ agent-protocol
   ├─ cognition-extension
+  ├─ context (workspace-observation adapter/contracts)
   └─ Host bootstrap/adapters
 
 cognition-extension
@@ -103,11 +107,17 @@ cognition-extension
 host-runtime
   ├─ agent-protocol
   ├─ cognition-runtime
+  ├─ context
   ├─ transcript
   ├─ storage
   ├─ memory
   ├─ reasoning
   └─ events
+
+context
+  ├─ agent-core
+  ├─ memory
+  └─ reasoning
 
 cognition-runtime
   ├─ memory
@@ -116,9 +126,10 @@ cognition-runtime
 
 The Agent worker and cognition extension do not own storage, workspace locks,
 canonical admission, environmental process lifecycle, transcript authority,
-context strategy, or final completion. Memory/reasoning/transcript remain
-semantic domains; Host/storage own canonical state and persistence. See ADR
-0005 and the closed Phase 0.6 plan.
+context strategy, or final completion. `@alcode/context` owns deterministic
+selection/rendering semantics but not source acquisition, canonical admission,
+workspace mutation, Agent lifecycle, or provider dispatch. Host/storage own
+canonical state and persistence. See ADR 0005 and the closed Phase 0.7 plan.
 
 ## Storage layout
 
@@ -147,7 +158,9 @@ The event log is canonical. Projection cursors never advance beyond the event
 head; derived projections are rebuildable. Workspace ownership is one writer
 through the process-held OS lock. Possibly-mutating interrupted operations use
 the explicit Phase 0.2 uncertainty/reconciliation state machine and are not
-automatically retried. Schema remains v7 after Phase 0.6.
+automatically retried. Schema remains v7 after Phase 0.7; context receipts are
+canonical events with a rebuildable projection summary rather than a schema-v8
+source of truth.
 
 ---
 
@@ -454,77 +467,94 @@ completed successfully with Phase 0.6 job `93947566591` green.
 
 ---
 
-## Phase 0.7 — Governed selective context / `graph-v1` — FROZEN / NOT STARTED
-
-**Status:** FROZEN DESIGN — NOT STARTED — NOT AUTHORIZED. The authoritative
-implementation/acceptance contract is `docs/phase-0.7-plan.md`.
+## Phase 0.7 — Governed selective context / `graph-v1` — CLOSED
 
 **Objective:** make selective model observation a deterministic, auditable,
 reversible Host policy. `graph-v1` is an opt-in strategy; `verbatim-v1` remains
 both the safety fallback and product default.
 
-**Inputs:** closed 0.6 verbatim/durable transcript baseline; closed 0.4
-reasoning semantics; closed 0.3 memory semantics; 0.5 Host operation/cognition
-state; bounded explicitly recorded Host workspace observation.
+The frozen implementation/acceptance contract and closure evidence are recorded
+in `docs/phase-0.7-plan.md`.
 
-**Frozen architecture:**
+**As built:**
 
-- every `ModelProvider.stream()` in a 0.7-capable Agent is immediately preceded
-  by a Host context refresh; no turn-start graph snapshot may be reused across
-  later tool-loop inference after state changes;
-- one stable canonical source cut supplies transcript/reasoning/memory/operation
-  state; workspace/Git state is a separately timed/provenanced observation and
-  is not falsely described as transactionally atomic with SQLite;
-- pure `@alcode/context` owns deterministic policy only; Host owns acquisition,
-  strategy, fallback, receipt admission and delivery;
-- context items carry explicit trust classes (`host_control`, `host_observed`,
-  `verified_evidence`, `epistemic_claim`, `advisory_memory`, `unverified_data`);
-  canonical source text can never become Host control solely through storage;
-- source-derived system content is structured/escaped data under Host-authored
-  control framing, not uncontrolled prose interpolation;
-- current-turn canonical transcript and the immediately preceding complete turn
-  are required, preserving tool-call/result atomicity;
-- reasoning selection uses an objective-scoped causal frontier containing
-  relevant active hypotheses, linked falsifiers, active decisions, pending
-  verification obligations, blocking diagnostics/implicated graph paths and
-  decisive evidence; it does not dump all active historical hypotheses;
-- memory insertion is read-only and requires positive exact/relevance/structural
-  eligibility before applying the closed Phase 0.3 score; multiple deterministic
-  anchors are scored independently and aggregated by max score; selection never
-  records memory `seen`/`used`;
-- graph context has a hard deterministic **post-render serialized-character**
-  bound; `chars4-v1` remains an approximate comparison metric, not a provider
-  token upper bound;
-- required graph facts are never silently dropped; required overflow causes an
-  explicit `verbatim-v1` fallback without claiming verbatim satisfies the graph
-  bound;
-- canonical `context.projection_compiled` receipts separate source, attempted
-  graph decision, effective delivery and fallback; excluded candidates are
-  bounded summaries plus a candidate-universe digest rather than an unbounded
-  rejected-item list;
-- receipts include a request-environment digest covering base-system-prompt
-  digest, tool-definition digest, compiler/policy/render/trust versions and
-  budget configuration;
-- the canonical receipt event is the durability barrier; the existing SQL
-  `projection_receipts` summary remains rebuildable/derived unless a concrete
-  implementation invariant proves critical visibility necessary;
-- context receipt events are audit/meta-events and must not become reasoning
-  evidence, memory provenance fallback or task-world observations;
-- A/B fixtures/metrics are preregistered before selector implementation and use
-  isolated equivalent source state;
-- Phase 0.7 cannot close vacuously through all-fallback behavior: at least one
-  frozen fixture must deliver `graph-v1`, preserve required facts, use fewer
-  serialized characters than `verbatim-v1`, and succeed under the deterministic
-  oracle;
-- no evaluation result automatically promotes graph to the product default.
+- `@alcode/context` owns immutable context-source/candidate contracts, trust
+  classes, objective-scoped reasoning-frontier semantics, relevance-gated memory
+  selection, deterministic rendering/costing, bounded receipts, and isolated
+  evaluation helpers;
+- Host source acquisition derives transcript/reasoning/memory/operation state
+  from one stable canonical source cut while workspace/Git state is captured as
+  a separate bounded timed/provenanced observation;
+- Host context service owns requested strategy, graph compilation, safe fallback,
+  canonical `context.projection_compiled` admission, and context delivery;
+- `context.projection_compiled` is classified as `audit_meta`, preventing context
+  receipt history from becoming reasoning evidence, memory provenance fallback,
+  or task-world context merely by recency;
+- Agent Protocol adds `graph_context_v1`, `context.refresh.request`, and
+  `context.update` while preserving `durable_transcript_v1` as a prerequisite;
+- `@alcode/agent-core` awaits a Host-owned `beforeInference` context decision
+  immediately before every provider stream, including subsequent tool-loop
+  requests;
+- cancellation and replacement paths fail closed rather than leaving a pending
+  context refresh capable of authorizing later provider inference;
+- graph items distinguish `host_control`, `host_observed`,
+  `verified_evidence`, `epistemic_claim`, `advisory_memory`, and
+  `unverified_data`; persisted source text cannot become Host control solely by
+  storage;
+- current-turn and immediately preceding complete transcript units are required
+  with tool-call/result atomicity;
+- reasoning selection uses an objective-scoped frontier containing operative
+  hypotheses, linked falsifiers, active decisions, verification obligations,
+  blockers, implicated paths, and decisive evidence rather than all active
+  historical reasoning;
+- memory insertion requires positive exact/relevance/structural eligibility
+  before the closed Phase 0.3 ranker, uses deterministic multi-anchor scoring,
+  and never records `seen`/`used` or reinforcement merely because an item is
+  selected;
+- graph output enforces a deterministic hard post-render serialized-character
+  bound; approximate `chars4-v1` token cost remains diagnostic/comparative only;
+- required graph facts are never silently omitted to fit; unsafe/invalid/
+  oversized graph attempts fall back to the closed `verbatim-v1` path;
+- bounded receipts separate source, attempt, delivery, fallback, selected
+  provenance, exclusion summaries, candidate-universe digest, and
+  request-environment digest; the SQL receipt projection remains rebuildable;
+- a 14-family deterministic evaluation corpus was preregistered before selector
+  implementation, and paired evaluation uses isolated equivalent state;
+- non-vacuous evaluation proves at least one effective `graph-v1` case that
+  preserves required facts, uses fewer rendered characters than the verbatim
+  reference, and succeeds under the deterministic oracle;
+- Agent replacement and Host reopen preserve Host context authority without
+  relying on disposable Agent-local context state.
 
-**Frozen exclusions:** graph default promotion; LLM summarization/semantic
-compaction; provider-specific tokenizers/window enforcement/transforms; raw
-system-prompt/tool-definition durability; dense/vector memory retrieval; memory
-reinforcement due to selection; new reasoning semantics solely for ranking;
+**Signature policy:**
+
+```text
+Agent reaches inference boundary
+        ↓
+Host captures canonical cut N + WorkspaceObservation
+        ↓
+trust classification + objective-scoped reasoning
++ canonical transcript + relevance-gated memory
+        ↓
+deterministic post-render selection
+        ↓
+graph-v1 OR fail-safe verbatim-v1
+        ↓
+append context.projection_compiled
+        ↓
+context.update
+        ↓
+ModelProvider.stream()
+```
+
+**Explicit exclusions retained:** graph default promotion; LLM-generated
+summarization/semantic compaction; provider-specific tokenizers/window
+management/transforms; dense/vector memory retrieval; memory reinforcement due
+to context selection; new reasoning semantics solely for ranking;
 static-turn/dynamic-overlay optimization; pending-input redispatch /
-START_NOW / GUIDE / QUEUE; UI; remote Agent transport; browser;
-workflow/task identity; subagents; general scheduler/automation.
+`START_NOW` / `GUIDE` / `QUEUE`; application/UI protocol; remote Agent
+transport; browser; workflow/task identity; subagents; general scheduler/
+automation; graph visualization UI.
 
 **Exit gate:** `pnpm gate:0.7` composes `gate:0.6` and proves inference-boundary
 freshness, coherent canonical source cuts, workspace-observation provenance,
@@ -532,10 +562,17 @@ trust/data separation, stored-injection containment, objective-scoped frontier
 with decisions/falsifiers, transcript atomicity, relevance-gated read-only
 memory, hard post-render graph bounds, safe fallback, bounded/reproducible
 receipts, meta-event non-contamination, Agent replacement/recovery, verbatim
-default, frozen evaluation corpus isolation, and the non-vacuous graph value
-proof defined in `docs/phase-0.7-plan.md`.
+default, frozen evaluation corpus isolation, and non-vacuous graph value.
 
-Implementation requires separate explicit authorization.
+**Closure:** preregistered corpus commit
+`83c084a8654536cf9dc21494b1d67cc9fb6b6c90`; PR #17 final source head
+`7103aa5578a014ee37948d9b966638408aec0a44` squash-merged as
+`eae55ae657b850ab77dbbb1ba0951fe41a1c3285`; exact-head PR CI run
+`31589327975` completed successfully with `gate:0.7` and all composed gates
+green.
+
+**Status:** CLOSED. `verbatim-v1` remains the product default. Phase 0.8 was not
+started or authorized by this closure.
 
 ---
 
@@ -573,6 +610,8 @@ moves into the frontend.
 **Dependencies:** stable Host/runtime contracts; context strategies as required
 by the product surface.
 
+**Status:** PLANNED. Phase 0.7 closure does not itself authorize implementation.
+
 ---
 
 ## Phase 0.9 — External integrations
@@ -595,7 +634,7 @@ work against the Host without violating the security/ownership model.
 
 ---
 
-## Migration (post-0.6, when worth doing)
+## Migration (post-0.7, when worth doing)
 
 Ola/Ouroboros repositories remain behavioral references. Any future migration
 uses explicit export/import contracts with count/ID/digest/graph/provenance
@@ -615,7 +654,7 @@ databases.**
 0.4   Reasoning semantic engine               CLOSED
 0.5   Host + cognition integration            CLOSED
 0.6   Durable verbatim context reconstruction CLOSED
-0.7   Governed selective context / graph-v1   FROZEN — NOT STARTED
+0.7   Governed selective context / graph-v1   CLOSED
 0.8   Application Protocol + React GUI        PLANNED
 0.9   External integrations                   PLANNED
 ```

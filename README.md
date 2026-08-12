@@ -8,13 +8,15 @@ reasoning, tools, model access, persistence, and UI are governed by one
 codebase. The append-only event log is the source of truth; reasoning, memory,
 the transcript, the UI, and the LLM context window are all projections of it.
 
-**Status:** Phases 0.0 through 0.6 are **closed**. The durable event/recovery
+**Status:** Phases 0.0 through 0.7 are **closed**. The durable event/recovery
 spine, memory semantics, reasoning semantics, Host control plane, durable
-cognition integration, replaceable-Agent property, and durable verbatim model
-context are proven. Phase 0.6 closed in merge commit `98c764c`; `gate:0.6` is
-green. Phase 0.7 has a **frozen design but is not started or authorized for
-implementation**. See [`docs/roadmap.md`](docs/roadmap.md) for architecture
-orientation.
+cognition integration, replaceable-Agent property, durable verbatim model
+context, and governed selective-context policy are proven. Phase 0.7 closed in
+merge commit `eae55ae657b850ab77dbbb1ba0951fe41a1c3285`; exact-head PR CI run
+`31589327975` passed `gate:0.7` and all composed foundation gates. `verbatim-v1`
+remains the product default; `graph-v1` remains opt-in. Phase 0.8 is planned and
+was not started by Phase 0.7 closure. See [`docs/roadmap.md`](docs/roadmap.md)
+for architecture orientation.
 
 `ref/` (gitignored) holds studied reference codebases — not part of this repo.
 
@@ -31,8 +33,8 @@ orientation.
 7. [`docs/backlog.md`](docs/backlog.md) — deferred items with reactivation conditions.
 8. [`docs/phase-0.6-plan.md`](docs/phase-0.6-plan.md) — frozen and completed
    durable verbatim context reconstruction plan and closure evidence.
-9. [`docs/phase-0.7-plan.md`](docs/phase-0.7-plan.md) — **frozen, not started,
-   not authorized** governed selective-context / `graph-v1` plan.
+9. [`docs/phase-0.7-plan.md`](docs/phase-0.7-plan.md) — frozen and completed
+   governed selective-context / `graph-v1` contract and closure evidence.
 
 ### Architecture decisions (ADRs)
 
@@ -58,6 +60,11 @@ orientation.
 - **Transcript/context baseline:** ALCODE-owned rich transcript domain,
   Host-acknowledged transcript admission, `verbatim-v1` reconstruction, and
   replaceable-Agent hydration from canonical events.
+- **Selective context:** ALCODE-owned `@alcode/context` compiler and Host context
+  service with per-inference authorization, `graph-v1`, trust/provenance
+  containment, objective-scoped reasoning, relevance-gated memory, bounded
+  workspace observations and receipts, deterministic fallback, and isolated
+  preregistered evaluation.
 - **GUI streaming layer (planned for 0.8):** open-harness's `ui-stream.ts` + React provider (MIT).
 - **Code intelligence (later):** codebase-memory-mcp (MIT, pure C).
 
@@ -82,7 +89,7 @@ and ADR 0005 for the ownership model.
 0.4  Reasoning semantic engine:                  [CLOSED]
 0.5  Host + cognition integration:               [CLOSED]
 0.6  Durable verbatim context reconstruction:    [CLOSED]
-0.7  Governed selective context / graph-v1:      [FROZEN — NOT STARTED]
+0.7  Governed selective context / graph-v1:      [CLOSED]
 0.8  React GUI / application protocol:           [PLANNED]
 0.9  External integrations:                      [PLANNED]
 ```
@@ -93,12 +100,13 @@ the schema. Gates drive sequencing, not calendars.
 
 ## Next
 
-The completed foundation is 0.0 through 0.6. The next roadmap unit is
-**Phase 0.7 — governed selective context / `graph-v1`**: make selective model
-observation an explicit Host-owned control-plane policy at every provider
-inference boundary, with trust classification, objective-scoped reasoning,
-relevance-gated memory, hard rendered bounds, bounded receipts, and fail-safe
-`verbatim-v1` fallback.
+The completed foundation is 0.0 through 0.7. The next planned roadmap unit is
+**Phase 0.8 — Application Protocol + React experience**: define the application
+transport contract before UI implementation, then build the React client as a
+consumer of ordered Host events. Phase 0.8 also owns product-level
+`START_NOW`, `GUIDE`, and `QUEUE` admission semantics.
 
-The Phase 0.7 design is frozen, but implementation is **not started and not
-authorized**. See [`docs/phase-0.7-plan.md`](docs/phase-0.7-plan.md).
+Phase 0.7 closure does not authorize Phase 0.8 implementation and does not
+promote `graph-v1` to the product default. See
+[`docs/roadmap.md`](docs/roadmap.md) and
+[`docs/phase-0.7-plan.md`](docs/phase-0.7-plan.md).

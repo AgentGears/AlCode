@@ -167,7 +167,7 @@ Do not build the registry before there is a version to migrate from.
 
 ## Event semantic class
 
-Phase 0.7 requires a semantic distinction between task/runtime facts and
+Phase 0.7 introduced a semantic distinction between task/runtime facts and
 context/audit metadata without changing the event envelope. Classification is
 derived from event type rather than stored as a new envelope field:
 
@@ -178,7 +178,7 @@ type EventSemanticClass =
   | "audit_meta";
 ```
 
-The frozen minimum rule is:
+The implemented minimum rule is:
 
 ```text
 context.projection_compiled → audit_meta
@@ -195,9 +195,8 @@ No event-envelope schema change is implied by this classification.
 ## Event ownership rule
 
 The `events` package owns the envelope and registry mechanism **only**.
-Domain packages/Host runtime own event types and payloads. The closed Phase 0.6
-foundation includes these durable families, and the frozen Phase 0.7 plan adds
-one not-yet-implemented context/audit event:
+Domain packages/Host runtime own event types and payloads. The closed Phase 0.7
+foundation includes these durable families:
 
 - **Runtime/session:** `runtime.session.started`, `runtime.session.stopped`.
 - **Durable Host work:** `runtime.work.requested`, `runtime.work.claimed`,
@@ -222,13 +221,13 @@ one not-yet-implemented context/audit event:
   `evidence.recorded`, `verification.result.correlated`.
 - **Memory semantic core:** `memory.created`, `memory.reinforced`,
   `memory.archived`, `memory.tombstoned`, `memory.deleted`, `memory.restored`.
-- **Context decision (frozen Phase 0.7 contract, not yet implemented):**
-  - `context.projection_compiled` — full bounded context-decision receipt;
+- **Context decision (0.7):**
+  - `context.projection_compiled` — bounded canonical context-decision receipt;
     semantic class `audit_meta`.
 
-Freezing Phase 0.7 reserves this event vocabulary/meaning for its authorized
-implementation; the event is **not part of the closed Phase 0.6 runtime** until
-0.7 implementation is separately authorized and completed.
+Phase 0.7 implemented `context.projection_compiled` as the canonical durability
+barrier for Host context authorization. Its rebuildable SQL receipt projection
+is inspectability state, not a second source of truth.
 
 Internal reducer labels or reference-system event names are **not** canonical
 ALCODE event vocabulary. For example, Ouroboros undotted labels are normalized
