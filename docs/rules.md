@@ -36,7 +36,9 @@ ADRs.
   authority. A replacement Agent resumes through the Agent Protocol and is
   hydrated/oriented from Host-owned durable state; Phase 0.7 additionally
   requires a fresh Host context decision before its next provider inference.
-  See ADR 0005 and the closed Phase 0.5–0.7 plans.
+  Phase 0.8 extends the same principle to the Experience Plane: UI disconnect,
+  unmount, or transport detach does not cancel Host-owned work. See ADR 0005
+  and the closed Phase 0.5–0.8 plans.
 
 - **No compatibility process whose purpose is to preserve an obsolete boundary.**
   "No bridge, no sidecar" means no process exists solely to keep a Python or
@@ -307,10 +309,45 @@ ADRs.
   proved non-vacuous effective graph delivery and context reduction, but
   promotion remains a separate explicit evidence-based decision.
 
-- **Phase 0.7 is closed.** The binding frozen design/acceptance contract and
-  closure evidence live in `docs/phase-0.7-plan.md`. The closed phase must not
-  be reopened absent concrete defect evidence, and its closure does not
-  authorize Phase 0.8 or graph-default promotion.
+## Application Protocol and Experience Plane boundaries
+
+- **The Host is canonical; the Experience Plane is disposable.** React and
+  other clients consume public Application Protocol snapshots/events and may
+  keep local drafts or render caches, but they do not read the durable database
+  as authority or own execution state.
+
+- **Input admission is Host/application semantics.** Requested and admitted
+  `START_NOW`, `GUIDE`, and `QUEUE` dispositions are explicit. Queue identity,
+  ordering, and promotion are Host-owned; a renderer-local array is never
+  execution truth. If GUIDE cannot reach active work through a truthful steering
+  seam, it must be explicitly rejected or given an explicit fallback reason.
+
+- **Capability authorization is independent of input admission.** An input being
+  START_NOW, GUIDE, or QUEUE does not by itself allow, deny, or require approval
+  for a capability. Host policy remains the authorization authority.
+
+- **Detach is not cancellation.** UI unmount, disconnect, or transport loss does
+  not stop Host work. Cancellation is an explicit semantic command targeting the
+  operation identity the client believes it is stopping; a stale cancel must not
+  terminate newer work.
+
+- **Reconnect never guesses across a gap.** A client may resume from its last
+  public cursor only when events are contiguous. A stale/discontinuous cursor
+  falls back to an authoritative public snapshot and a new cursor.
+
+- **Pending interactions are Host-owned structured state.** Permission requests
+  and typed responses travel through the Application Protocol; renderer-local
+  modal state cannot fabricate or resolve canonical permission state.
+
+- **Public projection is bounded.** Secrets, raw database handles, audit-only
+  metadata, and private Host policy/recovery state do not cross the public
+  Application Protocol merely because the UI could display them.
+
+- **Phases 0.7 and 0.8 are closed.** The binding context contract and evidence
+  live in `docs/phase-0.7-plan.md`; the binding Application Protocol/React
+  contract and evidence live in `docs/phase-0.8-plan.md`. Closed phases are not
+  reopened absent concrete defect evidence. Phase 0.8 closure does not authorize
+  Phase 0.9 implementation or `graph-v1` default promotion.
 
 ## Security
 
