@@ -23,6 +23,7 @@ References:
 - Phase 0.5 frozen/completed plan: `docs/phase-0.5-plan.md`
 - Phase 0.6 frozen/completed plan: `docs/phase-0.6-plan.md`
 - Phase 0.7 frozen/completed plan: `docs/phase-0.7-plan.md`
+- Phase 0.8 frozen/completed plan: `docs/phase-0.8-plan.md`
 - Non-goals: `docs/non-goals.md`
 - Backlog: `docs/backlog.md`
 
@@ -94,6 +95,9 @@ The architectural direction is authority-based rather than a single linear
 package chain:
 
 ```text
+web
+  └─ application-protocol
+
 coding-agent
   ├─ agent-core
   ├─ agent-protocol
@@ -107,6 +111,7 @@ cognition-extension
 
 host-runtime
   ├─ agent-protocol
+  ├─ application-protocol
   ├─ cognition-runtime
   ├─ context
   ├─ transcript
@@ -644,7 +649,7 @@ work against the Host without violating the security/ownership model.
 
 ---
 
-## Migration (post-0.7, when worth doing)
+## Migration (post-0.8, when worth doing)
 
 Ola/Ouroboros repositories remain behavioral references. Any future migration
 uses explicit export/import contracts with count/ID/digest/graph/provenance

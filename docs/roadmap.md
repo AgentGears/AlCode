@@ -13,7 +13,7 @@ mediates environmental capabilities, owns execution policy and canonical state,
 schedules bounded durable work, and exposes a consistent workspace contract
 across execution environments.
 
-The governing ownership model is implemented through Phase 0.7:
+The governing ownership model is implemented through Phase 0.8:
 
 ```text
 Experience Plane
@@ -377,7 +377,7 @@ the context compiler arbitrary filesystem/terminal authority.
 
 ---
 
-## Ownership checkpoint — completed through 0.7
+## Ownership checkpoint — completed through 0.8
 
 ADR 0005 freezes:
 
@@ -389,10 +389,11 @@ ADR 0005 freezes:
 
 Phase 0.5 exercised those boundaries in production code and gates; Phase 0.6
 extended the same ownership model to durable transcript/context reconstruction;
-Phase 0.7 extended it to selective model observation. The Host owns source
-acquisition, context strategy, fallback, receipt admission, and delivery; the
-Agent consumes a disposable context decision and never owns graph traversal or
-memory search.
+Phase 0.7 extended it to selective model observation; Phase 0.8 extended it to
+the public Application Protocol and disposable React projections. The Host owns
+source acquisition, context strategy, admission, capability policy, canonical
+state, recovery, and completion; the Agent and Experience Plane remain clients
+of Host-owned decisions.
 
 Still intentionally unfrozen/deferred:
 
