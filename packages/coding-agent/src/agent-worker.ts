@@ -134,7 +134,9 @@ async function main(): Promise<void> {
         emit: (event) => extensionHost.emit(event),
         signal: abortController.signal,
         initialMessages: history,
-        beforeInference: async () => requestInferenceContext(localSessionId),
+        ...(localContext.verbatim !== undefined
+          ? { beforeInference: async () => requestInferenceContext(localSessionId) }
+          : {}),
         ...(timestamp !== undefined ? { promptTimestamp: timestamp } : {}),
       });
       history = completeHistory as Message[];
