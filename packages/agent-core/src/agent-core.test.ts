@@ -149,6 +149,42 @@ describe("agent-core contracts and loop", () => {
     expect(requests[1]?.messages.some((message) => message.role === "toolResult" && message.toolCallId === "T1")).toBe(true);
   });
 
+  it("does not start provider inference when cancellation aborts a pending Host context refresh", async () => {
+    const controller = new AbortController();
+    let providerCalls = 0;
+    let rejectRefresh!: (reason?: unknown) => void;
+    let markRefreshStarted!: () => void;
+    const refreshStarted = new Promise<void>((resolve) => { markRefreshStarted = resolve; });
+
+    const provider = {
+      async stream() {
+        providerCalls++;
+        throw new Error("provider must not run after cancellation");
+      },
+    };
+
+    const loop = runAgentLoop("cancel while refreshing", {
+      systemPrompt: "system",
+      provider,
+      tools: [],
+      signal: controller.signal,
+      beforeInference: async () => new Promise((_, reject) => {
+        rejectRefresh = reject;
+        markRefreshStarted();
+      }),
+    });
+
+    await refreshStarted;
+    const reason = new Error("cancelled during context refresh");
+    controller.abort(reason);
+    rejectRefresh(reason);
+
+    const messages = await loop;
+    expect(providerCalls).toBe(0);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toHaveProperty("role", "user");
+  });
+
   it("StaticExtensionHost collects tools from extensions", async () => {
     const host = new StaticExtensionHost();
     const tool: AgentTool = {
