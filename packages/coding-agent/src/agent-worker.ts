@@ -6,7 +6,6 @@ import { randomUUID } from "node:crypto";
 import {
   runAgentLoop,
   StaticExtensionHost,
-  type InferenceContext,
   type Message,
   type ModelEvent,
   type ModelProvider,
@@ -19,10 +18,10 @@ import {
   GRAPH_CONTEXT_CAPABILITY,
   createProcessAgentTransport,
   type ContextProvide,
-  type ContextUpdate,
   type HostToAgentMessage,
 } from "@alcode/agent-protocol";
 import { createCognitionExtension } from "@alcode/cognition-extension";
+import { requestInferenceContext } from "./inference-context.ts";
 import { TestModelProvider } from "./test-model-provider.ts";
 
 interface ScriptedTurn {
@@ -90,25 +89,6 @@ async function main(): Promise<void> {
     ],
   });
 
-  const requestInferenceContext = async (localSessionId: string): Promise<InferenceContext> => {
-    const requestId = randomUUID();
-    const update = await new Promise<ContextUpdate>((resolve, reject) => {
-      const unsubscribe = transport.onMessage((response) => {
-        if (response.type !== "context.update" || response.requestId !== requestId) return;
-        unsubscribe();
-        resolve(response);
-      });
-      transport.send({ type: "context.refresh.request", requestId, sessionId: localSessionId }).catch((error) => {
-        unsubscribe();
-        reject(error);
-      });
-    });
-    return {
-      systemPrompt: update.systemPrompt,
-      messages: structuredClone(update.messages) as Message[],
-    };
-  };
-
   const runInput = async (text: string, timestamp?: number): Promise<void> => {
     if (!sessionId || !context) throw new Error("Agent received input before session/context bootstrap");
     if (context.verbatim?.status === "incomplete") {
@@ -117,6 +97,7 @@ async function main(): Promise<void> {
 
     const localSessionId = sessionId;
     const localContext = context;
+    const runAbortController = abortController;
     const extensionHost = new StaticExtensionHost();
     await extensionHost.mount([createCognitionExtension({
       transport,
@@ -132,10 +113,10 @@ async function main(): Promise<void> {
         provider,
         tools: extensionHost.getTools(),
         emit: (event) => extensionHost.emit(event),
-        signal: abortController.signal,
+        signal: runAbortController.signal,
         initialMessages: history,
         ...(localContext.verbatim !== undefined
-          ? { beforeInference: async () => requestInferenceContext(localSessionId) }
+          ? { beforeInference: async () => requestInferenceContext(transport, localSessionId, runAbortController.signal) }
           : {}),
         ...(timestamp !== undefined ? { promptTimestamp: timestamp } : {}),
       });
