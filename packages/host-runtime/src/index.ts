@@ -13,6 +13,12 @@ export {
   type CapabilityBrokerResult,
 } from "./capability-broker.ts";
 export {
+  HostApplicationService,
+  type HostApplicationServiceOptions,
+  type ApplicationAgentControl,
+} from "./application-service.ts";
+export { HostApplicationController } from "./application-controller.ts";
+export {
   CognitionGateway,
   type VerificationPlanMatch,
   type VerificationEvaluation,
@@ -45,4 +51,4 @@ export {
 } from "./verbatim-context.ts";
 export { DurableWorkDispatcher, type MemoryConsolidationWork } from "./work-dispatcher.ts";
 export { createChildProcessHostTransport, createProcessAgentTransport } from "./node-ipc-transport.ts";
-export { HostRuntime, type HostRuntimeOptions, type AttachedAgent } from "./host.ts";
+export { HostRuntime, type HostRuntimeOptions, type AttachedAgent, type AgentResumeReason } from "./host.ts";
