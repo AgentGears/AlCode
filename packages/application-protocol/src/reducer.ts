@@ -3,6 +3,7 @@ import type {
   ApplicationSnapshot,
   PublicPermissionInteraction,
   PublicQueueItem,
+  PublicSessionState,
 } from "./types.ts";
 
 function upsertById<T>(items: readonly T[], id: string, getId: (item: T) => string, value: T): T[] {
@@ -19,6 +20,12 @@ function sortQueue(items: readonly PublicQueueItem[]): PublicQueueItem[] {
 
 function activeInteraction(items: readonly PublicPermissionInteraction[]): PublicPermissionInteraction[] {
   return items.filter((item) => item.status === "pending");
+}
+
+function withActiveOperation(session: PublicSessionState, operationId?: string): PublicSessionState {
+  return operationId === undefined
+    ? { sessionId: session.sessionId, status: session.status }
+    : { ...session, activeOperationId: operationId };
 }
 
 export class ApplicationSequenceGapError extends Error {
@@ -51,10 +58,7 @@ export function reduceApplicationEvent(
         ...snapshot,
         cursor: event.sequence,
         operations,
-        session: {
-          ...snapshot.session,
-          ...(activeOperation ? { activeOperationId: activeOperation.operationId } : { activeOperationId: undefined }),
-        },
+        session: withActiveOperation(snapshot.session, activeOperation?.operationId),
       };
     }
 
