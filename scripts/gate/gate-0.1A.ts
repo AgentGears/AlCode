@@ -126,8 +126,8 @@ async function main(): Promise<void> {
 
   // 4+5. Agent-core + coding-agent tests pass (offline)
   for (const pkg of ["agent-core", "coding-agent"]) {
-    const result = run("npx", ["vitest", "run"], {
-      cwd: join(ROOT, `packages/${pkg}`), throwOnError: false,
+    const result = run("npx", ["vitest", "run", `packages/${pkg}/src`], {
+      cwd: ROOT, throwOnError: false,
     });
     const passed = result.exitCode === 0;
     const summaryMatch = result.stdout.match(/Tests\s+(\d+ passed|\d+ failed)/);
