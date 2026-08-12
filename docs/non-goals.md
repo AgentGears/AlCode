@@ -27,14 +27,17 @@ condition under which they become relevant.
 - Every extension event. The pi event taxonomy is reviewed and reduced to
   stable domain/Agent Protocol semantics; upstream events are not preserved
   indefinitely.
-- Final GUI/application transport contract (settled in 0.8, not in the current
-  foundation).
+- Final public/remote wire encoding. Closed Phase 0.8 settles the Host-owned
+  semantic Application Protocol and a replaceable local transport seam; a
+  public remote wire format remains deferred.
 - Final plugin compatibility (ALCODE owns its extension contract; pi
   compatibility is not a goal).
 
 ## Implementation (deferred from later phases)
 
-- **pi `tui` package** — dropped entirely. GUI arrives in 0.8.
+- **pi `tui` package** — dropped entirely. Closed Phase 0.8 ships the React 19
+  Experience Plane over the ALCODE Application Protocol; the pi TUI is not
+  revived.
 - **pi `server` and `storage` packages** — replaced by the event-log/Host
   architecture. Not ported.
 - **pi example extensions** (except `subagent`, which is backlog-referenced
@@ -57,8 +60,8 @@ condition under which they become relevant.
   supervised recovery and idempotent semantic effect. Cron, recurring work,
   priorities, distributed leases, and remote workers remain deferred.
 - **Remote Agent transport/public wire encoding.** Phase 0.5 implements the
-  semantic Agent Protocol with local Node IPC; remote transports remain later
-  adapters.
+  semantic Agent Protocol with local Node IPC; Phase 0.8 adds a local
+  Application Protocol transport seam. Remote transports remain later adapters.
 - **Replacing or weakening the closed `verbatim-v1` safety baseline as a side
   effect of context experimentation.** Phase 0.6 owns durable verbatim
   reconstruction; closed Phase 0.7 keeps graph Host-selected and requires
@@ -75,12 +78,13 @@ condition under which they become relevant.
 - **Making graph projection default.** Phase 0.7 proves opt-in `graph-v1`, but
   product-default promotion requires a separate evidence-based decision after
   measured results.
-- **Full graph visualization in the GUI.** 0.8 is planned around inspectors,
-  not a full graph UI.
+- **Full graph visualization in the GUI.** Closed Phase 0.8 intentionally ships
+  a minimal React coding shell and explicitly excludes full graph/memory/context/
+  trace inspectors; full graph visualization remains deferred.
 - **Multi-agent kanban** (agent-teams-ai style). That is a v2 product direction,
   not a current Phase 0 foundation item.
 
-## Migration (post-0.7, when worth doing)
+## Migration (post-0.8, when worth doing)
 
 - Pointing the new runtime at old live Ola/Ouroboros databases. Migration uses
   explicit export/import contracts with receipts — never direct DB reuse.
