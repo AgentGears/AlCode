@@ -32,9 +32,11 @@ ADRs.
 - **Agent process lifetime is not session lifetime.** The Host owns the durable
   session. Agent exit/replacement does not by itself append
   `runtime.session.stopped`, discard operation identity, erase canonical
-  cognition, or erase canonical transcript history. A replacement Agent
-  resumes through the Agent Protocol and is hydrated/oriented from Host-owned
-  durable state. See ADR 0005 and the closed Phase 0.5/0.6 plans.
+  cognition, erase canonical transcript history, or erase Host-owned context
+  authority. A replacement Agent resumes through the Agent Protocol and is
+  hydrated/oriented from Host-owned durable state; Phase 0.7 additionally
+  requires a fresh Host context decision before its next provider inference.
+  See ADR 0005 and the closed Phase 0.5–0.7 plans.
 
 - **No compatibility process whose purpose is to preserve an obsolete boundary.**
   "No bridge, no sidecar" means no process exists solely to keep a Python or
@@ -302,12 +304,13 @@ ADRs.
 
 - **Graph closure does not imply graph promotion.** `verbatim-v1` remains the
   product default after Phase 0.7 closure. At least one preregistered fixture
-  must prove non-vacuous effective graph delivery and context reduction, but
+  proved non-vacuous effective graph delivery and context reduction, but
   promotion remains a separate explicit evidence-based decision.
 
-- **Phase 0.7 is frozen but not started.** The binding design/acceptance
-  contract lives in `docs/phase-0.7-plan.md`. No implementation is authorized
-  merely by the existence of the frozen plan.
+- **Phase 0.7 is closed.** The binding frozen design/acceptance contract and
+  closure evidence live in `docs/phase-0.7-plan.md`. The closed phase must not
+  be reopened absent concrete defect evidence, and its closure does not
+  authorize Phase 0.8 or graph-default promotion.
 
 ## Security
 
