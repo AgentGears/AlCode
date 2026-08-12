@@ -22,18 +22,33 @@ jobs:
           node-version: "22.17.0"
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Diagnose current foundation and 0.8
+      - name: Phase 0.1A exact failure
+        continue-on-error: true
         shell: bash
         run: |
           set +e
-          for cmd in "pnpm gate:0.1A" "pnpm gate:0.4" "pnpm gate:0.5" "pnpm gate:0.8"; do
-            echo "=== $cmd ==="
-            out=$(eval "$cmd" 2>&1); code=$?
-            printf '%s\n' "$out"
+          out=$(pnpm gate:0.1A 2>&1); code=$?
+          printf '%s\n' "$out"
+          if [ $code -ne 0 ]; then
             while IFS= read -r line; do
               case "$line" in
                 *"[FAIL]"*|*"error TS"*|*"AssertionError"*|*"FAIL "*) echo "::error::$line" ;;
               esac
             done <<< "$out"
-          done
-          exit 0
+          fi
+          exit $code
+      - name: Phase 0.8 exact failure
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          out=$(pnpm gate:0.8 2>&1); code=$?
+          printf '%s\n' "$out"
+          if [ $code -ne 0 ]; then
+            while IFS= read -r line; do
+              case "$line" in
+                *"[FAIL]"*|*"error TS"*|*"AssertionError"*|*"FAIL "*) echo "::error::$line" ;;
+              esac
+            done <<< "$out"
+          fi
+          exit $code
