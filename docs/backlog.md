@@ -89,12 +89,13 @@ extend the accepted reasoning-port gate.
   requires additional oracle evidence; do not expand the closed 0.4 corpus by
   default.
 
-## Host/runtime (deferred after 0.6)
+## Host/runtime (deferred after 0.7)
 
-Phases 0.5–0.6 proved a local Node IPC Agent Protocol, Host-owned capability
+Phases 0.5–0.7 proved a local Node IPC Agent Protocol, Host-owned capability
 execution, bounded event-sourced cognition work, replaceable-Agent continuity,
-and Host-owned durable transcript/context reconstruction. The following remain
-deliberately outside the closed foundation:
+Host-owned durable transcript reconstruction, and per-inference Host-owned
+selective context authorization. The following remain deliberately outside the
+closed foundation:
 
 - remote Agent transport / public wire encoding;
 - general scheduler or recurring automation;
@@ -107,8 +108,10 @@ Activate only when a later authorized product requirement needs them.
 
 ## Context projection (deferred from 0.7)
 
-Phase 0.7 now has a frozen design but has not started. These remain explicitly
-deferred outside that frozen acceptance boundary:
+Phase 0.7 is closed. It implemented opt-in `graph-v1`, deterministic Host
+selection, bounded receipts, and a preregistered non-vacuous evaluation while
+keeping `verbatim-v1` as the product default. These remain explicitly deferred
+outside the closed acceptance boundary:
 
 - Making graph projection the product default. Stays non-default until an
   explicit post-evaluation promotion decision is authorized after measurable
@@ -118,11 +121,13 @@ deferred outside that frozen acceptance boundary:
   is insufficient for provider-window safety.
 - LLM-generated summarization/semantic compaction. Activate only when bounded
   deterministic selection cannot meet context-cost requirements safely.
-- Static-turn-selection + dynamic-overlay optimization. The frozen 0.7 design
-  uses full Host recompilation at every inference boundary; split overlays may
-  be considered only after measured compilation cost justifies the added policy
-  layer.
-- Graph visualization UI (full). 0.8 ships inspectors only.
+- Static-turn-selection + dynamic-overlay optimization. Phase 0.7 uses full Host
+  recompilation at every inference boundary; split overlays may be considered
+  only after measured compilation cost justifies the added policy layer.
+- Graph visualization UI (full). 0.8 is planned around inspectors rather than a
+  full graph visualization surface.
+
+None of these items is unfinished Phase 0.7 work.
 
 ## GUI (deferred from 0.8)
 
