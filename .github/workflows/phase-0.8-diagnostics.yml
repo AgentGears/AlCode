@@ -49,6 +49,24 @@ jobs:
           printf '%s\n' "$out"
           if [ $code -ne 0 ]; then while IFS= read -r line; do echo "::error::$line"; done <<< "$out"; fi
           exit $code
+      - name: Typecheck coding-agent
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          out=$(pnpm --filter @alcode/coding-agent typecheck 2>&1); code=$?
+          printf '%s\n' "$out"
+          if [ $code -ne 0 ]; then while IFS= read -r line; do echo "::error::$line"; done <<< "$out"; fi
+          exit $code
+      - name: Test coding-agent
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          out=$(pnpm exec vitest run packages/coding-agent/src 2>&1); code=$?
+          printf '%s\n' "$out"
+          if [ $code -ne 0 ]; then while IFS= read -r line; do echo "::error::$line"; done <<< "$out"; fi
+          exit $code
       - name: Run Phase 0.8 focused tests
         continue-on-error: true
         shell: bash
