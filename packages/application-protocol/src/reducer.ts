@@ -1,6 +1,7 @@
 import type {
   ApplicationEvent,
   ApplicationSnapshot,
+  PublicForegroundExecution,
   PublicPermissionInteraction,
   PublicQueueItem,
   PublicSessionState,
@@ -22,15 +23,19 @@ function activeInteraction(items: readonly PublicPermissionInteraction[]): Publi
   return items.filter((item) => item.status === "pending");
 }
 
-function withActiveOperation(session: PublicSessionState, operationId?: string): PublicSessionState {
-  return operationId === undefined
+function withActiveExecution(session: PublicSessionState, executionId?: string): PublicSessionState {
+  return executionId === undefined
     ? { sessionId: session.sessionId, status: session.status }
-    : { ...session, activeOperationId: operationId };
+    : { ...session, activeExecutionId: executionId };
+}
+
+function currentExecution(executions: readonly PublicForegroundExecution[]): PublicForegroundExecution | undefined {
+  return [...executions].reverse().find((item) => item.status !== "completed");
 }
 
 export class ApplicationSequenceGapError extends Error {
   constructor(readonly expected: number, readonly received: number) {
-    super(`Application event sequence gap: expected ${expected}, received ${received}`);
+    super(`Application event sequence gap: expected prior cursor ${expected}, received ${received}`);
     this.name = "ApplicationSequenceGapError";
   }
 }
@@ -42,25 +47,33 @@ export function reduceApplicationEvent(
   if (event.sessionId !== snapshot.sessionId) {
     throw new Error(`Application event session mismatch: ${event.sessionId} !== ${snapshot.sessionId}`);
   }
-  const expected = snapshot.cursor + 1;
-  if (event.sequence !== expected) {
-    throw new ApplicationSequenceGapError(expected, event.sequence);
+  if (event.fromCursor !== snapshot.cursor) {
+    throw new ApplicationSequenceGapError(snapshot.cursor, event.fromCursor);
+  }
+  if (event.sequence <= event.fromCursor) {
+    throw new Error(`Application event cursor must advance: ${event.fromCursor} -> ${event.sequence}`);
   }
 
   switch (event.type) {
     case "transcript.message.appended":
       return { ...snapshot, cursor: event.sequence, transcript: [...snapshot.transcript, event.message] };
 
-    case "operation.upserted": {
-      const operations = upsertById(snapshot.operations, event.operation.operationId, (item) => item.operationId, event.operation);
-      const activeOperation = operations.find((item) => item.lifecycleState !== "terminal");
+    case "execution.upserted": {
+      const executions = upsertById(snapshot.executions, event.execution.executionId, (item) => item.executionId, event.execution);
       return {
         ...snapshot,
         cursor: event.sequence,
-        operations,
-        session: withActiveOperation(snapshot.session, activeOperation?.operationId),
+        executions,
+        session: withActiveExecution(snapshot.session, currentExecution(executions)?.executionId),
       };
     }
+
+    case "operation.upserted":
+      return {
+        ...snapshot,
+        cursor: event.sequence,
+        operations: upsertById(snapshot.operations, event.operation.operationId, (item) => item.operationId, event.operation),
+      };
 
     case "queue.item.upserted":
       return {
