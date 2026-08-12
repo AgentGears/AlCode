@@ -14,6 +14,7 @@ function emptySnapshot(): ApplicationSnapshot {
     cursor: 10,
     session: { sessionId: "s1", status: "active" },
     transcript: [],
+    executions: [],
     operations: [],
     queue: [],
     pendingInteractions: [],
@@ -21,12 +22,13 @@ function emptySnapshot(): ApplicationSnapshot {
 }
 
 describe("application public reducer", () => {
-  it("reduces ordered transcript, operation, queue, and permission state", () => {
+  it("reduces ordered transcript, execution, operation, queue, and permission state", () => {
     const events: ApplicationEvent[] = [
       {
         protocolVersion: APPLICATION_PROTOCOL_VERSION,
         type: "transcript.message.appended",
         sessionId: "s1",
+        fromCursor: 10,
         sequence: 11,
         occurredAt: "2026-08-12T00:00:00.000Z",
         cause: "user",
@@ -34,9 +36,20 @@ describe("application public reducer", () => {
       },
       {
         protocolVersion: APPLICATION_PROTOCOL_VERSION,
+        type: "execution.upserted",
+        sessionId: "s1",
+        fromCursor: 11,
+        sequence: 20,
+        occurredAt: "2026-08-12T00:00:01.000Z",
+        cause: "host",
+        execution: { executionId: "x1", sourceCommandId: "c0", status: "running", startedAt: "2026-08-12T00:00:01.000Z" },
+      },
+      {
+        protocolVersion: APPLICATION_PROTOCOL_VERSION,
         type: "operation.upserted",
         sessionId: "s1",
-        sequence: 12,
+        fromCursor: 20,
+        sequence: 21,
         occurredAt: "2026-08-12T00:00:01.000Z",
         cause: "host",
         operation: {
@@ -54,7 +67,8 @@ describe("application public reducer", () => {
         protocolVersion: APPLICATION_PROTOCOL_VERSION,
         type: "queue.item.upserted",
         sessionId: "s1",
-        sequence: 13,
+        fromCursor: 21,
+        sequence: 23,
         occurredAt: "2026-08-12T00:00:02.000Z",
         cause: "user",
         item: { queueItemId: "q2", sourceCommandId: "c2", position: 2, text: "later", admittedAt: "2026-08-12T00:00:02.000Z" },
@@ -63,7 +77,8 @@ describe("application public reducer", () => {
         protocolVersion: APPLICATION_PROTOCOL_VERSION,
         type: "queue.item.upserted",
         sessionId: "s1",
-        sequence: 14,
+        fromCursor: 23,
+        sequence: 24,
         occurredAt: "2026-08-12T00:00:03.000Z",
         cause: "user",
         item: { queueItemId: "q1", sourceCommandId: "c1", position: 1, text: "first", admittedAt: "2026-08-12T00:00:03.000Z" },
@@ -72,7 +87,8 @@ describe("application public reducer", () => {
         protocolVersion: APPLICATION_PROTOCOL_VERSION,
         type: "permission.interaction.upserted",
         sessionId: "s1",
-        sequence: 15,
+        fromCursor: 24,
+        sequence: 30,
         occurredAt: "2026-08-12T00:00:04.000Z",
         cause: "host",
         interaction: { interactionId: "p1", kind: "permission", status: "pending", toolName: "bash", description: "Run command" },
@@ -80,18 +96,19 @@ describe("application public reducer", () => {
     ];
 
     const result = reduceApplicationEvents(emptySnapshot(), events);
-    expect(result.cursor).toBe(15);
+    expect(result.cursor).toBe(30);
     expect(result.transcript.map((message) => message.text)).toEqual(["hello"]);
-    expect(result.session.activeOperationId).toBe("o1");
+    expect(result.session.activeExecutionId).toBe("x1");
     expect(result.queue.map((item) => item.queueItemId)).toEqual(["q1", "q2"]);
     expect(result.pendingInteractions.map((item) => item.interactionId)).toEqual(["p1"]);
   });
 
-  it("refuses to guess across a sequence gap", () => {
+  it("refuses to guess across a public cursor gap", () => {
     const event: ApplicationEvent = {
       protocolVersion: APPLICATION_PROTOCOL_VERSION,
       type: "output.delta",
       sessionId: "s1",
+      fromCursor: 11,
       sequence: 12,
       occurredAt: "2026-08-12T00:00:00.000Z",
       cause: "agent",
