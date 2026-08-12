@@ -80,7 +80,7 @@ export class HostApplicationController {
     // HostRuntime's handler was registered first by attachAgent(). This observer
     // therefore publishes only after Host canonical work for a message settles.
     const detachObserver = connection.transport.onMessage(async (message) => {
-      if (message.sessionId !== undefined && message.sessionId !== sessionKey) return;
+      if ("sessionId" in message && message.sessionId !== sessionKey) return;
       if (message.type === "agent.idle") {
         await this.application.markExecutionCompleted(sessionKey);
       }
