@@ -1,0 +1,26 @@
+name: Phase 0.8 closure docs touchup
+
+on:
+  push:
+    branches: [phase-0.8-closure-docs]
+    paths:
+      - .github/workflows/phase-0.8-close-docs-touchup.yml
+
+permissions:
+  contents: write
+
+jobs:
+  touchup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: phase-0.8-closure-docs
+      - run: python scripts/close-phase-0.8-docs-touchup.py
+      - shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/roadmap.md docs/phase-0-spec.md
+          git commit -m "docs: align ownership orientation through Phase 0.8"
+          git push origin HEAD:phase-0.8-closure-docs
