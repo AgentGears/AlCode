@@ -115,10 +115,9 @@ host-runtime
   └─ events
 
 context
-  ├─ events
+  ├─ agent-core
   ├─ memory
-  ├─ reasoning
-  └─ storage-facing immutable contracts only through Host-provided source data
+  └─ reasoning
 
 cognition-runtime
   ├─ memory
