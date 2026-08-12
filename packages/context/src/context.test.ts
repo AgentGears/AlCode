@@ -260,6 +260,7 @@ describe("Phase 0.7 governed selective context", () => {
     expect(a.receipt).toEqual(b.receipt);
     expect(a.receipt).toEqual(b.receipt);
     expect(a.receipt).toEqual(b.receipt);
+    expect(a.receipt).toEqual(b.receipt);
     expect(a.receipt.attempt.selected.length).toBeLessThanOrEqual(a.receipt.attempt.candidateCount);
     expect(a.receipt.attempt.excludedSummary.transcript.excludedCount).toBeGreaterThan(0);
     expect(Object.keys(a.receipt.attempt.excludedSummary.transcript.reasonCounts).length).toBeLessThanOrEqual(2);
