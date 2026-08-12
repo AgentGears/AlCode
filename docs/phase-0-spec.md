@@ -2,16 +2,16 @@
 
 Status: **active; Phases 0.0, 0.1A, 0.1B, 0.2, 0.3, 0.4, 0.5, and 0.6 closed**.
 Phase 0.6 closed in merge commit `98c764c` with `pnpm gate:0.6` green. Phase
-0.7 is the next roadmap unit; its plan is **DRAFT / NOT FROZEN / NOT
-AUTHORIZED**. See `docs/roadmap.md` for architecture orientation.
+0.7 is the next roadmap unit; its reviewed design is **FROZEN / NOT STARTED /
+NOT AUTHORIZED**. See `docs/roadmap.md` for architecture orientation.
 
 This is the executable build order. Each implemented phase has an objective,
 scope, explicit exclusions, required evidence, and an **executable exit gate**
 (`pnpm gate:X.Y`). A phase is complete when its frozen gate emits
 `status: "passed"`; documentation does not substitute for executable evidence.
 Closed-phase sections below record the as-built contract rather than reopening
-their implementation plans. Draft successor sections are planning material,
-not acceptance criteria until explicitly frozen.
+their implementation plans. A frozen successor design defines acceptance but
+does not authorize implementation by itself.
 
 References:
 - Constitution (10 principles, frozen): `docs/constitution.md`
@@ -21,7 +21,7 @@ References:
 - Runtime ownership boundaries: `docs/adr/0005-runtime-ownership-boundaries.md`
 - Phase 0.5 frozen/completed plan: `docs/phase-0.5-plan.md`
 - Phase 0.6 frozen/completed plan: `docs/phase-0.6-plan.md`
-- Phase 0.7 draft plan: `docs/phase-0.7-plan.md`
+- Phase 0.7 frozen/not-started plan: `docs/phase-0.7-plan.md`
 - Non-goals: `docs/non-goals.md`
 - Backlog: `docs/backlog.md`
 
@@ -81,7 +81,7 @@ alcode/
 └── .github/workflows/ci.yml
 ```
 
-`packages/context` is proposed by the Phase 0.7 draft and does not exist yet.
+`packages/context` is frozen for Phase 0.7 but does not exist yet.
 `packages/web` is planned for 0.8 and does not exist yet.
 
 ### Ownership/dependency direction
@@ -454,65 +454,88 @@ completed successfully with Phase 0.6 job `93947566591` green.
 
 ---
 
-## Phase 0.7 — Graph-distilled context compiler and experiment framework — DRAFT
+## Phase 0.7 — Governed selective context / `graph-v1` — FROZEN / NOT STARTED
 
-**Status:** DRAFT — NOT FROZEN — NOT AUTHORIZED. The current proposal lives in
-`docs/phase-0.7-plan.md`. This section is orientation only until that plan is
-reviewed and frozen.
+**Status:** FROZEN DESIGN — NOT STARTED — NOT AUTHORIZED. The authoritative
+implementation/acceptance contract is `docs/phase-0.7-plan.md`.
 
-**Proposed objective:** Projection B (`graph-v1`) as a deterministic,
-Host-owned, measured context strategy with inspectable receipts and fail-safe
-`verbatim-v1` fallback. Graph remains non-default.
+**Objective:** make selective model observation a deterministic, auditable,
+reversible Host policy. `graph-v1` is an opt-in strategy; `verbatim-v1` remains
+both the safety fallback and product default.
 
 **Inputs:** closed 0.6 verbatim/durable transcript baseline; closed 0.4
 reasoning semantics; closed 0.3 memory semantics; 0.5 Host operation/cognition
-state; bounded Host-observed workspace/repository state.
+state; bounded explicitly recorded Host workspace observation.
 
-**Proposed architecture:**
+**Frozen architecture:**
 
-- one stable canonical source cut for transcript/reasoning/memory/operation
-  context rather than independent mutable reads;
-- pure `@alcode/context` semantic/compiler package with no storage or execution
-  authority;
-- compile once per newly admitted user input in the bounded initial design;
-- current user request remains canonical and is appended exactly once;
-- graph-derived cognition/memory/workspace facts render as a deterministic
-  system appendix rather than fabricated historical user messages;
-- immediately preceding complete transcript turn plus required active
-  objective/hypotheses/verification/contradiction/operation/workspace/evidence
-  state are never silently dropped for budget reasons;
-- relevant memories reuse the closed 0.3 ranking function **without** recording
-  `seen` or `used`;
-- optional earlier transcript/reasoning/memory candidates are selected under a
-  deterministic estimated-cost budget;
-- provider-exact tokenization and compaction are not required;
-- canonical `context.projection_compiled` event contains the inspectable receipt
-  and output digests; a critical rebuildable projection materializes summary
-  rows into the existing `projection_receipts` table;
-- requested graph mode may produce effective verbatim mode with an explicit
-  fallback reason;
-- graph-capable Agent support is additive capability negotiation; the Agent
-  only receives Host-selected disposable context;
-- pre-registered A/B metrics measure task outcome, estimated context cost,
-  required-inclusion integrity, fallback behavior, and operational behavior;
-- no A/B result automatically changes the product default.
+- every `ModelProvider.stream()` in a 0.7-capable Agent is immediately preceded
+  by a Host context refresh; no turn-start graph snapshot may be reused across
+  later tool-loop inference after state changes;
+- one stable canonical source cut supplies transcript/reasoning/memory/operation
+  state; workspace/Git state is a separately timed/provenanced observation and
+  is not falsely described as transactionally atomic with SQLite;
+- pure `@alcode/context` owns deterministic policy only; Host owns acquisition,
+  strategy, fallback, receipt admission and delivery;
+- context items carry explicit trust classes (`host_control`, `host_observed`,
+  `verified_evidence`, `epistemic_claim`, `advisory_memory`, `unverified_data`);
+  canonical source text can never become Host control solely through storage;
+- source-derived system content is structured/escaped data under Host-authored
+  control framing, not uncontrolled prose interpolation;
+- current-turn canonical transcript and the immediately preceding complete turn
+  are required, preserving tool-call/result atomicity;
+- reasoning selection uses an objective-scoped causal frontier containing
+  relevant active hypotheses, linked falsifiers, active decisions, pending
+  verification obligations, blocking diagnostics/implicated graph paths and
+  decisive evidence; it does not dump all active historical hypotheses;
+- memory insertion is read-only and requires positive exact/relevance/structural
+  eligibility before applying the closed Phase 0.3 score; multiple deterministic
+  anchors are scored independently and aggregated by max score; selection never
+  records memory `seen`/`used`;
+- graph context has a hard deterministic **post-render serialized-character**
+  bound; `chars4-v1` remains an approximate comparison metric, not a provider
+  token upper bound;
+- required graph facts are never silently dropped; required overflow causes an
+  explicit `verbatim-v1` fallback without claiming verbatim satisfies the graph
+  bound;
+- canonical `context.projection_compiled` receipts separate source, attempted
+  graph decision, effective delivery and fallback; excluded candidates are
+  bounded summaries plus a candidate-universe digest rather than an unbounded
+  rejected-item list;
+- receipts include a request-environment digest covering base-system-prompt
+  digest, tool-definition digest, compiler/policy/render/trust versions and
+  budget configuration;
+- the canonical receipt event is the durability barrier; the existing SQL
+  `projection_receipts` summary remains rebuildable/derived unless a concrete
+  implementation invariant proves critical visibility necessary;
+- context receipt events are audit/meta-events and must not become reasoning
+  evidence, memory provenance fallback or task-world observations;
+- A/B fixtures/metrics are preregistered before selector implementation and use
+  isolated equivalent source state;
+- Phase 0.7 cannot close vacuously through all-fallback behavior: at least one
+  frozen fixture must deliver `graph-v1`, preserve required facts, use fewer
+  serialized characters than `verbatim-v1`, and succeed under the deterministic
+  oracle;
+- no evaluation result automatically promotes graph to the product default.
 
-**Draft exclusions:** graph default promotion; LLM summarization; compaction;
-provider-specific tokenizers/transforms; durable system prompt/tool definition
-restoration; vector memory retrieval; memory reinforcement due to selection;
-new reasoning semantics; pending-input redispatch / START_NOW / GUIDE / QUEUE;
-UI; remote Agent transport; browser; workflow/task identity; subagents;
-general scheduler/automation.
+**Frozen exclusions:** graph default promotion; LLM summarization/semantic
+compaction; provider-specific tokenizers/window enforcement/transforms; raw
+system-prompt/tool-definition durability; dense/vector memory retrieval; memory
+reinforcement due to selection; new reasoning semantics solely for ranking;
+static-turn/dynamic-overlay optimization; pending-input redispatch /
+START_NOW / GUIDE / QUEUE; UI; remote Agent transport; browser;
+workflow/task identity; subagents; general scheduler/automation.
 
-**Proposed exit gate:** `pnpm gate:0.7` would compose `gate:0.6` and prove
-stable-source deterministic compilation, required inclusions, budget-safe
-fallback, transcript tool-pair atomicity, read-only memory selection, receipt
-durability/rebuild, Agent capability/replacement behavior, verbatim default,
-and preregistered isolated A/B metric capture.
+**Exit gate:** `pnpm gate:0.7` composes `gate:0.6` and proves inference-boundary
+freshness, coherent canonical source cuts, workspace-observation provenance,
+trust/data separation, stored-injection containment, objective-scoped frontier
+with decisions/falsifiers, transcript atomicity, relevance-gated read-only
+memory, hard post-render graph bounds, safe fallback, bounded/reproducible
+receipts, meta-event non-contamination, Agent replacement/recovery, verbatim
+default, frozen evaluation corpus isolation, and the non-vacuous graph value
+proof defined in `docs/phase-0.7-plan.md`.
 
-The exact check IDs and closure criterion remain draft material in
-`docs/phase-0.7-plan.md`; they are not acceptance criteria until explicitly
-frozen.
+Implementation requires separate explicit authorization.
 
 ---
 
@@ -592,7 +615,7 @@ databases.**
 0.4   Reasoning semantic engine               CLOSED
 0.5   Host + cognition integration            CLOSED
 0.6   Durable verbatim context reconstruction CLOSED
-0.7   Graph context compiler + experiment     DRAFT — NOT AUTHORIZED
+0.7   Governed selective context / graph-v1   FROZEN — NOT STARTED
 0.8   Application Protocol + React GUI        PLANNED
 0.9   External integrations                   PLANNED
 ```
