@@ -1,4 +1,4 @@
-// Gate 0.3 — Phase 0.3 exit gate. See docs/phase-0-spec.md §0.3.
+// 0.3 — Phase 0.3 exit gate. See docs/phase-0-spec.md §0.3.
 //
 // Composes gate:0.2 (transitively gate:0.1A, gate:0.0), then adds:
 //   1. @alcode/memory typecheck + tests (semantic formulas, fixtures).
@@ -51,6 +51,20 @@ async function main(): Promise<void> {
       status: passed ? "passed" : "failed",
       evidence: statusMatch ? statusMatch[0] : (passed ? "gate:0.2 passed" : "gate:0.2 FAILED"),
     });
+    
+    if (!passed) {
+      // If gate 0.2 fails, we cannot proceed to 0.3 checks.
+      // Build receipt and exit early.
+      const receipt = buildReceipt({
+        gate: "0.3",
+        commitSha: sha,
+        startedAt,
+        inputs: [{ name: `node@${process.version}` }],
+        checks,
+      });
+      console.log(formatReceipt(receipt));
+      process.exit(1);
+    }
   }
 
   // 1. Memory + storage typecheck
