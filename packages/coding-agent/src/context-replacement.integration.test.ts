@@ -105,7 +105,7 @@ describeLocked("Phase 0.7 real Agent context replacement", () => {
       const events = await readModels.getSessionEvents(session.sessionId as string);
       return events.some((event) => event.type === "assistant.message.appended" && (event.payload as any).text === "Agent A observed the task.");
     });
-    expect((await host.sessions.get(session.sessionId)).stopped).toBe(false);
+    expect((await host.sessions.getState(session.sessionId)).stopped).toBe(false);
 
     const beforeReplacement = await readModels.getSessionEvents(session.sessionId as string);
     const receiptA = beforeReplacement.find((event) => event.type === "context.projection_compiled");
@@ -117,7 +117,7 @@ describeLocked("Phase 0.7 real Agent context replacement", () => {
     const generationA = connectionA.generationId;
     connectionA.terminate("SIGKILL");
     await connectionA.waitForExit();
-    expect((await host.sessions.get(session.sessionId)).stopped).toBe(false);
+    expect((await host.sessions.getState(session.sessionId)).stopped).toBe(false);
 
     supervisorB = new AgentSupervisor({
       entrypoint: workerEntrypoint,
@@ -145,6 +145,6 @@ describeLocked("Phase 0.7 real Agent context replacement", () => {
     expect((receiptB.payload as any).source.sourceEventSequence).toBeGreaterThanOrEqual(assistantA!.sequence);
     const assistantB = finalEvents.find((event) => event.type === "assistant.message.appended" && (event.payload as any).text === "Agent B continued from Host context.");
     expect(assistantB!.sequence).toBeGreaterThan(receiptB.sequence);
-    expect((await host.sessions.get(session.sessionId)).stopped).toBe(false);
+    expect((await host.sessions.getState(session.sessionId)).stopped).toBe(false);
   });
 });
