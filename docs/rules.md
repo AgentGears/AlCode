@@ -93,8 +93,9 @@ ADRs.
     Example: the operation registry, and transcript admission where the ACK
     promises a readable durable result.
   - **Derived projection** — separate transaction, may lag without blocking
-    operation completion. Example: reasoning graph or memory materialization.
-    Rebuilt from events on demand.
+    operation completion. Example: reasoning graph, memory materialization, or
+    a context-receipt summary when the canonical receipt event already records
+    the decision. Rebuilt from events on demand.
 
 - **Every projection maintains a cursor** (`projection_name`,
   `last_applied_event_sequence`, `projection_schema_version`). A projection can
@@ -244,17 +245,69 @@ ADRs.
 - **Verbatim context is the closed safety baseline.** `verbatim-v1` is
   reconstructable from canonical events and remains the product/default context
   strategy unless a later explicitly authorized decision changes that default.
-  A graph-distilled strategy may not silently replace it.
+  `graph-v1` may not silently replace it.
 
-- **Context strategy is Host authority.** Any later graph/context compiler may
-  consume bounded memory/reasoning/workspace state, but the Agent does not own
-  selection, fallback, or receipt persistence. Context compilation must not
-  mutate cognition merely because a durable fact was presented to the model.
+- **Selective context is Host observation policy.** The Agent does not own
+  context selection, reasoning traversal, memory search, trust classification,
+  graph/verbatim mode choice, fallback, or receipt persistence.
 
-- **Phase 0.7 is not implied by Phase 0.6 closure.** The current 0.7 plan is a
-  draft for review. Graph selection, projection receipts, estimated budgeting,
-  and A/B evaluation become implementation scope only after that plan is
-  frozen and explicitly authorized.
+- **Every graph-capable provider inference requires a fresh Host context
+  decision.** A 0.7-capable Agent must await Host context refresh immediately
+  before each `ModelProvider.stream()`, including later provider requests in the
+  same user turn. A turn-start graph snapshot may not be reused after tool,
+  cognition, operation, verification, or workspace state changes.
+
+- **Canonical context source uses one event cut; workspace state is a separate
+  observation.** Transcript/reasoning/memory/operation context derives from one
+  captured `sourceEventSequence`. Filesystem/Git state is explicitly timed and
+  provenanced; the system does not claim a transaction across SQLite and the
+  external worktree.
+
+- **Canonical does not mean control-authoritative.** Source-derived memory,
+  objectives, hypotheses, assumptions, decisions, evidence and workspace data
+  cannot acquire Host-control authority merely because they are persisted.
+  Graph context must distinguish Host control, Host-observed facts, verified
+  evidence, epistemic claims, advisory memory and unverified data, with
+  source-derived values structurally escaped as data.
+
+- **Graph budgeting has a real hard bound.** The 0.7 graph policy enforces a
+  deterministic post-render serialized-character bound. Approximate
+  `chars4-v1` token cost is diagnostic/comparative only and must not be
+  described as a provider-independent token upper bound. Required graph facts
+  are never silently dropped; overflow falls back to verbatim without claiming
+  verbatim satisfies the graph bound.
+
+- **Reasoning context is objective-scoped.** Context selection does not equate
+  "all active hypotheses" with the current reasoning frontier. The required
+  frontier follows the current objective and closed graph relations to include
+  operative hypotheses, linked falsifiers, active decisions, verification
+  obligations, blocking diagnostics/implicated paths and decisive evidence.
+  Ambiguous scope fails safely to verbatim rather than guessing.
+
+- **Memory strength cannot create context relevance.** Automatic memory context
+  requires positive exact/relevance/structural eligibility before applying the
+  closed Phase 0.3 ranking. No-positive-match inputs select no memory rather
+  than using strength alone. Context insertion itself records no `seen`/`used`.
+
+- **Context receipts are bounded audit decisions.**
+  `context.projection_compiled` records source, attempted policy, effective
+  delivery, fallback, selected provenance, bounded exclusion summaries,
+  candidate-universe digest and request-environment digest. It must not grow by
+  storing every rejected historical candidate.
+
+- **Context/audit meta-events are not cognition facts.** A context receipt must
+  not become reasoning evidence, memory provenance fallback, task-world
+  observation, or context-source content merely because it is a recent
+  canonical event.
+
+- **Graph closure does not imply graph promotion.** `verbatim-v1` remains the
+  product default after Phase 0.7 closure. At least one preregistered fixture
+  must prove non-vacuous effective graph delivery and context reduction, but
+  promotion remains a separate explicit evidence-based decision.
+
+- **Phase 0.7 is frozen but not started.** The binding design/acceptance
+  contract lives in `docs/phase-0.7-plan.md`. No implementation is authorized
+  merely by the existence of the frozen plan.
 
 ## Security
 

@@ -2,9 +2,9 @@
 
 Status: **active; Phases 0.0 through 0.6 closed**. Phase 0.6 closed in merge
 commit `98c764c` with `gate:0.6` green. Phase 0.7 is the next roadmap unit; its
-plan is currently **DRAFT / NOT AUTHORIZED**. This document orients the
-architecture and sequencing; the executable specification with authoritative
-gate definitions lives in [`phase-0-spec.md`](./phase-0-spec.md).
+reviewed design is **FROZEN / NOT STARTED / NOT AUTHORIZED**. This document
+orients the architecture and sequencing; the executable specification with
+authoritative gate definitions lives in [`phase-0-spec.md`](./phase-0-spec.md).
 
 ## North star
 
@@ -55,7 +55,7 @@ CLI / Desktop / Web / API
                          ▼
                 Host context strategy
                 verbatim-v1 (closed)
-                graph-v1 (draft 0.7)
+                graph-v1 (frozen 0.7)
 ```
 
 The load-bearing architectural shift is complete: durable execution and
@@ -80,7 +80,7 @@ old Agent process memory. ADR 0005 continues to govern ownership.
 0.6   Durable verbatim context reconstruction CLOSED
                                                  │
                                                  ▼
-0.7   Graph-distilled context strategy         DRAFT — NOT AUTHORIZED
+0.7   Governed selective context / graph-v1    FROZEN — NOT STARTED
                                                  │
                               ┌──────────────────┴──────────────────┐
                               ▼                                     ▼
@@ -88,8 +88,8 @@ old Agent process memory. ADR 0005 continues to govern ownership.
 ```
 
 The completed foundation must not be reopened absent concrete defect evidence.
-A draft successor plan does not start the phase; it must be reviewed, frozen,
-and explicitly authorized before implementation.
+A frozen successor design still does not start the phase; implementation
+requires separate explicit authorization.
 
 ---
 
@@ -242,46 +242,68 @@ phase.
 
 ## Next roadmap unit
 
-### 0.7 — Graph-distilled context strategy — DRAFT / NOT AUTHORIZED
+### 0.7 — Governed selective context / `graph-v1` — FROZEN / NOT STARTED
 
-The next architectural problem is selective context. Phase 0.6 answers
-"what did the model previously see?"; Phase 0.7 is intended to answer
-"what should the model see for this new task?" without moving context authority
-into the Agent.
+Phase 0.6 answers "what did the model previously see?". Phase 0.7 is frozen to
+answer "what should the model see **at this inference boundary**?" without moving
+context authority into the Agent.
 
-The current draft proposes:
+The reviewed contract is:
 
 ```text
-one stable canonical source cut
+Agent reaches inference boundary
+        ↓
+Host captures one canonical event cut N
         +
-bounded Host-observed workspace snapshot
-        +
-current canonical user request
+explicit workspace observation
         ↓
-Host-owned graph-v1 compiler
+trust classification
         ↓
-required facts + deterministic optional selection
+objective-scoped reasoning frontier
++ canonical current/recent transcript
++ relevance-gated memory
++ operation/workspace facts
         ↓
-canonical projection receipt
+deterministic post-render selection
         ↓
-Agent Protocol context update
+graph-v1 OR fail-safe verbatim-v1
         ↓
-disposable replacement Agent context
+bounded canonical context-decision receipt
+        ↓
+context.update
+        ↓
+ModelProvider.stream()
 ```
 
-`verbatim-v1` remains both the safety fallback and product default. The draft
-uses existing reasoning semantics and the closed memory ranking function; merely
-selecting a memory for context must not reinforce it. Required state is never
-silently dropped to meet a graph budget: if it cannot fit safely, graph mode
-falls back to verbatim.
+Frozen load-bearing decisions:
 
-The draft also proposes a canonical `context.projection_compiled` receipt,
-summary materialization into the existing `projection_receipts` table, and a
-pre-registered A/B harness. Phase 0.7 closure would not promote graph mode to
-default; default promotion remains a separate evidence-based decision.
+- Host refreshes context before **every** provider inference, including later
+  tool-loop requests in the same user turn;
+- source-derived text can never implicitly become Host control merely because it
+  is stored; graph items carry explicit trust/provenance classes;
+- the hard graph bound is deterministic post-render serialized characters;
+  `chars4-v1` remains approximate diagnostic token cost only;
+- workspace state is an explicitly timed/provenanced observation, not falsely
+  described as transactionally atomic with the event log;
+- reasoning context is an objective-scoped causal frontier including linked
+  hypotheses, falsifiers, active decisions, verification obligations, blockers,
+  implicated paths and decisive evidence rather than "all active reasoning";
+- automatic memory insertion requires positive relevance/structural/exact
+  eligibility and never reinforces memory;
+- context receipts are bounded using selected entries, exclusion summaries,
+  candidate-universe digest and request-environment digest;
+- `context.projection_compiled` is an audit/meta-event and must not accidentally
+  become cognition evidence or memory provenance;
+- Phase 0.7 cannot close through vacuous all-fallback behavior: a preregistered
+  deterministic fixture must actually deliver graph-v1, preserve required
+  facts, use fewer serialized characters than verbatim, and succeed.
 
-See [`phase-0.7-plan.md`](./phase-0.7-plan.md). The document is **not frozen** and
-implementation is **not authorized**.
+`verbatim-v1` remains both the safety fallback and product default. Phase 0.7
+closure does not promote graph mode; promotion remains a separate evidence-based
+authorization decision.
+
+See [`phase-0.7-plan.md`](./phase-0.7-plan.md). The design is **frozen**;
+implementation is **not started and not authorized**.
 
 ---
 
@@ -315,9 +337,9 @@ SSH, WSL, Docker, remote-server backends, browser capability, and other remote
 execution mechanisms remain deferred until a product requirement activates
 them. They are not Phase 0.7 prerequisites.
 
-The Phase 0.7 draft proposes only a bounded, read-only Host workspace-context
-snapshot port; it does not promote a remote workspace backend or give the
-context compiler arbitrary filesystem/terminal authority.
+Phase 0.7 freezes only a bounded, read-only Host workspace-observation port. It
+does not promote a remote workspace backend or give the context compiler
+arbitrary filesystem/terminal authority.
 
 ---
 
@@ -333,6 +355,9 @@ ADR 0005 freezes:
 
 Phase 0.5 exercised those boundaries in production code and gates; Phase 0.6
 extended the same ownership model to durable transcript/context reconstruction.
+Phase 0.7 preserves that authority model: the Host owns observation policy and
+the Agent consumes a disposable context decision.
+
 Still intentionally unfrozen/deferred:
 
 - public/remote wire encoding;
@@ -350,9 +375,10 @@ Do not promote attractive reference-system features merely because they exist.
 Keep them deferred unless activated by an authorized phase or concrete product
 requirement:
 
-- making graph context the product default before measured promotion;
+- making graph context the product default before explicit measured promotion;
 - LLM summarization/compaction;
-- provider-specific context transforms/tokenizers;
+- provider-specific context transforms/tokenizers/window enforcement;
+- static-turn/dynamic-overlay context optimization;
 - full workflow product;
 - recurring automation UI;
 - subagent worktree isolation;
@@ -375,8 +401,8 @@ The backlog remains trigger-based rather than calendar-based.
   authoritative gate definitions and historical phase contracts.
 - [`docs/phase-0.6-plan.md`](./phase-0.6-plan.md): completed frozen 0.6 contract
   and closure evidence.
-- [`docs/phase-0.7-plan.md`](./phase-0.7-plan.md): current **draft** successor
-  plan; not frozen and not authorized.
+- [`docs/phase-0.7-plan.md`](./phase-0.7-plan.md): frozen 0.7 design/acceptance
+  contract; implementation not started or authorized.
 - [`docs/constitution.md`](./constitution.md): the 10 frozen principles.
 - [`docs/rules.md`](./rules.md): hard rules.
 - [`docs/backlog.md`](./backlog.md): trigger-based deferred work.
