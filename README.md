@@ -12,8 +12,9 @@ the transcript, the UI, and the LLM context window are all projections of it.
 spine, memory semantics, reasoning semantics, Host control plane, durable
 cognition integration, replaceable-Agent property, and durable verbatim model
 context are proven. Phase 0.6 closed in merge commit `98c764c`; `gate:0.6` is
-green. Phase 0.7 is being drafted and is **not authorized for implementation**.
-See [`docs/roadmap.md`](docs/roadmap.md) for architecture orientation.
+green. Phase 0.7 has a **frozen design but is not started or authorized for
+implementation**. See [`docs/roadmap.md`](docs/roadmap.md) for architecture
+orientation.
 
 `ref/` (gitignored) holds studied reference codebases — not part of this repo.
 
@@ -30,8 +31,8 @@ See [`docs/roadmap.md`](docs/roadmap.md) for architecture orientation.
 7. [`docs/backlog.md`](docs/backlog.md) — deferred items with reactivation conditions.
 8. [`docs/phase-0.6-plan.md`](docs/phase-0.6-plan.md) — frozen and completed
    durable verbatim context reconstruction plan and closure evidence.
-9. [`docs/phase-0.7-plan.md`](docs/phase-0.7-plan.md) — **draft**, not-yet-frozen
-   graph-distilled context compiler and experiment plan.
+9. [`docs/phase-0.7-plan.md`](docs/phase-0.7-plan.md) — **frozen, not started,
+   not authorized** governed selective-context / `graph-v1` plan.
 
 ### Architecture decisions (ADRs)
 
@@ -81,7 +82,7 @@ and ADR 0005 for the ownership model.
 0.4  Reasoning semantic engine:                  [CLOSED]
 0.5  Host + cognition integration:               [CLOSED]
 0.6  Durable verbatim context reconstruction:    [CLOSED]
-0.7  Graph context compiler + experiment:        [DRAFT — NOT AUTHORIZED]
+0.7  Governed selective context / graph-v1:      [FROZEN — NOT STARTED]
 0.8  React GUI / application protocol:           [PLANNED]
 0.9  External integrations:                      [PLANNED]
 ```
@@ -93,11 +94,11 @@ the schema. Gates drive sequencing, not calendars.
 ## Next
 
 The completed foundation is 0.0 through 0.6. The next roadmap unit is
-**Phase 0.7 — graph-distilled context compiler and experiment framework**:
-select bounded Host-owned context from durable transcript, reasoning, memory,
-operation, and workspace state while retaining `verbatim-v1` as the fail-safe
-and product default.
+**Phase 0.7 — governed selective context / `graph-v1`**: make selective model
+observation an explicit Host-owned control-plane policy at every provider
+inference boundary, with trust classification, objective-scoped reasoning,
+relevance-gated memory, hard rendered bounds, bounded receipts, and fail-safe
+`verbatim-v1` fallback.
 
-The Phase 0.7 plan is currently a **draft for architectural review**. It is not
-frozen acceptance criteria and does not authorize implementation. See
-[`docs/phase-0.7-plan.md`](docs/phase-0.7-plan.md).
+The Phase 0.7 design is frozen, but implementation is **not started and not
+authorized**. See [`docs/phase-0.7-plan.md`](docs/phase-0.7-plan.md).
