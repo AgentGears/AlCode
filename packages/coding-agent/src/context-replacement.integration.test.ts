@@ -3,10 +3,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  createInMemoryTransportPair,
+  type AgentToHostMessage,
+  type HostToAgentMessage,
+} from "@alcode/agent-protocol";
 import { createWorkspaceContextSnapshot } from "@alcode/context";
 import { asWorkspaceId, uuidv7 } from "@alcode/events";
 import { AgentSupervisor, HostRuntime } from "@alcode/host-runtime";
 import { createWorkspaceReadModels, openLockedWorkspaceStore, type LockedWorkspaceStore } from "@alcode/storage";
+import { requestInferenceContext } from "./inference-context.ts";
+import { GitWorkspaceContextProvider } from "./workspace-context.ts";
 
 const describeLocked = process.platform === "win32" ? describe.skip : describe;
 
@@ -18,6 +25,54 @@ async function waitUntil(predicate: () => boolean | Promise<boolean>, timeoutMs 
   }
   throw new Error(`condition not reached within ${timeoutMs}ms`);
 }
+
+describe("Phase 0.7 coding-agent boundary corrections", () => {
+  it("cancels a pending Host context refresh instead of leaving the Agent wait unresolved", async () => {
+    const { a: agentTransport, b: hostTransport } = createInMemoryTransportPair<AgentToHostMessage, HostToAgentMessage>();
+    let requestSeen = false;
+    const unsubscribe = hostTransport.onMessage((message) => {
+      if (message.type === "context.refresh.request") requestSeen = true;
+    });
+    const controller = new AbortController();
+
+    try {
+      const pending = requestInferenceContext(agentTransport, "session-1", controller.signal);
+      await waitUntil(() => requestSeen, 1_000);
+
+      const reason = new Error("cancelled while Host context was pending");
+      controller.abort(reason);
+      await expect(pending).rejects.toBe(reason);
+    } finally {
+      unsubscribe();
+      await agentTransport.close();
+      await hostTransport.close();
+    }
+  });
+
+  it("fails workspace observation closed when a porcelain rename record is truncated", async () => {
+    const provider = new GitWorkspaceContextProvider(
+      { workspaceId: "workspace-1", repositoryId: "repository-1", root: "/workspace" },
+      {
+        runner: {
+          async run(args) {
+            const command = args.join(" ");
+            if (command === "rev-parse --is-inside-work-tree") return "true\n";
+            if (command === "rev-parse HEAD") return "abc123\n";
+            if (command === "symbolic-ref --short -q HEAD") return "main\n";
+            if (command === "status --porcelain=v1 -z --untracked-files=all") return "R  new.ts\0";
+            throw new Error(`unexpected git command: ${command}`);
+          },
+        },
+      },
+    );
+
+    const observation = await provider.observe();
+    expect(observation.status).toBe("failed");
+    if (observation.status === "failed") {
+      expect(observation.reasonCode).toBe("workspace_observation_failed");
+    }
+  });
+});
 
 describeLocked("Phase 0.7 real Agent context replacement", () => {
   let dir: string;
