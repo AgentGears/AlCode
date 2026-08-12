@@ -55,6 +55,11 @@ interface PermissionResolver {
   resolve(decision: PermissionDecision): void;
 }
 
+type PublicEventBody<T extends ApplicationEvent = ApplicationEvent> =
+  T extends ApplicationEvent
+    ? Omit<T, "protocolVersion" | "fromCursor" | "sequence" | "sessionId" | "occurredAt" | "cause">
+    : never;
+
 function record(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -570,7 +575,7 @@ export class HostApplicationService implements ApplicationServicePort {
     const permissions = new Map<string, PublicPermissionInteraction>();
     let publicCursor = 0;
 
-    const push = (event: Omit<ApplicationEvent, "protocolVersion" | "fromCursor" | "sequence" | "sessionId" | "occurredAt" | "cause">, source: PersistedDomainEvent<string, unknown>): void => {
+    const push = (event: PublicEventBody, source: PersistedDomainEvent<string, unknown>): void => {
       const full = {
         protocolVersion: APPLICATION_PROTOCOL_VERSION,
         sessionId,
