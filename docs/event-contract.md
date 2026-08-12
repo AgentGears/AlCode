@@ -108,7 +108,7 @@ type EventProducer =
   | { kind: "projection"; projectionName: string };
 ```
 
-Phases 0.5–0.6 deliberately reuse these existing producer categories for
+Phases 0.5–0.7 deliberately reuse these existing producer categories for
 Agent-originated/Host-admitted facts rather than expanding the envelope solely
 to encode process topology. The Host remains the canonical admission authority;
 `producer` records semantic origin, not database-write ownership.
@@ -165,11 +165,39 @@ Do not build the registry before there is a version to migrate from.
   event, excluding only `eventDigest`. Computed by `append` after assigning
   `sequence` and `recordedAt`.
 
+## Event semantic class
+
+Phase 0.7 requires a semantic distinction between task/runtime facts and
+context/audit metadata without changing the event envelope. Classification is
+derived from event type rather than stored as a new envelope field:
+
+```ts
+type EventSemanticClass =
+  | "domain_fact"
+  | "runtime_fact"
+  | "audit_meta";
+```
+
+The frozen minimum rule is:
+
+```text
+context.projection_compiled → audit_meta
+```
+
+An `audit_meta` event is canonical and replayable, but must not become reasoning
+evidence, memory provenance fallback, task-world observation, or a context
+candidate merely because it is recent canonical history. Domain/Host consumers
+that perform generic latest-event/provenance scans must respect this semantic
+classification.
+
+No event-envelope schema change is implied by this classification.
+
 ## Event ownership rule
 
 The `events` package owns the envelope and registry mechanism **only**.
-Domain packages/Host runtime own event types and payloads. As of the closed
-Phase 0.6 foundation, the durable vocabulary includes these families:
+Domain packages/Host runtime own event types and payloads. The closed Phase 0.6
+foundation includes these durable families, and the frozen Phase 0.7 plan adds
+one not-yet-implemented context/audit event:
 
 - **Runtime/session:** `runtime.session.started`, `runtime.session.stopped`.
 - **Durable Host work:** `runtime.work.requested`, `runtime.work.claimed`,
@@ -194,10 +222,13 @@ Phase 0.6 foundation, the durable vocabulary includes these families:
   `evidence.recorded`, `verification.result.correlated`.
 - **Memory semantic core:** `memory.created`, `memory.reinforced`,
   `memory.archived`, `memory.tombstoned`, `memory.deleted`, `memory.restored`.
-- **Context compiler (Phase 0.7 draft only):**
-  `context.projection_compiled` is proposed by `docs/phase-0.7-plan.md`; it is
-  **not implemented by the closed Phase 0.6 foundation and is not frozen
-  vocabulary until the Phase 0.7 plan is reviewed/authorized.**
+- **Context decision (frozen Phase 0.7 contract, not yet implemented):**
+  - `context.projection_compiled` — full bounded context-decision receipt;
+    semantic class `audit_meta`.
+
+Freezing Phase 0.7 reserves this event vocabulary/meaning for its authorized
+implementation; the event is **not part of the closed Phase 0.6 runtime** until
+0.7 implementation is separately authorized and completed.
 
 Internal reducer labels or reference-system event names are **not** canonical
 ALCODE event vocabulary. For example, Ouroboros undotted labels are normalized
