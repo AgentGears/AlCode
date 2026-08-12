@@ -40,9 +40,11 @@ describe("Phase 0.6 context ownership boundaries", () => {
     expect(worker).toContain("history: Message[]");
   });
 
-  it("does not introduce graph-distilled context selection", () => {
+  it("does not introduce graph-distilled context selection into transcript/cognition surfaces", () => {
+    // Phase 0.7 may extend the Host-owned compiler with graph selection. The
+    // Phase 0.6 ownership boundary remains that transcript/cognition surfaces
+    // do not acquire that semantic authority.
     const dirs = [
-      join(repoRoot, "packages/host-runtime/src"),
       join(repoRoot, "packages/transcript/src"),
       join(repoRoot, "extensions/cognition/src"),
     ];
