@@ -28,5 +28,11 @@ jobs:
           set +e
           out=$(pnpm gate:0.1B 2>&1); code=$?
           printf '%s\n' "$out"
-          if [ $code -ne 0 ]; then while IFS= read -r line; do echo "::error::$line"; done <<< "$out"; fi
+          if [ $code -ne 0 ]; then
+            while IFS= read -r line; do
+              case "$line" in
+                *"[FAIL]"*) echo "::error::$line" ;;
+              esac
+            done <<< "$out"
+          fi
           exit $code
