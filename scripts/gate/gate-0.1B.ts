@@ -80,8 +80,8 @@ async function main(): Promise<void> {
 
   // 3. agent-core + coding-agent + ai tests
   for (const pkg of ["agent-core", "coding-agent", "ai"]) {
-    const result = run("npx", ["vitest", "run"], {
-      cwd: join(ROOT, `packages/${pkg}`), throwOnError: false,
+    const result = run("npx", ["vitest", "run", `packages/${pkg}/src`], {
+      cwd: ROOT, throwOnError: false,
     });
     const passed = result.exitCode === 0;
     const summaryMatch = result.stdout.match(/Tests\s+(\d+ passed|\d+ failed)/);
