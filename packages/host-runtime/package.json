@@ -18,6 +18,7 @@
   "dependencies": {
     "@alcode/agent-core": "workspace:*",
     "@alcode/agent-protocol": "workspace:*",
+    "@alcode/application-protocol": "workspace:*",
     "@alcode/cognition-runtime": "workspace:*",
     "@alcode/context": "workspace:*",
     "@alcode/events": "workspace:*",
