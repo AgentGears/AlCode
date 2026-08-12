@@ -7,7 +7,7 @@ import { defineConfig } from "vitest/config";
 //   pnpm exec vitest run packages/events/src
 export default defineConfig({
   test: {
-    include: ["packages/*/src/**/*.test.ts"],
+    include: ["packages/*/src/**/*.test.ts", "packages/*/src/**/*.test.tsx"],
     environment: "node",
     reporters: ["default"],
     pool: "forks",
