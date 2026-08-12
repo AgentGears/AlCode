@@ -48,3 +48,5 @@ export {
   reduceApplicationEvent,
   reduceApplicationEvents,
 } from "./reducer.ts";
+
+export { createLoopbackApplicationTransport } from "./loopback.ts";
