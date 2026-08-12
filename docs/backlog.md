@@ -89,13 +89,15 @@ extend the accepted reasoning-port gate.
   requires additional oracle evidence; do not expand the closed 0.4 corpus by
   default.
 
-## Host/runtime (deferred after 0.7)
+## Host/runtime (deferred after 0.8)
 
-Phases 0.5–0.7 proved a local Node IPC Agent Protocol, Host-owned capability
+Phases 0.5–0.8 proved a local Node IPC Agent Protocol, Host-owned capability
 execution, bounded event-sourced cognition work, replaceable-Agent continuity,
-Host-owned durable transcript reconstruction, and per-inference Host-owned
-selective context authorization. The following remain deliberately outside the
-closed foundation:
+Host-owned durable transcript reconstruction, per-inference Host-owned selective
+context authorization, and a Host-owned public Application Protocol with
+disposable React projections, explicit input admission/cancellation/permission
+semantics, and cursor/snapshot recovery. The following remain deliberately
+outside the closed foundation:
 
 - remote Agent transport / public wire encoding;
 - general scheduler or recurring automation;
@@ -124,8 +126,10 @@ outside the closed acceptance boundary:
 - Static-turn-selection + dynamic-overlay optimization. Phase 0.7 uses full Host
   recompilation at every inference boundary; split overlays may be considered
   only after measured compilation cost justifies the added policy layer.
-- Graph visualization UI (full). 0.8 is planned around inspectors rather than a
-  full graph visualization surface.
+- Graph visualization UI (full). Closed Phase 0.8 intentionally shipped a
+  minimal React coding shell and explicitly excluded full graph/memory/context/
+  trace inspectors; graph visualization remains deferred until a later
+  authorized product requirement activates it.
 
 None of these items is unfinished Phase 0.7 work.
 
