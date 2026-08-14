@@ -57,8 +57,17 @@ export async function stagePluginGeneration(sourceRoot: string, options: StagePl
       return { digest: staged.digest, root: generationRoot, manifest: staged, inspection: { ...inspection, root: generationRoot }, reused: false };
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
-      if (code !== "EEXIST" && code !== "ENOTEMPTY") throw error;
-      const existing = await buildPackageTreeManifest(generationRoot);
+      // Windows reports EPERM when an atomic directory rename collides with an
+      // existing destination. Treat it as a reuse candidate only after proving
+      // that the expected content-addressed generation actually exists.
+      if (code !== "EEXIST" && code !== "ENOTEMPTY" && code !== "EPERM") throw error;
+      let existing;
+      try {
+        existing = await buildPackageTreeManifest(generationRoot);
+      } catch (existingError) {
+        if (code === "EPERM" && (existingError as NodeJS.ErrnoException).code === "ENOENT") throw error;
+        throw existingError;
+      }
       if (existing.digest !== staged.digest || existing.canonical !== staged.canonical) throw new Error("content-addressed plugin generation is corrupted");
       await rm(stagingRoot, { recursive: true, force: true });
       const existingInspection = await inspectPluginPackage(generationRoot);
