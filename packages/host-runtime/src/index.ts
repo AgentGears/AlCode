@@ -4,22 +4,12 @@ export { AgentSupervisor, type AgentConnection, type AgentSupervisorOptions } fr
 export { createChildProcessHostTransport } from "./node-ipc-transport.ts";
 export { createInProcessAgentConnection, type AgentTransportAdapter } from "./transport-adapter.ts";
 export { DefaultHostPolicy, type HostPolicy, type CapabilityAuthorization, type CapabilityAuthorizationRequest } from "./policy.ts";
-export {
-  CapabilityBroker,
-  type HostCapability,
-  type HostCapabilityResult,
-  type HostCapabilityContext,
-  type CapabilityBrokerRequest,
-  type CapabilityBrokerResult,
-  type CapabilityApprovalDecision,
-  type CapabilityApprovalHandler,
-  type CapabilityPolicyHookResult,
-  type CapabilityHookCoordinator,
-} from "./capability-broker.ts";
+export { CapabilityBroker, type HostCapability, type HostCapabilityResult, type HostCapabilityContext, type CapabilityBrokerRequest, type CapabilityBrokerResult, type CapabilityApprovalDecision, type CapabilityApprovalHandler, type CapabilityPolicyHookResult, type CapabilityHookCoordinator } from "./capability-broker.ts";
 export { ExternalProcessSupervisor, scrubExternalProcessEnvironment, type ExternalProcessSpec, type ExternalProcessExit, type OwnedExternalProcess, type ExternalProcessSupervisorOptions } from "./external-process.ts";
 export { HostArtifactStore, type HostArtifactReference, type RetainArtifactOptions, type HostArtifactStoreOptions } from "./artifact-store.ts";
 export { createSafeFetch, classifyNetworkAddress, DefaultHostDnsResolver, NodePinnedHttpDriver, type ResolvedHostAddress, type HostDnsResolver, type HostHttpDriverRequest, type HostHttpDriver, type SafeFetchOptions } from "./safe-network.ts";
 export { HostPluginService, type HostPluginStatus, type HostPluginRegistration, type PluginRuntimeActivation, type HostPluginLifecycle, type HostPluginServiceOptions } from "./plugin-service.ts";
+export { HostPluginApplicationService } from "./plugin-application-service.ts";
 export { HostMcpManager, type HostMcpRuntimeStatus, type HostMcpDiagnostic, type HostMcpManagerOptions } from "./mcp-manager.ts";
 export { HostHookManager, type HostHookAuditRecord, type HostHookManagerOptions, type CapabilityPolicyHookRequest } from "./hook-manager.ts";
 export { createCapabilityHookCoordinator } from "./hook-coordinator.ts";
