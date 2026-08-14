@@ -270,7 +270,9 @@ export class CapabilityBroker {
 
     let baselineNeedsApproval = !authorization.allowed && authorization.approvalRequired && !alreadyApproved;
     let hookNeedsApproval = false;
-    let approvalReason = authorization.reason;
+    let approvalReason = authorization.allowed
+      ? "capability requires Host approval"
+      : authorization.reason;
     if (this.hookCoordinator) {
       const hook = await this.hookCoordinator.beforeCapability({
         sessionId: request.sessionId as string,
