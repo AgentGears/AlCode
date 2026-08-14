@@ -69,7 +69,7 @@ function toolsFromCatalog(
     name: descriptor.definition.name,
     description: descriptor.definition.description,
     inputSchema: descriptor.definition.inputSchema,
-    ...(descriptor.isReadOnly !== undefined ? { isReadOnly: descriptor.isReadOnly } : {}),
+    isReadOnly: descriptor.isReadOnly ?? false,
     ...(descriptor.binding.kind === "dynamic" ? { expectedCapabilityRevision: descriptor.binding.revision } : {}),
     sessionId: () => sessionId,
     transport,
