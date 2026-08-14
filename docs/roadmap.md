@@ -1,8 +1,8 @@
 # ALCODE Roadmap — Architecture Orientation
 
-Status: **active; Phases 0.0 through 0.8 closed**. Phase 0.8 source PR #19 final head
-`99ea7dc524e8a3be608c6ab8f4aaf0e631a3cb14` passed `gate:0.8` in exact-head run `31642583639` and full CI run
-`31642583653`, then squash-merged as `c4d41028d964155e0f5bb808f49e57385fed80fb`. Phase 0.9 is the next planned roadmap unit. This document orients the architecture and
+Status: **active; Phases 0.0 through 0.9 closed**. Phase 0.9 source PR #26 final head
+`c1adcddc1dab1f86948bc064a5e9147c39085ca2` passed the composed `gate:0.9` in exact-head run `31830423730` and the required Ubuntu/Windows platform proof in run
+`31830423635`, then squash-merged as `c143d58b05af25b30f5fb54d69dfc02319451348`. Phase 0.9 closure does not itself authorize a successor phase. This document orients the architecture and
 sequencing; the executable specification with authoritative gate definitions
 lives in [`phase-0-spec.md`](./phase-0-spec.md).
 
@@ -13,7 +13,7 @@ mediates environmental capabilities, owns execution policy and canonical state,
 schedules bounded durable work, and exposes a consistent workspace contract
 across execution environments.
 
-The governing ownership model is implemented through Phase 0.8:
+The governing ownership model is implemented through Phase 0.9:
 
 ```text
 Experience Plane
@@ -84,12 +84,12 @@ continues to govern ownership.
                                                  │
                                                  ▼
 0.8   Application protocol + React UI          CLOSED
-0.9   External adapters                        PLANNED
+0.9   External adapters                        CLOSED
 ```
 
 The completed foundation must not be reopened absent concrete defect evidence.
-Phase 0.8 closure does not authorize Phase 0.9 implementation and does not
-promote `graph-v1` to the product default.
+Phase 0.9 closure does not authorize a successor phase and does not promote
+`graph-v1` to the product default.
 
 ---
 
@@ -348,12 +348,26 @@ run `31642583639` and full CI run `31642583653`, then squash-merged as `c4d41028
 
 ---
 
-## Next planned roadmap unit
+### 0.9 — External adapters — CLOSED
 
-### 0.9 — External adapters — PLANNED
+Established the Host-governed extension and code-observation layer without
+moving canonical state or execution authority into adapters. The completed
+surface includes Agent Plugins package semantics and immutable installed
+generations, dynamic generation-bound Host capabilities, MCP Tools, monotonic
+lifecycle hooks, stable ACP v1 adaptation, semantic CodeIntelligence with a
+real TypeScript language-server synchronization fence, and Host-projected
+plugin management through the Application Protocol.
 
-Add hooks, MCP, ACP, and code-intelligence adapters onto the Host. Integration
-remains an adapter role, never a canonical state owner.
+External adapters remain clients of Host-owned admission, capability policy,
+context authority, durable state, recovery, and completion. `verbatim-v1`
+remains the product default and `graph-v1` remains opt-in.
+
+**Gate:** `gate:0.9`, composing `gate:0.8`. As-built contract and closure
+evidence: [`phase-0.9-closure.md`](./phase-0.9-closure.md).
+
+**Closure:** PR #26 final source head `c1adcddc1dab1f86948bc064a5e9147c39085ca2`
+passed exact-head `gate:0.9` run `31830423730` and Ubuntu/Windows platform-proof
+run `31830423635`, then squash-merged as `c143d58b05af25b30f5fb54d69dfc02319451348`.
 
 ---
 
@@ -369,7 +383,7 @@ workspace identity != transport != location
 
 SSH, WSL, Docker, remote-server backends, browser capability, and other remote
 execution mechanisms remain deferred until a product requirement activates
-them. They were not Phase 0.7 prerequisites.
+them. They were not Phase 0.9 prerequisites.
 
 Phase 0.7 implemented only a bounded, read-only Host workspace-observation port
 for selective context. It did not promote a remote workspace backend or give
@@ -377,7 +391,7 @@ the context compiler arbitrary filesystem/terminal authority.
 
 ---
 
-## Ownership checkpoint — completed through 0.8
+## Ownership checkpoint — completed through 0.9
 
 ADR 0005 freezes:
 
@@ -390,10 +404,12 @@ ADR 0005 freezes:
 Phase 0.5 exercised those boundaries in production code and gates; Phase 0.6
 extended the same ownership model to durable transcript/context reconstruction;
 Phase 0.7 extended it to selective model observation; Phase 0.8 extended it to
-the public Application Protocol and disposable React projections. The Host owns
-source acquisition, context strategy, admission, capability policy, canonical
-state, recovery, and completion; the Agent and Experience Plane remain clients
-of Host-owned decisions.
+the public Application Protocol and disposable React projections; Phase 0.9
+extended it to external adapters and semantic code observation without moving
+canonical authority out of the Host. The Host owns source acquisition, context
+strategy, admission, capability policy, canonical state, recovery, and
+completion; the Agent, adapters, and Experience Plane remain clients of
+Host-owned decisions.
 
 Still intentionally unfrozen/deferred:
 
@@ -442,6 +458,8 @@ The backlog remains trigger-based rather than calendar-based.
   design/acceptance contract and closure evidence.
 - [`docs/phase-0.8-plan.md`](./phase-0.8-plan.md): completed frozen 0.8
   Application Protocol/React contract and closure evidence.
+- [`docs/phase-0.9-closure.md`](./phase-0.9-closure.md): completed Phase 0.9
+  as-built contract and closure evidence.
 - [`docs/constitution.md`](./constitution.md): the 10 frozen principles.
 - [`docs/rules.md`](./rules.md): hard rules.
 - [`docs/backlog.md`](./backlog.md): trigger-based deferred work.
