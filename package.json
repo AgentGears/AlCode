@@ -28,7 +28,7 @@
     "test:watch": "vitest"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild", "fs-ext", "better-sqlite3"]
+    "onlyBuiltDependencies": ["esbuild", "fs-ext", "fs-ext-extra-prebuilt", "better-sqlite3"]
   },
   "devDependencies": {
     "@types/fs-ext": "^2.0.3",
