@@ -5,9 +5,7 @@ export {
   type AgentConnection,
   type AgentSupervisorOptions,
 } from "./agent-supervisor.ts";
-export {
-  createChildProcessHostTransport,
-} from "./node-ipc-transport.ts";
+export { createChildProcessHostTransport } from "./node-ipc-transport.ts";
 export {
   createInProcessAgentConnection,
   type AgentTransportAdapter,
@@ -36,6 +34,14 @@ export {
   type OwnedExternalProcess,
   type ExternalProcessSupervisorOptions,
 } from "./external-process.ts";
+export {
+  HostPluginService,
+  type HostPluginStatus,
+  type HostPluginRegistration,
+  type PluginRuntimeActivation,
+  type HostPluginLifecycle,
+  type HostPluginServiceOptions,
+} from "./plugin-service.ts";
 export { CognitionGateway } from "./cognition-gateway.ts";
 export { DurableWorkDispatcher, type WorkHandler } from "./work-dispatcher.ts";
 export { HostCognitionService, COGNITION_TOOL_NAMES } from "./cognition-service.ts";
@@ -46,10 +52,7 @@ export {
   type HostContextServiceOptions,
   type RefreshContextInput,
 } from "./context-service.ts";
-export {
-  compileVerbatimContext,
-  assertContextContinuable,
-} from "./verbatim-context.ts";
+export { compileVerbatimContext, assertContextContinuable } from "./verbatim-context.ts";
 export { HostRuntime, type HostRuntimeOptions, type AttachedAgent, type AgentResumeReason } from "./host.ts";
 export {
   HostApplicationService,
