@@ -16,6 +16,24 @@ describe("scanString bounded regressions", () => {
     expect(scanString("a".repeat(64), "secret").detections).toHaveLength(0);
   });
 
+  it("detects a realistic 32-character hex secret after finite-sample correction", () => {
+    // A plausible 128-bit hex credential. Raw Shannon entropy (~3.48 bits/char)
+    // sits just below MIN_HEX_ENTROPY (3.5); Miller-Madow bias correction lifts
+    // it to ~3.75, so it is detected instead of escaping as a false negative.
+    const value = "2976b5a25656b514eab91e2c6bb79306";
+    const result = scanString(value, "secret");
+
+    expect(result.detections).toHaveLength(1);
+    expect(result.detections[0]?.detectorId).toBe("entropy:hex-sensitive-field");
+    expect(result.redacted).toMatch(/^secretref:entropy:hex-sensitive-field:[0-9a-f]{64}$/);
+  });
+
+  it("does not detect a low-diversity hex value after finite-sample correction", () => {
+    // 32 hex characters but only 4 distinct symbols: corrected entropy (~2.07)
+    // stays far below threshold, so the correction does not over-match.
+    expect(scanString("abcd".repeat(8), "secret").detections).toHaveLength(0);
+  });
+
   it("does not apply the hexadecimal heuristic to a benign field", () => {
     const value = "0123456789abcdef".repeat(4);
     expect(scanString(value, "checksum").detections).toHaveLength(0);

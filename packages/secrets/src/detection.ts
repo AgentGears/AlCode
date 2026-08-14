@@ -72,8 +72,28 @@ const MIN_ENTROPY = 4.5;
 const MIN_HEX_ENTROPY = 3.5;
 const HEX_RE = /^[0-9a-f]+$/i;
 
+// Miller–Madow finite-sample bias correction, applied to the hex branch only.
+// Shannon entropy is biased downward on short samples: a fully random 32-char
+// hex credential with all 16 symbols present averages ~3.48 bits/char, which
+// falls below MIN_HEX_ENTROPY (3.5) even though it is a plausible 128-bit
+// secret. Miller–Madow adds back (k-1)/(2N ln2) bits (k = observed symbols,
+// N = length), lifting the review's realistic 32-char value from ~3.48 to
+// ~3.75 while leaving low-diversity inputs (e.g. "abcd".repeat(8)) far below.
+function correctedHexEntropy(value: string): number {
+  const normalized = value.toLowerCase();
+  const observedSymbols = new Set(normalized).size;
+
+  const correction =
+    (observedSymbols - 1) /
+    (2 * normalized.length * Math.LN2);
+
+  return Math.min(4, entropy(normalized) + correction);
+}
+
 function isHighEntropyHex(value: string): boolean {
-  return value.length >= MIN_SECRET_LENGTH && HEX_RE.test(value) && entropy(value) >= MIN_HEX_ENTROPY;
+  return value.length >= MIN_SECRET_LENGTH
+    && HEX_RE.test(value)
+    && correctedHexEntropy(value) >= MIN_HEX_ENTROPY;
 }
 
 // ---------------------------------------------------------------------------
