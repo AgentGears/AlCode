@@ -1,7 +1,10 @@
 export type EventSemanticClass = "domain_fact" | "runtime_fact" | "audit_meta";
 
 const RUNTIME_PREFIXES = ["runtime.", "operation."] as const;
-const AUDIT_META_TYPES = new Set(["context.projection_compiled"]);
+const AUDIT_META_TYPES = new Set([
+  "context.projection_compiled",
+  "integration.hook.audit",
+]);
 
 export function classifyEventType(type: string): EventSemanticClass {
   if (AUDIT_META_TYPES.has(type)) return "audit_meta";

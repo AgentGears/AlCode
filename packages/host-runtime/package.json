@@ -22,6 +22,7 @@
     "@alcode/cognition-runtime": "workspace:*",
     "@alcode/context": "workspace:*",
     "@alcode/events": "workspace:*",
+    "@alcode/hooks": "workspace:*",
     "@alcode/mcp": "workspace:*",
     "@alcode/memory": "workspace:*",
     "@alcode/plugins": "workspace:*",
