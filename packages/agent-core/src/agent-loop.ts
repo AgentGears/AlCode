@@ -18,6 +18,8 @@ import type {
 export interface InferenceContext {
   systemPrompt: string;
   messages: readonly Message[];
+  /** Exact Host-authorized tools for this provider inference when refreshed. */
+  tools?: readonly AgentTool[];
 }
 
 export interface AgentLoopOptions {
@@ -32,10 +34,10 @@ export interface AgentLoopOptions {
   /** Canonical timestamp for the newly admitted user prompt. */
   promptTimestamp?: number;
   /**
-   * Phase 0.7 Host-authority seam. When present, this is awaited immediately
-   * before every provider inference, including subsequent tool-loop requests.
-   * The returned values shape that one ModelRequest only; local Agent history
-   * remains disposable and continues to collect transcript lifecycle events.
+   * Host-authority seam. When present, this is awaited immediately before
+   * every provider inference, including subsequent tool-loop requests. The
+   * returned system/messages/tools shape that one ModelRequest and the tool
+   * calls formed by it; local Agent history remains disposable.
    */
   beforeInference?: (local: InferenceContext) => Promise<InferenceContext>;
 }
@@ -66,6 +68,7 @@ export async function runAgentLoop(
     const localInference: InferenceContext = {
       systemPrompt,
       messages: (messages as Message[]).map((message) => structuredClone(message)),
+      tools,
     };
     let authorized: InferenceContext;
     try {
@@ -83,11 +86,12 @@ export async function runAgentLoop(
       await emit({ type: "turn_end" });
       break;
     }
+    const authorizedTools = authorized.tools ? [...authorized.tools] : tools;
 
     const assistantMessage = await streamAssistant(
       authorized.systemPrompt,
       [...authorized.messages].map((message) => structuredClone(message)),
-      tools,
+      authorizedTools,
       provider,
       signal,
     );
@@ -108,15 +112,15 @@ export async function runAgentLoop(
       if (signal?.aborted) break;
       await emit({ type: "tool_execution_start", toolCallId: tc.id, toolName: tc.name, args: tc.arguments });
 
-      const tool = tools.find((t) => t.name === tc.name);
+      const tool = authorizedTools.find((t) => t.name === tc.name);
       let result: AgentToolResult;
       let isError: boolean;
       let outcome: ToolExecutionOutcome;
 
       if (!tool) {
         result = {
-          content: [{ type: "text", text: `Tool "${tc.name}" not found` }],
-          details: { error: "tool_not_found" },
+          content: [{ type: "text", text: `Tool "${tc.name}" not found in the Host-authorized inference catalog` }],
+          details: { error: "tool_not_authorized_for_inference" },
         };
         isError = true;
         outcome = "failed";

@@ -7,6 +7,7 @@ import {
   type OperationId,
   type SessionId,
 } from "@alcode/events";
+import type { AuthorizedToolDescriptor, ModelToolDefinition } from "@alcode/agent-protocol";
 import {
   MatchMethod,
   MatchStatus,
@@ -37,6 +38,8 @@ export interface HostCapabilityContext {
 
 export interface HostCapability {
   name: string;
+  description?: string;
+  inputSchema?: ModelToolDefinition["inputSchema"];
   isReadOnly?: boolean;
   execute(args: unknown, context: HostCapabilityContext): Promise<HostCapabilityResult>;
 }
@@ -46,14 +49,16 @@ export interface CapabilityBrokerRequest {
   toolCallId: string;
   toolName: string;
   args: unknown;
+  expectedCapabilityRevision?: string;
   signal?: AbortSignal;
 }
 
 export interface CapabilityBrokerResult {
   operationId?: OperationId;
-  outcome: ExecutionOutcome | "denied";
+  outcome: ExecutionOutcome | "denied" | "stale";
   result?: unknown;
   error?: string;
+  errorCode?: string;
 }
 
 export type CapabilityApprovalDecision = "allow_once" | "allow_always" | "deny";
@@ -64,6 +69,18 @@ export type CapabilityApprovalHandler = (request: {
   args: unknown;
   reason: string;
 }) => Promise<CapabilityApprovalDecision>;
+
+interface RegisteredCapability {
+  capability: HostCapability;
+  binding:
+    | { kind: "static" }
+    | { kind: "dynamic"; providerId: string; revision: string };
+}
+
+interface DynamicProviderRegistration {
+  revision: string;
+  names: Set<string>;
+}
 
 function freezeCanonical<T>(value: T): T {
   return JSON.parse(canonicalStringify(value)) as T;
@@ -88,8 +105,22 @@ function verificationResultData(execution: HostCapabilityResult, outcome: Execut
   };
 }
 
+function definitionOf(capability: HostCapability): ModelToolDefinition {
+  return {
+    name: capability.name,
+    description: capability.description ?? `Request Host-owned ${capability.name} capability or cognition operation.`,
+    inputSchema: structuredClone(capability.inputSchema ?? { type: "object", properties: {} }),
+  };
+}
+
+function providerBindingKey(providerId: string, revision: string): string {
+  return `${providerId}\u0000${revision}`;
+}
+
 export class CapabilityBroker {
-  private readonly byName: Map<string, HostCapability>;
+  private readonly byName = new Map<string, RegisteredCapability>();
+  private readonly dynamicProviders = new Map<string, DynamicProviderRegistration>();
+  private readonly retiredDynamicBindings = new Set<string>();
   private readonly alwaysApproved = new Set<string>();
   private approvalHandler: CapabilityApprovalHandler | undefined;
 
@@ -100,7 +131,88 @@ export class CapabilityBroker {
     private readonly policy: HostPolicy,
     capabilities: readonly HostCapability[],
   ) {
-    this.byName = new Map(capabilities.map((capability) => [capability.name, capability]));
+    for (const capability of capabilities) {
+      if (this.byName.has(capability.name)) throw new Error(`duplicate Host capability: ${capability.name}`);
+      this.byName.set(capability.name, { capability, binding: { kind: "static" } });
+    }
+  }
+
+  /**
+   * Atomically replaces one provider-owned dynamic capability generation.
+   * `revision` is opaque and non-reusable within this broker/Host authority epoch.
+   */
+  registerDynamicProvider(
+    providerId: string,
+    revision: string,
+    capabilities: readonly HostCapability[],
+  ): () => void {
+    if (!providerId) throw new Error("dynamic capability providerId is required");
+    if (!revision) throw new Error("dynamic capability revision is required");
+    const bindingKey = providerBindingKey(providerId, revision);
+    if (this.retiredDynamicBindings.has(bindingKey)) {
+      throw new Error(`dynamic capability revision was retired and cannot be reused: ${providerId}@${revision}`);
+    }
+    const current = this.dynamicProviders.get(providerId);
+    if (current?.revision === revision) {
+      throw new Error(`dynamic capability replacement must mint a new revision: ${providerId}@${revision}`);
+    }
+
+    const staged = new Map<string, RegisteredCapability>();
+    for (const capability of capabilities) {
+      if (!capability.name) throw new Error("dynamic capability name is required");
+      if (staged.has(capability.name)) throw new Error(`duplicate dynamic capability in provider generation: ${capability.name}`);
+      const occupied = this.byName.get(capability.name);
+      if (occupied && !(occupied.binding.kind === "dynamic" && occupied.binding.providerId === providerId)) {
+        throw new Error(`dynamic capability conflicts with existing capability: ${capability.name}`);
+      }
+      staged.set(capability.name, {
+        capability,
+        binding: { kind: "dynamic", providerId, revision },
+      });
+    }
+
+    if (current) {
+      for (const name of current.names) {
+        const occupied = this.byName.get(name);
+        if (occupied?.binding.kind === "dynamic" && occupied.binding.providerId === providerId && occupied.binding.revision === current.revision) {
+          this.byName.delete(name);
+        }
+      }
+      this.retiredDynamicBindings.add(providerBindingKey(providerId, current.revision));
+    }
+    for (const [name, registration] of staged) this.byName.set(name, registration);
+    this.dynamicProviders.set(providerId, { revision, names: new Set(staged.keys()) });
+
+    let disposed = false;
+    return () => {
+      if (disposed) return;
+      disposed = true;
+      const active = this.dynamicProviders.get(providerId);
+      if (!active || active.revision !== revision) return;
+      for (const name of active.names) {
+        const occupied = this.byName.get(name);
+        if (occupied?.binding.kind === "dynamic" && occupied.binding.providerId === providerId && occupied.binding.revision === revision) {
+          this.byName.delete(name);
+        }
+      }
+      this.dynamicProviders.delete(providerId);
+      this.retiredDynamicBindings.add(bindingKey);
+    };
+  }
+
+  describeCapabilities(includeDynamic = true): AuthorizedToolDescriptor[] {
+    const result: AuthorizedToolDescriptor[] = [];
+    for (const registration of this.byName.values()) {
+      if (!includeDynamic && registration.binding.kind === "dynamic") continue;
+      result.push({
+        definition: definitionOf(registration.capability),
+        binding: registration.binding.kind === "static"
+          ? { kind: "static" }
+          : { kind: "dynamic", revision: registration.binding.revision },
+        isReadOnly: registration.capability.isReadOnly ?? false,
+      });
+    }
+    return result.sort((a, b) => a.definition.name.localeCompare(b.definition.name, "en"));
   }
 
   /**
@@ -122,11 +234,35 @@ export class CapabilityBroker {
   }
 
   async execute(request: CapabilityBrokerRequest): Promise<CapabilityBrokerResult> {
-    const capability = this.byName.get(request.toolName);
-    if (!capability) {
+    const registration = this.byName.get(request.toolName);
+    if (!registration) {
+      if (request.expectedCapabilityRevision !== undefined) {
+        return {
+          outcome: "stale",
+          errorCode: "capability_stale",
+          error: `capability catalog changed; refresh before retry: ${request.toolName}`,
+        };
+      }
       return { outcome: "denied", error: `unknown capability: ${request.toolName}` };
     }
+    if (registration.binding.kind === "dynamic") {
+      if (request.expectedCapabilityRevision !== registration.binding.revision) {
+        return {
+          outcome: "stale",
+          errorCode: "capability_stale",
+          error: `capability catalog changed; refresh before retry: ${request.toolName}`,
+        };
+      }
+    } else if (request.expectedCapabilityRevision !== undefined) {
+      // Prevent an old dynamic call from ABA-resolving to a later static capability with the same name.
+      return {
+        outcome: "stale",
+        errorCode: "capability_stale",
+        error: `capability binding no longer matches: ${request.toolName}`,
+      };
+    }
 
+    const capability = registration.capability;
     const frozenArgs = freezeCanonical(request.args);
     const isReadOnly = capability.isReadOnly ?? false;
     const approvalKey = this.approvalKey(request.sessionId, request.toolName);

@@ -22,6 +22,7 @@ import { createWriteTool } from "./tools/write.ts";
 type AnyAgentTool = AgentTool<any, any>;
 
 function extractNumber(details: unknown, key: string): number | null | undefined {
+  if (typeof details !== "object" && details === null) return undefined;
   if (typeof details !== "object" || details === null || Array.isArray(details)) return undefined;
   const value = (details as Record<string, unknown>)[key];
   return typeof value === "number" || value === null ? value : undefined;
@@ -32,6 +33,8 @@ export function agentToolAsHostCapability<TInput, TResult>(
 ): HostCapability {
   return {
     name: tool.name,
+    description: tool.description,
+    inputSchema: structuredClone(tool.inputSchema),
     isReadOnly: tool.isReadOnly ?? false,
     async execute(args, context): Promise<HostCapabilityResult> {
       const result = await tool.execute(
