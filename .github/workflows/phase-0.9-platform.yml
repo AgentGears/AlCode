@@ -21,5 +21,10 @@ jobs:
         with: { version: 10.13.1 }
       - uses: actions/setup-node@v4
         with: { node-version: 22.17.0, cache: pnpm }
-      - run: pnpm install --frozen-lockfile
+      - name: Install (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: pnpm install --frozen-lockfile
+      - name: Install (Windows — skip native builds)
+        if: runner.os == 'Windows'
+        run: pnpm install --frozen-lockfile --ignore-scripts
       - run: pnpm exec vitest run packages/plugins/src/plugins.test.ts packages/host-runtime/src/plugin-service.test.ts packages/host-runtime/src/external-process.test.ts
