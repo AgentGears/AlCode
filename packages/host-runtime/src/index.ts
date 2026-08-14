@@ -41,6 +41,17 @@ export {
   type HostArtifactStoreOptions,
 } from "./artifact-store.ts";
 export {
+  createSafeFetch,
+  classifyNetworkAddress,
+  DefaultHostDnsResolver,
+  NodePinnedHttpDriver,
+  type ResolvedHostAddress,
+  type HostDnsResolver,
+  type HostHttpDriverRequest,
+  type HostHttpDriver,
+  type SafeFetchOptions,
+} from "./safe-network.ts";
+export {
   HostPluginService,
   type HostPluginStatus,
   type HostPluginRegistration,
@@ -48,6 +59,12 @@ export {
   type HostPluginLifecycle,
   type HostPluginServiceOptions,
 } from "./plugin-service.ts";
+export {
+  HostMcpManager,
+  type HostMcpRuntimeStatus,
+  type HostMcpDiagnostic,
+  type HostMcpManagerOptions,
+} from "./mcp-manager.ts";
 export { CognitionGateway } from "./cognition-gateway.ts";
 export { DurableWorkDispatcher, type WorkHandler } from "./work-dispatcher.ts";
 export { HostCognitionService, COGNITION_TOOL_NAMES } from "./cognition-service.ts";
