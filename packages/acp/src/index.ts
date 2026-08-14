@@ -1,5 +1,6 @@
 import {
   PROTOCOL_VERSION,
+  RequestError,
   agent,
   methods,
   type AgentApp,
@@ -41,8 +42,12 @@ export class AcpAdapterError extends Error {
 }
 
 function assertNoClientConfiguration(params: { mcpServers?: readonly unknown[]; additionalDirectories?: readonly string[] | null }): void {
-  if ((params.mcpServers?.length ?? 0) > 0) throw new AcpAdapterError("unsupported_mcp_servers", "ALCODE owns MCP configuration");
-  if ((params.additionalDirectories?.length ?? 0) > 0) throw new AcpAdapterError("unsupported_additional_directories", "ALCODE owns workspace roots");
+  if ((params.mcpServers?.length ?? 0) > 0) {
+    throw RequestError.invalidParams(undefined, "unsupported_mcp_servers: ALCODE owns MCP configuration");
+  }
+  if ((params.additionalDirectories?.length ?? 0) > 0) {
+    throw RequestError.invalidParams(undefined, "unsupported_additional_directories: ALCODE owns workspace roots");
+  }
 }
 
 function textPrompt(blocks: readonly ContentBlock[]): string {

@@ -27,7 +27,7 @@ describe("stable ACP v1 adapter", () => {
     await clientApp.connectWith(app, async (ctx) => {
       const initialized = await ctx.request(methods.agent.initialize, { protocolVersion: PROTOCOL_VERSION });
       expect(initialized.protocolVersion).toBe(PROTOCOL_VERSION);
-      expect(initialized.agentCapabilities.sessionCapabilities).toMatchObject({ resume: {}, close: {} });
+      expect(initialized.agentCapabilities?.sessionCapabilities).toMatchObject({ resume: {}, close: {} });
       const created = await ctx.request(methods.agent.session.new, { cwd: process.cwd(), mcpServers: [] });
       expect(created.sessionId).toBe("S1");
       const prompted = await ctx.request(methods.agent.session.prompt, { sessionId: "S1", prompt: [{ type: "text", text: "hello" }] });

@@ -12,6 +12,7 @@ import type {
   ProviderSyncResult,
 } from "./types.ts";
 import { LspJsonRpcClient, type LspOwnedProcess } from "./lsp-jsonrpc.ts";
+import { resolveTypeScriptTsserverPath } from "./typescript-lsp-command.ts";
 
 export interface TypeScriptLspProviderOptions {
   root: string;
@@ -67,9 +68,9 @@ export class TypeScriptLanguageServerProvider implements CodeIntelligenceProvide
     if (sameRevision(this.syncedRevision, revision) && this.rpc) return { status: "synchronized" };
     try {
       await this.restart(options.signal);
-      // Provider-specific workspace fence: a workspace/symbol round trip occurs only after initialize/initialized.
-      // File-specific queries additionally didOpen the exact current file before their semantic request.
-      await this.rpc!.request<unknown[]>("workspace/symbol", { query: "" }, options.signal);
+      // Provider-specific workspace fence: a non-empty workspace/symbol round trip occurs only after initialize/initialized
+      // and forces the pinned TypeScript server to answer against the current workspace generation.
+      await this.rpc!.request<unknown[]>("workspace/symbol", { query: "__alcode_sync_probe__" }, options.signal);
       this.syncedRevision = structuredClone(revision);
       return { status: "synchronized" };
     } catch (error) {
@@ -148,7 +149,10 @@ export class TypeScriptLanguageServerProvider implements CodeIntelligenceProvide
         workspace: { workspaceFolders: true },
         textDocument: { publishDiagnostics: { relatedInformation: false }, definition: {}, references: {} },
       },
-      initializationOptions: { disableAutomaticTypingAcquisition: true, tsserver: { useSyntaxServer: "never" } },
+      initializationOptions: {
+        disableAutomaticTypingAcquisition: true,
+        tsserver: { useSyntaxServer: "never", path: resolveTypeScriptTsserverPath() },
+      },
       clientInfo: { name: "alcode", version: "0.9.0" },
     }, signal);
     rpc.notify("initialized", {});
