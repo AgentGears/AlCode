@@ -1,0 +1,10 @@
+{
+  "name": "alcode-win-lock",
+  "version": "0.0.0",
+  "private": true,
+  "type": "commonjs",
+  "main": "./index.cjs",
+  "dependencies": {
+    "fs-ext-extra-prebuilt": "2.2.10"
+  }
+}

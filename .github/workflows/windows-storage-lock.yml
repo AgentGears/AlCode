@@ -1,0 +1,44 @@
+# Permanent Windows check for the workspace storage-lock lifecycle. The main
+# CI gate (gate-0-1B) installs with --ignore-scripts on Windows and so cannot
+# build better-sqlite3 / exercise LockFileEx; this workflow builds the SQLite
+# native module and runs the full sqlite-event-store suite (including the
+# cross-process contention and crash-release tests) on windows-latest.
+# See docs/adr/0002-workspace-identity-and-locking.md.
+name: Windows storage lock
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.17.0"
+          cache: pnpm
+      - name: Install without general native scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Build SQLite native module only
+        run: pnpm rebuild better-sqlite3
+      - name: Verify Windows lock binding resolves
+        run: pnpm --filter @alcode/workspace exec node -e "const x=require('alcode-win-lock'); if(typeof x.lockFileEx!=='function'||typeof x.unlockFileEx!=='function') process.exit(1)"
+      - name: Typecheck affected packages
+        run: |
+          pnpm --filter @alcode/workspace exec tsc --noEmit -p tsconfig.json
+          pnpm --filter @alcode/storage exec tsc --noEmit -p tsconfig.json
+          pnpm --filter @alcode/secrets exec tsc --noEmit -p tsconfig.json
+      - name: Run secret scanner regressions
+        run: pnpm --filter @alcode/secrets exec vitest run src/detection.test.ts
+      - name: Run Windows workspace lock and storage lifecycle tests
+        run: pnpm --filter @alcode/storage exec vitest run src/sqlite-event-store.test.ts

@@ -134,8 +134,20 @@ function acquireWindowsLock(lockPath: string, owner: LockOwner): AcquiredLock {
     );
   }
 
-  // Open the file for reading/writing without truncation.
-  const fd = openSync(lockPath, "as+");
+  // Open for read/write, creating the file if absent. Do NOT use append mode
+  // ("a"/"as+"): on Windows, append opens with FILE_APPEND_DATA and omits
+  // FILE_WRITE_DATA, so ftruncate (SetEndOfFile) fails with EPERM. "r+" grants
+  // FILE_WRITE_DATA -- ftruncate then works even under a held LockFileEx -- but
+  // "r+" does not create, so create the file first when it is absent.
+  let fd: number;
+  try {
+    fd = openSync(lockPath, "r+");
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+    // Touch the file into existence without truncating ("a" creates, no O_TRUNC).
+    closeSync(openSync(lockPath, "a"));
+    fd = openSync(lockPath, "r+");
+  }
 
   try {
     lockBinding!.lockFileEx(fd);
@@ -148,7 +160,8 @@ function acquireWindowsLock(lockPath: string, owner: LockOwner): AcquiredLock {
     );
   }
 
-  // Write diagnostic metadata through the locked descriptor.
+  // Write diagnostic metadata through the locked descriptor. With "r+" mode,
+  // ftruncate works under a LockFileEx byte range owned by this descriptor.
   const ownerJson = JSON.stringify(owner, null, 2) + "\n";
   ftruncateSync(fd, 0);
   writeSync(fd, ownerJson, 0, "utf8");

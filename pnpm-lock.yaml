@@ -230,11 +230,20 @@ importers:
         specifier: 19.2.3
         version: 19.2.3(@types/react@19.2.17)
 
+  packages/win-lock:
+    dependencies:
+      fs-ext-extra-prebuilt:
+        specifier: 2.2.10
+        version: 2.2.10
+
   packages/workspace:
     dependencies:
       '@alcode/events':
         specifier: workspace:*
         version: link:../events
+      alcode-win-lock:
+        specifier: workspace:*
+        version: link:../win-lock
       better-sqlite3:
         specifier: ^13.0.3
         version: 13.0.3
@@ -786,6 +795,10 @@ packages:
   expect-type@1.4.0:
     resolution: {integrity: sha512-KfYbmpRm0VbLjEvVa9yGwCi9GI34xvi7A/HXYWQO65CSD2u3MczUJSuwXKFIxlGsgBQizV9q5J9NHj4VG0n+pA==}
     engines: {node: '>=12.0.0'}
+
+  fs-ext-extra-prebuilt@2.2.10:
+    resolution: {integrity: sha512-jkN955Mae+dGIHrmNxqCLiXKHyo1rFFS7T2m3ukE2t0v+p0+y7tJ7ySXOjJZQbLx1rzRKtj3rf7CAecPDueX3Q==}
+    engines: {node: '>= 8.0.0'}
 
   fs-ext@2.1.1:
     resolution: {integrity: sha512-/TrISPOFhCkbgIRWK9lzscRzwPCu0PqtCcvMc9jsHKBgZGoqA0VzhspVht5Zu8lxaXjIYIBWILHpRotYkCCcQA==}
@@ -1344,6 +1357,10 @@ snapshots:
       '@types/estree': 1.0.9
 
   expect-type@1.4.0: {}
+
+  fs-ext-extra-prebuilt@2.2.10:
+    dependencies:
+      nan: 2.28.0
 
   fs-ext@2.1.1:
     dependencies:

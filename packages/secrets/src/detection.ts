@@ -35,6 +35,7 @@ const TOKEN_PATTERNS: readonly TokenPattern[] = [
   { id: "google-api-key", pattern: /AIza[0-9A-Za-z_-]{35}/g, description: "Google API key" },
   { id: "openai-key", pattern: /sk-[A-Za-z0-9]{20,}/g, description: "OpenAI API key" },
   { id: "anthropic-key", pattern: /sk-ant-[A-Za-z0-9_-]{20,}/g, description: "Anthropic API key" },
+  { id: "stripe-restricted-key", pattern: /rk_(?:live|test)_[A-Za-z0-9]{20,}/g, description: "Stripe restricted API key" },
   // Private key: match the header — the gate REJECTS the entire string on match
   { id: "private-key-header", pattern: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----/, description: "Private key header (rejects entire string)" },
 ];
@@ -47,7 +48,7 @@ const SENSITIVE_FIELD_NAMES = new Set([
   "password", "passwd", "secret", "token", "apikey", "api_key",
   "access_key", "accesskey", "authorization", "auth",
   "credential", "private_key", "privatekey",
-  "client_secret", "clientsecret",
+  "client_secret", "clientsecret", "connectionstring",
 ]);
 
 function isSensitiveField(name: string): boolean {
@@ -68,6 +69,32 @@ function entropy(s: string): number {
 
 const MIN_SECRET_LENGTH = 20;
 const MIN_ENTROPY = 4.5;
+const MIN_HEX_ENTROPY = 3.5;
+const HEX_RE = /^[0-9a-f]+$/i;
+
+// Miller–Madow finite-sample bias correction, applied to the hex branch only.
+// Shannon entropy is biased downward on short samples: a fully random 32-char
+// hex credential with all 16 symbols present averages ~3.48 bits/char, which
+// falls below MIN_HEX_ENTROPY (3.5) even though it is a plausible 128-bit
+// secret. Miller–Madow adds back (k-1)/(2N ln2) bits (k = observed symbols,
+// N = length), lifting the review's realistic 32-char value from ~3.48 to
+// ~3.75 while leaving low-diversity inputs (e.g. "abcd".repeat(8)) far below.
+function correctedHexEntropy(value: string): number {
+  const normalized = value.toLowerCase();
+  const observedSymbols = new Set(normalized).size;
+
+  const correction =
+    (observedSymbols - 1) /
+    (2 * normalized.length * Math.LN2);
+
+  return Math.min(4, entropy(normalized) + correction);
+}
+
+function isHighEntropyHex(value: string): boolean {
+  return value.length >= MIN_SECRET_LENGTH
+    && HEX_RE.test(value)
+    && correctedHexEntropy(value) >= MIN_HEX_ENTROPY;
+}
 
 // ---------------------------------------------------------------------------
 // Detection result
@@ -147,14 +174,23 @@ export function scanString(value: string, fieldName?: string): ScanResult {
 
     if (reject) break;
 
-    // Entropy heuristic — only for known-sensitive fields
+    // Entropy heuristic — only for known-sensitive fields. Hex has a
+    // theoretical maximum of 4 bits/character, so it needs a bounded,
+    // representation-specific threshold rather than the generic 4.5 bits.
     if (fieldName && isSensitiveField(fieldName) && current.length >= MIN_SECRET_LENGTH && !isValidMarker(current)) {
-      const e = entropy(current);
-      if (e >= MIN_ENTROPY) {
-        const { valueDigest, marker } = makeMarker("entropy:sensitive-field", current);
-        detections.push({ detectorId: "entropy:sensitive-field", valueDigest, marker });
+      if (isHighEntropyHex(current)) {
+        const { valueDigest, marker } = makeMarker("entropy:hex-sensitive-field", current);
+        detections.push({ detectorId: "entropy:hex-sensitive-field", valueDigest, marker });
         current = marker;
         changed = true;
+      } else {
+        const e = entropy(current);
+        if (e >= MIN_ENTROPY) {
+          const { valueDigest, marker } = makeMarker("entropy:sensitive-field", current);
+          detections.push({ detectorId: "entropy:sensitive-field", valueDigest, marker });
+          current = marker;
+          changed = true;
+        }
       }
     }
 
