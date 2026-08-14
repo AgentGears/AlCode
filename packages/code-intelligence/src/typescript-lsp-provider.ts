@@ -78,14 +78,15 @@ export class TypeScriptLanguageServerProvider implements CodeIntelligenceProvide
         return { status: "unsupported", reason: "no TypeScript/JavaScript source file is available to establish provider synchronization" };
       }
 
-      // The TypeScript server does not create a project merely from initialize/workspaceFolders.
-      // Open one deterministic workspace source and round-trip documentSymbol first so tsserver has
-      // loaded the project containing the exact on-disk bytes for this Host revision.
+      // typescript-language-server does not create a tsserver project merely from
+      // initialize/workspaceFolders. Open one deterministic workspace source and
+      // await textDocument/documentSymbol. That request reaches tsserver NavTree,
+      // so successful completion is the provider-specific fence proving the freshly
+      // restarted provider has consumed a workspace file after the captured Host
+      // revision. The service still performs the mandatory Host revision/health
+      // recheck after every semantic query before publishing it as current.
       await this.openFile(path.relative(this.root, seed));
 
-      // Provider-specific workspace fence: after project loading, a workspace/symbol round trip
-      // forces the pinned TypeScript server to answer against that loaded workspace project.
-      await this.rpc!.request<unknown[]>("workspace/symbol", { query: "__alcode_sync_probe__" }, options.signal);
       this.syncedRevision = structuredClone(revision);
       return { status: "synchronized" };
     } catch (error) {
@@ -181,9 +182,7 @@ export class TypeScriptLanguageServerProvider implements CodeIntelligenceProvide
       for (const child of children) {
         if (SOURCE_DISCOVERY_IGNORES.has(child.name)) continue;
         visited += 1;
-        if (visited > MAX_SOURCE_DISCOVERY_ENTRIES) {
-          throw new Error(`TypeScript synchronization source discovery exceeds ${MAX_SOURCE_DISCOVERY_ENTRIES} entries`);
-        }
+        if (visited > MAX_SOURCE_DISCOVERY_ENTRIES) throw new Error(`TypeScript synchronization source discovery exceeds ${MAX_SOURCE_DISCOVERY_ENTRIES} entries`);
         const absolute = path.join(directory, child.name);
         if (child.isFile() && SOURCE_EXTENSIONS.has(path.extname(child.name).toLowerCase())) return absolute;
         if (child.isDirectory()) {
