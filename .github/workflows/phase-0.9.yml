@@ -1,0 +1,24 @@
+name: Phase 0.9
+on:
+  push:
+    branches: [phase-0.9]
+  pull_request:
+    paths:
+      - 'packages/**'
+      - 'extensions/**'
+      - 'scripts/gate/**'
+      - 'docs/phase-0.9*'
+      - 'pnpm-lock.yaml'
+      - 'package.json'
+      - '.github/workflows/phase-0.9*.yml'
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10.13.1 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22.17.0, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm gate:0.9
