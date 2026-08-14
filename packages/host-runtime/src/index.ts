@@ -25,6 +25,8 @@ export {
   type CapabilityBrokerResult,
   type CapabilityApprovalDecision,
   type CapabilityApprovalHandler,
+  type CapabilityPolicyHookResult,
+  type CapabilityHookCoordinator,
 } from "./capability-broker.ts";
 export {
   ExternalProcessSupervisor,
@@ -65,6 +67,13 @@ export {
   type HostMcpDiagnostic,
   type HostMcpManagerOptions,
 } from "./mcp-manager.ts";
+export {
+  HostHookManager,
+  type HostHookAuditRecord,
+  type HostHookManagerOptions,
+  type CapabilityPolicyHookRequest,
+} from "./hook-manager.ts";
+export { createCapabilityHookCoordinator } from "./hook-coordinator.ts";
 export { CognitionGateway } from "./cognition-gateway.ts";
 export { DurableWorkDispatcher, type WorkHandler } from "./work-dispatcher.ts";
 export { HostCognitionService, COGNITION_TOOL_NAMES } from "./cognition-service.ts";
