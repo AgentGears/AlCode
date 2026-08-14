@@ -35,6 +35,12 @@ export {
   type ExternalProcessSupervisorOptions,
 } from "./external-process.ts";
 export {
+  HostArtifactStore,
+  type HostArtifactReference,
+  type RetainArtifactOptions,
+  type HostArtifactStoreOptions,
+} from "./artifact-store.ts";
+export {
   HostPluginService,
   type HostPluginStatus,
   type HostPluginRegistration,
