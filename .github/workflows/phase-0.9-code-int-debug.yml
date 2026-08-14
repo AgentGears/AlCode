@@ -1,0 +1,15 @@
+name: Phase 0.9 code-int debug
+on:
+  push:
+    branches: [phase-0.9]
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10.13.1 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22.17.0, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec vitest run packages/host-runtime/src/code-intelligence.test.ts --reporter verbose
