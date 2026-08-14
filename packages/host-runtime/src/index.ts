@@ -1,35 +1,17 @@
 export { CanonicalAdmissionQueue } from "./admission-queue.ts";
+export { HostSessionManager, type HostSessionHandle } from "./session-manager.ts";
 export {
   AgentSupervisor,
-  type AgentSupervisorOptions,
   type AgentConnection,
+  type AgentSupervisorOptions,
 } from "./agent-supervisor.ts";
 export {
-  CapabilityBroker,
-  type HostCapability,
-  type HostCapabilityResult,
-  type HostCapabilityContext,
-  type CapabilityBrokerRequest,
-  type CapabilityBrokerResult,
-} from "./capability-broker.ts";
+  createChildProcessHostTransport,
+} from "./node-ipc-transport.ts";
 export {
-  HostApplicationService,
-  type HostApplicationServiceOptions,
-  type ApplicationAgentControl,
-} from "./application-service.ts";
-export { HostApplicationController } from "./application-controller.ts";
-export {
-  CognitionGateway,
-  type VerificationPlanMatch,
-  type VerificationEvaluation,
-} from "./cognition-gateway.ts";
-export { COGNITION_TOOL_NAMES, HostCognitionService } from "./cognition-service.ts";
-export { HostContextSourceReader } from "./context-source.ts";
-export {
-  HostContextService,
-  type HostContextServiceOptions,
-  type RefreshContextInput,
-} from "./context-service.ts";
+  createInProcessAgentConnection,
+  type AgentTransportAdapter,
+} from "./transport-adapter.ts";
 export {
   DefaultHostPolicy,
   type HostPolicy,
@@ -37,18 +19,45 @@ export {
   type CapabilityAuthorizationRequest,
 } from "./policy.ts";
 export {
-  HostSessionManager,
-  HostSessionStateError,
-  type HostSessionState,
-  type HostSessionHandle,
-  type CompletionEvidence,
-} from "./session-manager.ts";
-export { TranscriptAdmissionService } from "./transcript-admission.ts";
+  CapabilityBroker,
+  type HostCapability,
+  type HostCapabilityResult,
+  type HostCapabilityContext,
+  type CapabilityBrokerRequest,
+  type CapabilityBrokerResult,
+  type CapabilityApprovalDecision,
+  type CapabilityApprovalHandler,
+} from "./capability-broker.ts";
 export {
-  ContextIncompleteError,
+  ExternalProcessSupervisor,
+  scrubExternalProcessEnvironment,
+  type ExternalProcessSpec,
+  type ExternalProcessExit,
+  type OwnedExternalProcess,
+  type ExternalProcessSupervisorOptions,
+} from "./external-process.ts";
+export { CognitionGateway } from "./cognition-gateway.ts";
+export { DurableWorkDispatcher, type WorkHandler } from "./work-dispatcher.ts";
+export { HostCognitionService, COGNITION_TOOL_NAMES } from "./cognition-service.ts";
+export { TranscriptAdmissionService } from "./transcript-admission.ts";
+export { HostContextSourceReader } from "./context-source.ts";
+export {
+  HostContextService,
+  type HostContextServiceOptions,
+  type RefreshContextInput,
+} from "./context-service.ts";
+export {
   compileVerbatimContext,
   assertContextContinuable,
 } from "./verbatim-context.ts";
-export { DurableWorkDispatcher, type MemoryConsolidationWork } from "./work-dispatcher.ts";
-export { createChildProcessHostTransport, createProcessAgentTransport } from "./node-ipc-transport.ts";
 export { HostRuntime, type HostRuntimeOptions, type AttachedAgent, type AgentResumeReason } from "./host.ts";
+export {
+  HostApplicationService,
+  type HostApplicationServiceOptions,
+  type HostApplicationSessionDriver,
+} from "./application-service.ts";
+export {
+  HostApplicationController,
+  createHostApplicationController,
+  type HostApplicationControllerOptions,
+} from "./application-controller.ts";
