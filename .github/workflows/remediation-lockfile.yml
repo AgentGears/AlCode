@@ -1,4 +1,4 @@
-name: Remediation lockfile
+name: Remediation test guards
 
 on:
   pull_request:
@@ -8,27 +8,60 @@ permissions:
   contents: write
 
 jobs:
-  generate-lockfile:
+  apply-test-guards:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.ref }}
-      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-python@v5
         with:
-          version: 10.13.1
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22.17.0"
-      - name: Generate and commit lockfile
+          python-version: "3.12"
+      - name: Apply exact Windows test guard replacements
         shell: bash
         run: |
-          pnpm install --lockfile-only --no-frozen-lockfile
-          if git diff --quiet -- pnpm-lock.yaml; then
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("packages/storage/src/sqlite-event-store.test.ts")
+          text = path.read_text()
+
+          replacements = [
+              (
+                  '/** Skip tests that require workspace locking on Windows (no LockFileEx binding yet). */\nconst describeLocked = process.platform === "win32" ? describe.skip : describe;',
+                  'const describeLocked = describe;',
+              ),
+              (
+                  'it("process B fails while process A holds the lock (POSIX only)", { timeout: 15000 }, async () => {\n    if (process.platform === "win32") { expect(true).toBe(true); return; }\n\n',
+                  'it("process B fails while process A holds the lock", { timeout: 15000 }, async () => {\n',
+              ),
+              (
+                  'it("crash release: child exits without release, parent acquires", { timeout: 15000 }, async () => {\n    if (process.platform === "win32") { expect(true).toBe(true); return; }\n\n',
+                  'it("crash release: child exits without release, parent acquires", { timeout: 15000 }, async () => {\n',
+              ),
+              (
+                  'const describeLocked2 = process.platform === "win32" ? describe.skip : describe;',
+                  'const describeLocked2 = describe;',
+              ),
+          ]
+
+          changed = False
+          for old, new in replacements:
+              if old in text:
+                  text = text.replace(old, new, 1)
+                  changed = True
+              elif new not in text:
+                  raise SystemExit(f"expected test guard not found: {old[:80]!r}")
+
+          if changed:
+              path.write_text(text)
+          PY
+
+          if git diff --quiet -- packages/storage/src/sqlite-event-store.test.ts; then
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add pnpm-lock.yaml
-          git commit -m "build: refresh lockfile for Windows lock binding"
+          git add packages/storage/src/sqlite-event-store.test.ts
+          git commit -m "test(storage): exercise workspace locking on Windows"
           git push origin HEAD:${{ github.event.pull_request.head.ref }}
