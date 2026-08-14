@@ -28,7 +28,16 @@ checks.push(check("0.9.code-intelligence.contract", () => vitest("packages/code-
 checks.push(check("0.9.code-intelligence.provider-sync", () => vitest("packages/code-intelligence/src/code-intelligence.test.ts", "packages/host-runtime/src/code-intelligence.test.ts"), "provider synchronization fence"));
 checks.push(check("0.9.code-intelligence.rebaseline", () => vitest("packages/code-intelligence/src/code-intelligence.test.ts"), "tracker uncertainty recovery"));
 checks.push(check("0.9.web.plugins", () => vitest("packages/web/src"), "Host-projected plugin management surface"));
-checks.push(check("0.9.ownership", () => { command("build"); }, "TypeScript project-reference ownership/build boundary"));
+checks.push(check("0.9.ownership", () => {
+  command("--filter", "@alcode/plugins", "typecheck");
+  command("--filter", "@alcode/mcp", "typecheck");
+  command("--filter", "@alcode/hooks", "typecheck");
+  command("--filter", "@alcode/acp", "typecheck");
+  command("--filter", "@alcode/code-intelligence", "typecheck");
+  command("--filter", "@alcode/host-runtime", "typecheck");
+  command("--filter", "@alcode/web", "typecheck");
+  vitest("packages/web/src/boundaries.test.ts", "packages/application-protocol/src/boundaries.test.ts", "packages/events/src/semantic-class.test.ts");
+}, "Phase 0.9 package typechecks and ownership boundaries"));
 const commitSha = process.env.GITHUB_SHA ?? "unknown";
 const receipt = buildReceipt({ gate: "0.9", commitSha, startedAt, inputs: [{ name: "Agent Plugins 1.0.0" }, { name: "MCP SDK @modelcontextprotocol/client@2.0.0" }, { name: "ACP SDK @agentclientprotocol/sdk@1.3.0" }, { name: "typescript-language-server@5.3.0" }], checks });
 console.log(formatReceipt(receipt));
