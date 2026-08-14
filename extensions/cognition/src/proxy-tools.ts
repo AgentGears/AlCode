@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import type { AgentTool, AgentToolResult } from "@alcode/agent-core";
 import type {
   AgentToHostMessage,
-  CapabilityResult,
   HostToAgentMessage,
   ProtocolTransport,
 } from "@alcode/agent-protocol";
@@ -11,6 +10,7 @@ export interface ProxyToolOptions {
   name: string;
   description?: string;
   isReadOnly?: boolean;
+  expectedCapabilityRevision?: string;
   sessionId: () => string;
   transport: ProtocolTransport<AgentToHostMessage, HostToAgentMessage>;
 }
@@ -18,8 +18,8 @@ export interface ProxyToolOptions {
 async function requestHost(
   transport: ProtocolTransport<AgentToHostMessage, HostToAgentMessage>,
   message: AgentToHostMessage & { type: "capability.request" },
-): Promise<CapabilityResult> {
-  return new Promise<CapabilityResult>((resolve, reject) => {
+): Promise<Extract<HostToAgentMessage, { type: "capability.result" }>> {
+  return new Promise((resolve, reject) => {
     const unsubscribe = transport.onMessage((response) => {
       if (response.type !== "capability.result" || response.requestId !== message.requestId) return;
       unsubscribe();
@@ -50,14 +50,20 @@ export function createProtocolProxyTool(options: ProxyToolOptions): AgentTool<Re
         toolCallId: context.toolCallId ?? randomUUID(),
         toolName: options.name,
         args: input,
+        ...(options.expectedCapabilityRevision !== undefined
+          ? { expectedCapabilityRevision: options.expectedCapabilityRevision }
+          : {}),
       });
       const text = response.error ?? JSON.stringify(response.result ?? null);
-      const executionOutcome = response.outcome === "denied"
+      const executionOutcome = response.outcome === "denied" || response.outcome === "stale"
         ? "failed"
         : response.outcome;
       return {
         content: [{ type: "text", text }],
-        details: response.result ?? { error: response.error ?? null },
+        details: response.result ?? {
+          error: response.error ?? null,
+          ...(response.errorCode !== undefined ? { errorCode: response.errorCode } : {}),
+        },
         executionOutcome,
       };
     },

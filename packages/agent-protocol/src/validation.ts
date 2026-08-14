@@ -6,6 +6,29 @@ function isObject(value: unknown): value is Record<string, unknown> {
 function hasString(value: Record<string, unknown>, key: string): boolean { return typeof value[key] === "string"; }
 function hasNumber(value: Record<string, unknown>, key: string): boolean { return typeof value[key] === "number" && Number.isFinite(value[key]); }
 
+function isModelToolDefinition(value: unknown): boolean {
+  if (!isObject(value) || !hasString(value, "name") || !hasString(value, "description") || !isObject(value.inputSchema)) return false;
+  if (value.inputSchema.type !== "object" || !isObject(value.inputSchema.properties)) return false;
+  return value.inputSchema.required === undefined
+    || (Array.isArray(value.inputSchema.required) && value.inputSchema.required.every((item) => typeof item === "string"));
+}
+
+function isCapabilityBinding(value: unknown): boolean {
+  if (!isObject(value)) return false;
+  if (value.kind === "static") return true;
+  return value.kind === "dynamic" && hasString(value, "revision");
+}
+
+function isInferenceToolCatalog(value: unknown): boolean {
+  return isObject(value)
+    && hasString(value, "digest")
+    && Array.isArray(value.tools)
+    && value.tools.every((tool) => isObject(tool)
+      && isModelToolDefinition(tool.definition)
+      && isCapabilityBinding(tool.binding)
+      && (tool.isReadOnly === undefined || typeof tool.isReadOnly === "boolean"));
+}
+
 export function isAgentToHostMessage(value: unknown): value is AgentToHostMessage {
   if (!isObject(value) || typeof value.type !== "string") return false;
   switch (value.type) {
@@ -20,7 +43,8 @@ export function isAgentToHostMessage(value: unknown): value is AgentToHostMessag
         && hasString(value, "toolName") && Array.isArray(value.content) && typeof value.isError === "boolean"
         && hasNumber(value, "timestamp");
     case "capability.request":
-      return hasString(value, "requestId") && hasString(value, "sessionId") && hasString(value, "toolCallId") && hasString(value, "toolName");
+      return hasString(value, "requestId") && hasString(value, "sessionId") && hasString(value, "toolCallId") && hasString(value, "toolName")
+        && (value.expectedCapabilityRevision === undefined || hasString(value, "expectedCapabilityRevision"));
     case "context.refresh.request":
       return hasString(value, "requestId") && hasString(value, "sessionId");
     case "criterion.evidence":
@@ -60,11 +84,14 @@ export function isHostToAgentMessage(value: unknown): value is HostToAgentMessag
       return hasString(value, "requestId") && hasString(value, "sessionId") && hasString(value, "receiptId")
         && ["verbatim-v1", "graph-v1"].includes(String(value.effectiveMode))
         && hasNumber(value, "sourceEventSequence") && hasString(value, "systemPrompt")
-        && Array.isArray(value.messages);
+        && Array.isArray(value.messages)
+        && (value.toolCatalog === undefined || isInferenceToolCatalog(value.toolCatalog));
     case "transcript.admitted":
       return hasString(value, "requestId") && hasString(value, "sessionId") && hasString(value, "eventId") && hasNumber(value, "sequence");
     case "capability.result":
-      return hasString(value, "requestId") && hasString(value, "sessionId") && hasString(value, "toolCallId") && hasString(value, "toolName") && ["succeeded", "failed", "cancelled", "timed_out", "denied"].includes(String(value.outcome));
+      return hasString(value, "requestId") && hasString(value, "sessionId") && hasString(value, "toolCallId") && hasString(value, "toolName")
+        && ["succeeded", "failed", "cancelled", "timed_out", "denied", "stale"].includes(String(value.outcome))
+        && (value.errorCode === undefined || hasString(value, "errorCode"));
     case "cancel":
       return hasString(value, "requestId") && hasString(value, "sessionId");
     case "shutdown":
