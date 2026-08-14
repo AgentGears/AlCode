@@ -140,6 +140,9 @@ importers:
       '@alcode/application-protocol':
         specifier: workspace:*
         version: link:../application-protocol
+      '@alcode/code-intelligence':
+        specifier: workspace:*
+        version: link:../code-intelligence
       '@alcode/cognition-runtime':
         specifier: workspace:*
         version: link:../cognition-runtime
