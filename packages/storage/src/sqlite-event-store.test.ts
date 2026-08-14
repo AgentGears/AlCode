@@ -34,8 +34,7 @@ const Database = require("better-sqlite3") as typeof import("better-sqlite3");
 const TEST_WS = asWorkspaceId(uuidv7()) as string;
 const TEST_REPO = uuidv7();
 
-/** Skip tests that require workspace locking on Windows (no LockFileEx binding yet). */
-const describeLocked = process.platform === "win32" ? describe.skip : describe;
+const describeLocked = describe;
 
 function makeDraft(overrides?: Record<string, unknown>): Record<string, unknown> {
   return {
@@ -337,9 +336,7 @@ describeLocked("SqliteEventStore — schema migration v1→v2", () => {
 });
 
 describe("workspace lock — cross-process contention", () => {
-  it("process B fails while process A holds the lock (POSIX only)", { timeout: 15000 }, async () => {
-    if (process.platform === "win32") { expect(true).toBe(true); return; }
-
+  it("process B fails while process A holds the lock", { timeout: 15000 }, async () => {
     const { acquireWorkspaceLock } = await import("@alcode/workspace");
     const lockPath = join(mkdtempSync(join(tmpdir(), "alcode-lock-")), "test.lock");
     const lockA = acquireWorkspaceLock(lockPath);
@@ -374,8 +371,6 @@ describe("workspace lock — cross-process contention", () => {
   });
 
   it("crash release: child exits without release, parent acquires", { timeout: 15000 }, async () => {
-    if (process.platform === "win32") { expect(true).toBe(true); return; }
-
     const { acquireWorkspaceLock } = await import("@alcode/workspace");
     const lockPath = join(mkdtempSync(join(tmpdir(), "alcode-crash-")), "crash.lock");
 
@@ -395,7 +390,7 @@ describe("workspace lock — cross-process contention", () => {
 });
 
 describe("openLockedWorkspaceStore — enforced lifecycle", () => {
-  const describeLocked2 = process.platform === "win32" ? describe.skip : describe;
+  const describeLocked2 = describe;
 
   describeLocked2("open → second fails → close → reopen", () => {
     let dir: string;
