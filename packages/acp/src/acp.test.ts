@@ -55,7 +55,7 @@ describe("stable ACP v1 adapter", () => {
     const clientApp = client({ name: "phase-0.9-test" });
     await expect(clientApp.connectWith(app, async (ctx) => ctx.request(methods.agent.session.new, {
       cwd: process.cwd(),
-      mcpServers: [{ type: "http", name: "foreign", url: "https://example.com/mcp" }] as never,
+      mcpServers: [{ type: "http", name: "foreign", url: "https://example.com/mcp", headers: [] }],
     }))).rejects.toThrow(/unsupported_mcp_servers/);
     expect(created).toBe(0);
   });

@@ -83,7 +83,7 @@ function parseIpv6(address: string): number[] | undefined {
     if (classification !== 4) return undefined;
     const bytes = tail.split(".").map(Number);
     ipv4Tail = [(bytes[0]! << 8) | bytes[1]!, (bytes[2]! << 8) | bytes[3]!];
-    source = `${source.slice(0, lastColon)}:${ipv4Tail[0].toString(16)}:${ipv4Tail[1].toString(16)}`;
+    source = `${source.slice(0, lastColon)}:${ipv4Tail[0]!.toString(16)}:${ipv4Tail[1]!.toString(16)}`;
   }
   const halves = source.split("::");
   if (halves.length > 2) return undefined;
@@ -109,10 +109,10 @@ function classifyIpv6(address: string): "loopback" | "public" | "forbidden" {
     return classifyIpv4(v4);
   }
   const first = words[0]!;
-  if ((first & 0xfe00) === 0xfc00) return "forbidden"; // fc00::/7
-  if ((first & 0xffc0) === 0xfe80) return "forbidden"; // fe80::/10
-  if ((first & 0xff00) === 0xff00) return "forbidden"; // multicast
-  return (first & 0xe000) === 0x2000 ? "public" : "forbidden"; // global unicast 2000::/3
+  if ((first & 0xfe00) === 0xfc00) return "forbidden";
+  if ((first & 0xffc0) === 0xfe80) return "forbidden";
+  if ((first & 0xff00) === 0xff00) return "forbidden";
+  return (first & 0xe000) === 0x2000 ? "public" : "forbidden";
 }
 
 export function classifyNetworkAddress(address: string): "loopback" | "public" | "forbidden" {
@@ -154,7 +154,11 @@ export class NodePinnedHttpDriver implements HostHttpDriver {
           if (name !== undefined && value !== undefined) responseHeaders.append(name, value);
         }
         const body = Readable.toWeb(response) as ReadableStream<Uint8Array>;
-        resolve(new Response(body, { status: response.statusCode ?? 500, statusText: response.statusMessage, headers: responseHeaders }));
+        resolve(new Response(body, {
+          status: response.statusCode ?? 500,
+          ...(response.statusMessage !== undefined ? { statusText: response.statusMessage } : {}),
+          headers: responseHeaders,
+        }));
       });
       req.once("error", reject);
       const onAbort = () => req.destroy(request.signal?.reason instanceof Error ? request.signal.reason : new Error("outbound request aborted"));

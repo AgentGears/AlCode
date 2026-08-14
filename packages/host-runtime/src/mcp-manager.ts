@@ -44,8 +44,8 @@ interface ServerState {
   serverName: string;
   config: McpServerConfig;
   providerId: string;
-  runtime?: McpClientRuntime;
-  disposeCapabilities?: () => void;
+  runtime: McpClientRuntime | undefined;
+  disposeCapabilities: (() => void) | undefined;
   revision?: string;
   retiring: boolean;
   restartAttempts: number;
@@ -132,6 +132,8 @@ export class HostMcpManager implements HostPluginLifecycle {
         serverName,
         config: structuredClone(config),
         providerId: `mcp:${activation.registrationId}:${serverName}`,
+        runtime: undefined,
+        disposeCapabilities: undefined,
         retiring: false,
         restartAttempts: 0,
         restartScheduled: false,

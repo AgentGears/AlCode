@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { asSessionId } from "@alcode/events";
+import { mkSessionId } from "@alcode/events";
 import { CapabilityBroker, type HostCapability } from "./capability-broker.ts";
 
 function broker(): CapabilityBroker {
@@ -32,7 +32,7 @@ describe("Host dynamic capability generation", () => {
 
     subject.registerDynamicProvider("provider", "G1", [capability()]);
     const stale = await subject.execute({
-      sessionId: asSessionId("s1"),
+      sessionId: mkSessionId(),
       toolCallId: "tc1",
       toolName: "mcp__p__lookup",
       args: { q: "x" },
@@ -40,7 +40,7 @@ describe("Host dynamic capability generation", () => {
     });
     expect(stale).toMatchObject({ outcome: "stale", errorCode: "capability_stale" });
 
-    disposeG0(); // stale disposer cannot remove the current generation.
+    disposeG0();
     expect(subject.describeCapabilities()[0]?.binding).toEqual({ kind: "dynamic", revision: "G1" });
     expect(() => subject.registerDynamicProvider("provider", "G0", [capability()])).toThrow(/retired/);
   });
@@ -48,7 +48,7 @@ describe("Host dynamic capability generation", () => {
   it("rejects a missing revision for dynamic tools and conflicts without partial replacement", async () => {
     const subject = broker();
     subject.registerDynamicProvider("provider", "G0", [capability("mcp__p__a")]);
-    const stale = await subject.execute({ sessionId: asSessionId("s1"), toolCallId: "tc", toolName: "mcp__p__a", args: {} });
+    const stale = await subject.execute({ sessionId: mkSessionId(), toolCallId: "tc", toolName: "mcp__p__a", args: {} });
     expect(stale.outcome).toBe("stale");
 
     expect(() => subject.registerDynamicProvider("other", "G0", [capability("mcp__p__a")])).toThrow(/conflicts/);

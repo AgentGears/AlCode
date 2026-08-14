@@ -87,7 +87,10 @@ export class WorkspaceRevisionTracker {
     for (let attempt = 0; attempt < this.maxRebaselineAttempts; attempt++) {
       this.changedDuringBaseline = false;
       const fingerprint = await this.computeFingerprint();
-      if (this.state === "UNCERTAIN") throw new Error(this.reason ?? "workspace revision continuity lost during rebaseline");
+      const afterBaseline = this.snapshot();
+      if (afterBaseline.state === "UNCERTAIN") {
+        throw new Error(afterBaseline.reason ?? "workspace revision continuity lost during rebaseline");
+      }
       if (this.changedDuringBaseline) continue;
       this.epoch = randomUUID();
       this.generation = 0;

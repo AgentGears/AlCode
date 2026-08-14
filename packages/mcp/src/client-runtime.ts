@@ -47,7 +47,7 @@ export class McpClientRuntime {
             onChanged: (error, tools) => {
               if (error) return;
               try {
-                const next = buildMcpToolCatalog(tools, this.options.provenance, this.options.toolLimits);
+                const next = buildMcpToolCatalog(tools ?? [], this.options.provenance, this.options.toolLimits);
                 this.currentTools = new Map(next.tools.map((tool) => [tool.modelName, tool]));
                 void this.options.onCatalogChanged?.(next.tools);
               } catch {
@@ -81,15 +81,22 @@ export class McpClientRuntime {
 
   async connect(signal?: AbortSignal): Promise<readonly McpToolDescriptor[]> {
     if (this.connected) throw new Error("MCP client runtime is already connected");
-    await this.client.connect(this.transport, { signal, timeout: this.requestTimeoutMs });
+    await this.client.connect(this.transport, {
+      timeout: this.requestTimeoutMs,
+      ...(signal !== undefined ? { signal } : {}),
+    });
     this.connected = true;
     return this.refreshTools(signal);
   }
 
   async refreshTools(signal?: AbortSignal): Promise<readonly McpToolDescriptor[]> {
     if (!this.connected) throw new Error("MCP client runtime is not connected");
-    const result = await this.client.listTools(undefined, { cacheMode: "refresh", signal, timeout: this.requestTimeoutMs });
-    const next = buildMcpToolCatalog(result.tools, this.options.provenance, this.options.toolLimits);
+    const result = await this.client.listTools(undefined, {
+      cacheMode: "refresh",
+      timeout: this.requestTimeoutMs,
+      ...(signal !== undefined ? { signal } : {}),
+    });
+    const next = buildMcpToolCatalog(result.tools ?? [], this.options.provenance, this.options.toolLimits);
     this.currentTools = new Map(next.tools.map((tool) => [tool.modelName, tool]));
     return next.tools;
   }
@@ -104,7 +111,11 @@ export class McpClientRuntime {
     if (!tool) throw new Error(`MCP tool is not in the current generation: ${modelName}`);
     const result = await this.client.callTool(
       { name: tool.rawName, arguments: structuredClone(args) },
-      { signal, timeout: this.requestTimeoutMs, toolDefinition: tool.sdkDefinition as Tool },
+      {
+        timeout: this.requestTimeoutMs,
+        toolDefinition: tool.sdkDefinition as Tool,
+        ...(signal !== undefined ? { signal } : {}),
+      },
     );
     return {
       isError: result.isError === true,
