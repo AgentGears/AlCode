@@ -10,16 +10,18 @@ owns admission, policy, execution lifecycle, recovery, transcript/context
 truth, and completion, while the Agent and Experience Plane consume Host-owned
 protocols and disposable projections.
 
-**Status:** Phases 0.0 through 0.8 are **closed**. Phase 0.8 established the
-Host-owned Application Protocol and React 19 Experience Plane with explicit
-`START_NOW`, `GUIDE`, and `QUEUE` admission, Host-owned queueing, target-sensitive
-cancellation, structured permission interactions, and cursor/snapshot recovery.
-PR #19 final source head `99ea7dc524e8a3be608c6ab8f4aaf0e631a3cb14`
-passed `gate:0.8` and full composed CI, then squash-merged as
-`c4d41028d964155e0f5bb808f49e57385fed80fb`. `verbatim-v1` remains the product
-default; `graph-v1` remains opt-in. Phase 0.9 is the next planned roadmap unit
-and is not authorized by Phase 0.8 closure. See
-[`docs/roadmap.md`](docs/roadmap.md) for architecture orientation.
+**Status:** Phases 0.0 through 0.9 are **closed**. Phase 0.9 established the
+Host-governed extension and code-observation layer: Agent Plugins package
+semantics, immutable digest-bound installed generations, dynamic generation-bound
+Host capabilities, MCP Tools, monotonic lifecycle hooks, stable ACP v1, semantic
+CodeIntelligence with freshness/synchronization fencing, and Host-projected
+plugin management. Phase 0.9 source head `8b8620599660b639cef1205450f7f65afaa8af62`
+passed the composed `gate:0.9` in PR run `31829969975`; the required Ubuntu and
+Windows platform proof passed in run `31829969938`, and full CI passed in run
+`31829969982`. `verbatim-v1` remains the product default; `graph-v1` remains
+opt-in. Phase 0.9 closure does not authorize a successor phase. See
+[`docs/roadmap.md`](docs/roadmap.md) for architecture orientation and
+[`docs/phase-0.9-closure.md`](docs/phase-0.9-closure.md) for closure evidence.
 
 `ref/` (gitignored) holds studied reference codebases — not part of this repo.
 
@@ -40,6 +42,8 @@ and is not authorized by Phase 0.8 closure. See
    governed selective-context / `graph-v1` contract and closure evidence.
 10. [`docs/phase-0.8-plan.md`](docs/phase-0.8-plan.md) — frozen and completed
     Application Protocol + React Experience contract and closure evidence.
+11. [`docs/phase-0.9-closure.md`](docs/phase-0.9-closure.md) — as-built extension/
+    observation contract summary and executable closure evidence.
 
 ### Architecture decisions (ADRs)
 
@@ -77,9 +81,11 @@ and is not authorized by Phase 0.8 closure. See
   projection client. The current Agent Protocol has no safe mid-turn steering
   seam, so `GUIDE` is explicitly rejected as `guide_not_supported` rather than
   silently becoming `START_NOW` or `QUEUE`.
-- **Code intelligence (later):** codebase-memory-mcp (MIT, pure C) remains a
-  reference for the planned Phase 0.9 adapter layer; external adapters never own
-  canonical ALCODE state.
+- **Extension and observation adapters:** ALCODE-owned `@alcode/plugins`,
+  `@alcode/mcp`, `@alcode/hooks`, `@alcode/acp`, and
+  `@alcode/code-intelligence`, coordinated by Host-owned runtime services. External
+  packages/protocols/providers remain replaceable adapters; they do not own
+  canonical ALCODE state or bypass Host policy.
 
 ## Why this shape
 
@@ -90,7 +96,9 @@ cross-session, deployment control outside the plugin. ALCODE removes that
 accidental distribution by owning the cognitive loop and placing durable
 authority in a Host runtime. Phase 0.8 extends the same ownership model through
 the public Application Protocol: clients may disconnect and rebuild their
-projection without becoming execution or persistence authorities. See
+projection without becoming execution or persistence authorities. Phase 0.9
+extends the boundary outward again: packages and external protocols compose
+around the privileged Host instead of becoming a second control plane. See
 [`docs/constitution.md`](docs/constitution.md) and ADR 0005 for the ownership
 model.
 
@@ -107,7 +115,7 @@ model.
 0.6  Durable verbatim context reconstruction:    [CLOSED]
 0.7  Governed selective context / graph-v1:      [CLOSED]
 0.8  React GUI / Application Protocol:           [CLOSED]
-0.9  External integrations:                      [PLANNED]
+0.9  Extension & observation adapters:           [CLOSED]
 ```
 
 Every implemented phase ends with an **executable gate** (`pnpm gate:X.Y`)
@@ -116,13 +124,12 @@ the schema. Gates drive sequencing, not calendars.
 
 ## Next
 
-The completed foundation is Phase 0.0 through Phase 0.8. The next planned
-roadmap unit is **Phase 0.9 — External adapters**: hooks, MCP, ACP, and code
-intelligence as adapters over the same Host runtime, never as canonical state
-owners.
+The completed Phase 0 foundation is Phase 0.0 through Phase 0.9. No successor
+phase is authorized by Phase 0.9 closure. Deferred work remains in
+[`docs/backlog.md`](docs/backlog.md) and requires a distinct client objective
+before implementation.
 
-Phase 0.8 closure does not authorize Phase 0.9 implementation and does not
-promote `graph-v1` to the product default. See
-[`docs/roadmap.md`](docs/roadmap.md),
+`verbatim-v1` remains the product default and Phase 0.9 closure does not promote
+`graph-v1`. See [`docs/roadmap.md`](docs/roadmap.md),
 [`docs/phase-0-spec.md`](docs/phase-0-spec.md), and
-[`docs/phase-0.8-plan.md`](docs/phase-0.8-plan.md).
+[`docs/phase-0.9-closure.md`](docs/phase-0.9-closure.md).

@@ -3,6 +3,7 @@ import {
   AGENT_PROTOCOL_VERSION,
   DURABLE_TRANSCRIPT_CAPABILITY,
   GRAPH_CONTEXT_CAPABILITY,
+  DYNAMIC_CAPABILITY_BINDING_CAPABILITY,
   createInMemoryTransportPair,
   isAgentToHostMessage,
   isHostToAgentMessage,
@@ -122,6 +123,56 @@ describe("Agent Protocol v1", () => {
       sourceEventSequence: 12,
       systemPrompt: "host-authorized",
       messages: [],
+    })).toBe(false);
+  });
+
+  it("validates dynamic capability negotiation, inference catalog and revision echo", () => {
+    expect(DYNAMIC_CAPABILITY_BINDING_CAPABILITY).toBe("dynamic_capability_binding_v1");
+    expect(isAgentToHostMessage({
+      type: "agent.hello",
+      protocolVersion: AGENT_PROTOCOL_VERSION,
+      generationId: "g1",
+      capabilities: [DYNAMIC_CAPABILITY_BINDING_CAPABILITY],
+    })).toBe(true);
+    expect(isHostToAgentMessage({
+      type: "context.update",
+      requestId: "ctx-dynamic",
+      sessionId: "s1",
+      receiptId: "receipt-dynamic",
+      effectiveMode: "verbatim-v1",
+      sourceEventSequence: 13,
+      systemPrompt: "host-authorized",
+      messages: [],
+      toolCatalog: {
+        digest: "digest-1",
+        tools: [{
+          definition: {
+            name: "mcp__server__lookup",
+            description: "Lookup",
+            inputSchema: { type: "object", properties: { q: { type: "string" } }, required: ["q"] },
+          },
+          binding: { kind: "dynamic", revision: "provider:g17" },
+          isReadOnly: false,
+        }],
+      },
+    })).toBe(true);
+    expect(isAgentToHostMessage({
+      type: "capability.request",
+      requestId: "call-1",
+      sessionId: "s1",
+      toolCallId: "tc-dynamic",
+      toolName: "mcp__server__lookup",
+      args: { q: "x" },
+      expectedCapabilityRevision: "provider:g17",
+    })).toBe(true);
+    expect(isAgentToHostMessage({
+      type: "capability.request",
+      requestId: "call-2",
+      sessionId: "s1",
+      toolCallId: "tc-dynamic",
+      toolName: "mcp__server__lookup",
+      args: {},
+      expectedCapabilityRevision: 17,
     })).toBe(false);
   });
 

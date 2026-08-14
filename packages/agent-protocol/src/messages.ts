@@ -7,15 +7,45 @@ import type {
 export const AGENT_PROTOCOL_VERSION = 1 as const;
 export const DURABLE_TRANSCRIPT_CAPABILITY = "durable_transcript_v1" as const;
 export const GRAPH_CONTEXT_CAPABILITY = "graph_context_v1" as const;
+export const DYNAMIC_CAPABILITY_BINDING_CAPABILITY = "dynamic_capability_binding_v1" as const;
 export const VERBATIM_COMPILER_VERSION = "verbatim-v1" as const;
 
 export type ProtocolRequestId = string;
 export type AgentGenerationId = string;
 
+export interface ModelToolDefinition {
+  name: string;
+  description: string;
+  inputSchema: {
+    type: "object";
+    properties: Record<string, unknown>;
+    required?: string[];
+  };
+}
+
+export type CapabilityBinding =
+  | { kind: "static" }
+  | { kind: "dynamic"; revision: string };
+
+export interface AuthorizedToolDescriptor {
+  definition: ModelToolDefinition;
+  binding: CapabilityBinding;
+  isReadOnly?: boolean;
+}
+
+/**
+ * Host-authorized tool catalog for exactly one provider inference. `digest`
+ * covers the canonical ordered `definition` array, not the binding metadata.
+ */
+export interface InferenceToolCatalog {
+  digest: string;
+  tools: AuthorizedToolDescriptor[];
+}
+
 export interface AgentHello { type: "agent.hello"; protocolVersion: typeof AGENT_PROTOCOL_VERSION; generationId: AgentGenerationId; capabilities: string[]; }
 export interface AssistantMessageProduced { type: "assistant.message"; requestId: ProtocolRequestId; sessionId: string; text: string; content?: TranscriptAssistantMessage["content"]; stopReason?: TranscriptAssistantMessage["stopReason"]; errorMessage?: string; timestamp?: number; }
 export interface ToolResultProduced { type: "tool.result"; requestId: ProtocolRequestId; sessionId: string; toolCallId: string; toolName: string; content: TranscriptToolResultMessage["content"]; isError: boolean; timestamp: number; operationId?: string; }
-export interface CapabilityRequest { type: "capability.request"; requestId: ProtocolRequestId; sessionId: string; toolCallId: string; toolName: string; args: unknown; }
+export interface CapabilityRequest { type: "capability.request"; requestId: ProtocolRequestId; sessionId: string; toolCallId: string; toolName: string; args: unknown; expectedCapabilityRevision?: string; }
 export interface ContextRefreshRequest { type: "context.refresh.request"; requestId: ProtocolRequestId; sessionId: string; }
 export interface CriterionEvidence { type: "criterion.evidence"; requestId: ProtocolRequestId; sessionId: string; evidenceType: string; data?: unknown; }
 export interface AgentIdle { type: "agent.idle"; requestId: ProtocolRequestId; sessionId: string; reason: "stop" | "max_steps" | "cancelled"; }
@@ -48,10 +78,12 @@ export interface ContextUpdate {
   sourceEventSequence: number;
   systemPrompt: string;
   messages: TranscriptMessage[];
+  /** Present only when the Host and Agent negotiated dynamic capability binding. */
+  toolCatalog?: InferenceToolCatalog;
 }
 
 export interface TranscriptAdmitted { type: "transcript.admitted"; requestId: ProtocolRequestId; sessionId: string; eventId: string; sequence: number; }
-export interface CapabilityResult { type: "capability.result"; requestId: ProtocolRequestId; sessionId: string; toolCallId: string; toolName: string; operationId?: string; outcome: "succeeded" | "failed" | "cancelled" | "timed_out" | "denied"; result?: unknown; error?: string; }
+export interface CapabilityResult { type: "capability.result"; requestId: ProtocolRequestId; sessionId: string; toolCallId: string; toolName: string; operationId?: string; outcome: "succeeded" | "failed" | "cancelled" | "timed_out" | "denied" | "stale"; result?: unknown; error?: string; errorCode?: string; }
 export interface Cancel { type: "cancel"; requestId: ProtocolRequestId; sessionId: string; reason?: string; }
 export interface Shutdown { type: "shutdown"; requestId: ProtocolRequestId; sessionId?: string; reason: "completed" | "cancelled" | "host_shutdown" | "replaced"; }
 

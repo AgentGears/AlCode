@@ -5,14 +5,18 @@ import {
   type SessionId,
 } from "@alcode/events";
 import {
+  DYNAMIC_CAPABILITY_BINDING_CAPABILITY,
   DURABLE_TRANSCRIPT_CAPABILITY,
   GRAPH_CONTEXT_CAPABILITY,
   type AgentToHostMessage,
+  type AuthorizedToolDescriptor,
   type CapabilityResult,
   type ContextUpdate,
   type HostToAgentMessage,
+  type InferenceToolCatalog,
   type ProtocolTransport,
 } from "@alcode/agent-protocol";
+import { digestOf } from "@alcode/context";
 import {
   createOperationsProjection,
   createTranscriptProjection,
@@ -47,6 +51,20 @@ export interface AttachedAgent {
 
 export type AgentResumeReason = "agent_replaced" | "host_reopened" | "reattach";
 
+function cognitionDescriptors(): AuthorizedToolDescriptor[] {
+  return [...COGNITION_TOOL_NAMES]
+    .sort((a, b) => a.localeCompare(b, "en"))
+    .map((name) => ({
+      definition: {
+        name,
+        description: `Request Host-owned ${name} capability or cognition operation.`,
+        inputSchema: { type: "object", properties: {} },
+      },
+      binding: { kind: "static" as const },
+      isReadOnly: false,
+    }));
+}
+
 export class HostRuntime {
   readonly admission: CanonicalAdmissionQueue;
   readonly cognitionGateway: CognitionGateway;
@@ -60,25 +78,12 @@ export class HostRuntime {
 
   private readonly store: LockedWorkspaceStore;
   private readonly hostInstanceId: string;
-  private readonly capabilityNames: string[];
-  private readonly modelToolDefinitions: Array<{
-    name: string;
-    description: string;
-    inputSchema: { type: "object"; properties: Record<string, unknown> };
-  }>;
   private readonly requestCache = new Map<string, CapabilityResult>();
   private readonly contextRequestCache = new Map<string, ContextUpdate>();
 
   constructor(options: HostRuntimeOptions) {
     this.store = options.store;
     this.hostInstanceId = options.hostInstanceId ?? uuidv7();
-    this.capabilityNames = options.capabilities.map((capability) => capability.name);
-    const toolNames = [...COGNITION_TOOL_NAMES, ...this.capabilityNames];
-    this.modelToolDefinitions = toolNames.map((name) => ({
-      name,
-      description: `Request Host-owned ${name} capability or cognition operation.`,
-      inputSchema: { type: "object" as const, properties: {} },
-    }));
     this.admission = new CanonicalAdmissionQueue(options.store.store);
     this.cognitionGateway = new CognitionGateway(options.store);
     this.workDispatcher = new DurableWorkDispatcher(options.store.store, this.admission);
@@ -96,9 +101,21 @@ export class HostRuntime {
       options.store.store,
       this.admission,
       this.cognitionGateway,
-      options.policy ?? new DefaultHostPolicy({ knownTools: this.capabilityNames }),
+      options.policy ?? new DefaultHostPolicy(),
       options.capabilities,
     );
+  }
+
+  private inferenceToolCatalog(includeDynamic: boolean): InferenceToolCatalog {
+    const tools = [...cognitionDescriptors(), ...this.capabilityBroker.describeCapabilities(includeDynamic)]
+      .sort((a, b) => a.definition.name.localeCompare(b.definition.name, "en"));
+    for (let i = 1; i < tools.length; i++) {
+      if (tools[i - 1]?.definition.name === tools[i]?.definition.name) {
+        throw new Error(`duplicate effective capability: ${tools[i]!.definition.name}`);
+      }
+    }
+    const definitions = tools.map((tool) => structuredClone(tool.definition));
+    return { digest: digestOf(definitions), tools };
   }
 
   async startup(): Promise<{ pendingOperationIds: string[]; interruptedWork: number }> {
@@ -136,6 +153,7 @@ export class HostRuntime {
   ): Promise<AttachedAgent> {
     const durableTranscript = connection.capabilities?.includes(DURABLE_TRANSCRIPT_CAPABILITY) ?? false;
     const graphContext = connection.capabilities?.includes(GRAPH_CONTEXT_CAPABILITY) ?? false;
+    const dynamicCapabilityBinding = connection.capabilities?.includes(DYNAMIC_CAPABILITY_BINDING_CAPABILITY) ?? false;
     if (connection.capabilities !== undefined && !durableTranscript) {
       throw new Error(`Agent missing required capability: ${DURABLE_TRANSCRIPT_CAPABILITY}`);
     }
@@ -163,13 +181,14 @@ export class HostRuntime {
     const snapshot = durableTranscript
       ? await createWorkspaceReadModels(this.store.store).getTranscriptSnapshot(session.sessionId as string)
       : undefined;
+    const staticCatalog = this.inferenceToolCatalog(false);
     await transport.send({
       type: "context.provide",
       requestId: uuidv7(),
       sessionId: session.sessionId as string,
       systemPrompt,
       orientationRequired: session.resumed,
-      toolNames: [...COGNITION_TOOL_NAMES, ...this.capabilityNames],
+      toolNames: staticCatalog.tools.map((tool) => tool.definition.name),
       ...(snapshot !== undefined ? { verbatim: compileVerbatimContext(snapshot) } : {}),
     });
 
@@ -180,6 +199,7 @@ export class HostRuntime {
       message,
       durableTranscript,
       graphContext,
+      dynamicCapabilityBinding,
       systemPrompt,
     ));
     return { generationId: connection.generationId, detach: unsubscribe };
@@ -224,22 +244,26 @@ export class HostRuntime {
     message: AgentToHostMessage,
     durableTranscript: boolean,
     graphContext: boolean,
+    dynamicCapabilityBinding: boolean,
     baseSystemPrompt: string,
   ): Promise<void> {
     switch (message.type) {
       case "context.refresh.request": {
         if (message.sessionId !== (sessionId as string)) throw new Error("Agent session mismatch");
-        if (!graphContext) throw new Error(`Agent missing required capability: ${GRAPH_CONTEXT_CAPABILITY}`);
+        if (!graphContext && !dynamicCapabilityBinding) throw new Error("Agent has no inference-refresh capability");
         const cacheKey = `${generationId}:${message.requestId}`;
         let update = this.contextRequestCache.get(cacheKey);
         if (!update) {
-          update = await this.contextService.refresh({
+          const toolCatalog = this.inferenceToolCatalog(dynamicCapabilityBinding);
+          const definitions = toolCatalog.tools.map((tool) => tool.definition);
+          const refreshed = await this.contextService.refresh({
             requestId: message.requestId,
             sessionId: sessionId as string,
             baseSystemPrompt,
-            toolDefinitions: this.modelToolDefinitions,
+            toolDefinitions: definitions,
             graphCapable: graphContext,
           });
+          update = dynamicCapabilityBinding ? { ...refreshed, toolCatalog } : refreshed;
           this.contextRequestCache.set(cacheKey, update);
         }
         try {
@@ -301,19 +325,34 @@ export class HostRuntime {
         let response = this.requestCache.get(cacheKey);
         if (!response) {
           if (COGNITION_TOOL_NAMES.has(message.toolName)) {
-            try {
-              const result = await this.cognition.invoke(sessionId, message.toolName, message.args);
-              response = { type: "capability.result", requestId: message.requestId, sessionId: sessionId as string, toolCallId: message.toolCallId, toolName: message.toolName, outcome: "succeeded", result };
-            } catch (error) {
-              response = { type: "capability.result", requestId: message.requestId, sessionId: sessionId as string, toolCallId: message.toolCallId, toolName: message.toolName, outcome: "failed", error: error instanceof Error ? error.message : String(error) };
+            if (message.expectedCapabilityRevision !== undefined) {
+              response = {
+                type: "capability.result", requestId: message.requestId, sessionId: sessionId as string,
+                toolCallId: message.toolCallId, toolName: message.toolName, outcome: "stale",
+                errorCode: "capability_stale", error: "capability binding no longer matches; refresh before retry",
+              };
+            } else {
+              try {
+                const result = await this.cognition.invoke(sessionId, message.toolName, message.args);
+                response = { type: "capability.result", requestId: message.requestId, sessionId: sessionId as string, toolCallId: message.toolCallId, toolName: message.toolName, outcome: "succeeded", result };
+              } catch (error) {
+                response = { type: "capability.result", requestId: message.requestId, sessionId: sessionId as string, toolCallId: message.toolCallId, toolName: message.toolName, outcome: "failed", error: error instanceof Error ? error.message : String(error) };
+              }
             }
           } else {
-            const result = await this.capabilityBroker.execute({ sessionId, toolCallId: message.toolCallId, toolName: message.toolName, args: message.args });
+            const result = await this.capabilityBroker.execute({
+              sessionId,
+              toolCallId: message.toolCallId,
+              toolName: message.toolName,
+              args: message.args,
+              ...(message.expectedCapabilityRevision !== undefined ? { expectedCapabilityRevision: message.expectedCapabilityRevision } : {}),
+            });
             response = {
               type: "capability.result", requestId: message.requestId, sessionId: sessionId as string,
               toolCallId: message.toolCallId, toolName: message.toolName,
               ...(result.operationId ? { operationId: result.operationId as string } : {}), outcome: result.outcome,
               ...(result.result !== undefined ? { result: result.result } : {}), ...(result.error !== undefined ? { error: result.error } : {}),
+              ...(result.errorCode !== undefined ? { errorCode: result.errorCode } : {}),
             };
           }
           this.requestCache.set(cacheKey, response);
