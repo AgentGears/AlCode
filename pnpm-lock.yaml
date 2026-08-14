@@ -135,6 +135,9 @@ importers:
       '@alcode/memory':
         specifier: workspace:*
         version: link:../memory
+      '@alcode/plugins':
+        specifier: workspace:*
+        version: link:../plugins
       '@alcode/reasoning':
         specifier: workspace:*
         version: link:../reasoning
@@ -166,6 +169,8 @@ importers:
       better-sqlite3:
         specifier: ^13.0.3
         version: 13.0.3
+
+  packages/plugins: {}
 
   packages/reasoning:
     dependencies:
