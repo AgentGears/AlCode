@@ -1,6 +1,7 @@
 import type { Readable, Writable } from "node:stream";
 
 export interface LspOwnedProcess {
+  readonly pid?: number;
   readonly stdin: Writable;
   readonly stdout: Readable;
   readonly stderr?: Readable;
@@ -88,7 +89,6 @@ export class LspJsonRpcClient {
     }
     if (typeof message.method === "string") {
       for (const handler of this.notifications.get(message.method) ?? []) handler(message.params);
-      // Requests from the server which we don't support are answered explicitly.
       if (typeof message.id === "number") this.send({ jsonrpc: "2.0", id: message.id, result: null });
     }
   }

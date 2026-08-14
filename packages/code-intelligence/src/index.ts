@@ -17,3 +17,4 @@ export { CodeIntelligenceService, type CodeIntelligenceServiceOptions } from "./
 export { DeterministicCodeIntelligenceProvider } from "./fake-provider.ts";
 export { LspJsonRpcClient, type LspOwnedProcess } from "./lsp-jsonrpc.ts";
 export { TypeScriptLanguageServerProvider, type TypeScriptLspProviderOptions } from "./typescript-lsp-provider.ts";
+export { resolveTypeScriptLanguageServerCli } from "./typescript-lsp-command.ts";
