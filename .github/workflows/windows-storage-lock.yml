@@ -1,7 +1,15 @@
-name: Remediation Windows verification
+# Permanent Windows check for the workspace storage-lock lifecycle. The main
+# CI gate (gate-0-1B) installs with --ignore-scripts on Windows and so cannot
+# build better-sqlite3 / exercise LockFileEx; this workflow builds the SQLite
+# native module and runs the full sqlite-event-store suite (including the
+# cross-process contention and crash-release tests) on windows-latest.
+# See docs/adr/0002-workspace-identity-and-locking.md.
+name: Windows storage lock
 
 on:
   pull_request:
+    branches: [main]
+  push:
     branches: [main]
 
 permissions:
