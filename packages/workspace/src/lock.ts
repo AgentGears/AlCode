@@ -136,6 +136,9 @@ function acquireWindowsLock(lockPath: string, owner: LockOwner): AcquiredLock {
 
   // Open the file for reading/writing without truncation.
   const fd = openSync(lockPath, "as+");
+  // Windows refuses to truncate bytes covered by a LockFileEx byte-range lock,
+  // so clear any prior owner metadata before acquiring the lock, not after.
+  ftruncateSync(fd, 0);
 
   try {
     lockBinding!.lockFileEx(fd);
@@ -148,9 +151,9 @@ function acquireWindowsLock(lockPath: string, owner: LockOwner): AcquiredLock {
     );
   }
 
-  // Write diagnostic metadata through the locked descriptor.
+  // Write diagnostic metadata through the locked descriptor. A LockFileEx owner
+  // may write its own byte range; only truncate is forbidden under Windows.
   const ownerJson = JSON.stringify(owner, null, 2) + "\n";
-  ftruncateSync(fd, 0);
   writeSync(fd, ownerJson, 0, "utf8");
 
   // Release: unlock + close.
