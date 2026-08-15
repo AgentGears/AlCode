@@ -19,7 +19,7 @@ The study also pressure-tests consequences that become load-bearing at this boun
 
 - exact-draft single consumption across duplicate/racing accepts;
 - crash-safe mapping from accepted creation to one ProgramStateId;
-- Workspace/repository observation provenance for the proposed plan;
+- complete observation provenance for the repository facts actually exposed to the semantic planner;
 - Host-mediated mutation lifetime races;
 - pending-draft versus Agent-idle/session-stop races;
 - the limit of any freshness claim when external processes can modify the worktree.
@@ -37,7 +37,7 @@ It studies:
 - exact semantic acceptance;
 - pending creation-request/draft lifecycle and single consumption;
 - pending-draft integration with session completion/stop;
-- planning-observation identity;
+- how planning observations are tracked and **sealed after planning**;
 - Host-mediated mutation races;
 - creation atomicity/idempotence;
 - crash/replacement/reconnect behavior.
@@ -46,9 +46,9 @@ It does **not** claim filesystem snapshot isolation.
 
 The precise observation guarantee is deliberately narrow:
 
-> **A draft is bound to an identified planning observation. Before canonical creation, while conflicting Host-mediated mutating execution is excluded, the Host performs a last observation check and requires that check to match the draft's planning base. That proves what the Host last observed; it does not prove that an external editor/process could not modify the worktree after that check and before the SQLite creation transaction commits.**
+> **The final draft is bound to a Host-sealed identity of the bounded repository/Workspace observations actually made available to planning (or to an equivalent full bounded planning-view snapshot). Before canonical creation, while conflicting Host-mediated mutating execution is excluded, the Host rechecks that sealed observation base. A matching check proves what the Host last observed; it does not prove that an external editor/process could not modify the worktree after that check and before the SQLite creation transaction commits.**
 
-The same qualification applies to a pre-dispatch observation check. It proves the last Host observation matched the accepted base; it does not prove an external writer cannot change the worktree in the check-to-execution gap.
+The same qualification applies to a pre-dispatch observation check. It proves the last Host observation matched the accepted planning base; it does not prove an external writer cannot change the worktree in the check-to-execution gap.
 
 Therefore canonical Program creation is **semantic authorization**, not a filesystem-consistency certificate. Alternative D below is suitable for promotion only together with a separately resolved attempt-time out-of-band mutation detection/fail-closed policy before Phase 1 freeze.
 
@@ -60,7 +60,7 @@ For each alternative this study asks:
 2. who proposes topology and verification semantics;
 3. who may accept those semantics;
 4. what the Host can validate deterministically;
-5. what observation the proposal was based on;
+5. what repository/Workspace observations the planner actually consumed and how that set is sealed;
 6. what remains true under stale draft, policy change, Agent idle, ordinary completion, explicit stop, in-flight mutation, external edit, crash, retry, replacement, replay, and reconnect;
 7. whether any Agent/model gains indirect completion authority.
 
@@ -191,7 +191,15 @@ The Workspace repository is not transactionally frozen by the event-store transa
 
 This fact bounds what `PlanningObservationIdentity` can prove.
 
-### 4.12 Reasoning/model output is not ProgramState authority
+### 4.12 A pre-planning token is insufficient when planning discovers its own dependencies
+
+The semantic planner can discover relevant files, directories, symbols, Git state, configuration, and search results only **during** planning.
+
+If the Host captures a narrow `B0` before those reads, then a file the planner later relies upon may be omitted from `B0`. A final equality check against that incomplete token can succeed even though a fact the plan actually used changed.
+
+Therefore the planning base cannot simply be “whatever was known before the Agent started.” The final draft must be bound to a **sealed observation dependency set produced after the proposal**, or to a full bounded planning-view snapshot/fingerprint that already covers every permitted planning read.
+
+### 4.13 Reasoning/model output is not ProgramState authority
 
 Reasoning state, model output, tool results, CodeIntelligence observations, and artifacts may inform a creation proposal. None becomes ProgramState truth without the relevant Host admission/authorization boundary.
 
@@ -209,25 +217,31 @@ The Application/user supplies the objective.
 
 The replaceable Agent/model is the natural source of repository-specific work decomposition and task-specific verification proposals.
 
-### 5.3 Policy contributor
+### 5.3 Observation provider/tracker
+
+The Host controls the read-only Workspace/repository interfaces made available during Program planning and records the observation identities/dependencies returned through them.
+
+The Agent may decide **what to inspect**, but it may not self-assert the authoritative observation base.
+
+### 5.4 Policy contributor
 
 Host policy may add deterministic, non-removable requirements.
 
-### 5.4 Semantic acceptance authority
+### 5.5 Semantic acceptance authority
 
 The Application caller may authorize one exact proposed contract.
 
-### 5.5 Canonical authority
+### 5.6 Canonical authority
 
 The Host alone validates canonical currentness, single-consumes the pending creation authorization, and admits ProgramState.
 
-### 5.6 Session lifecycle authority
+### 5.7 Session lifecycle authority
 
 The Host owns session completion/stop. Pending Program creation and session terminal transitions therefore need one linearization model.
 
-### 5.7 Environmental mutation coordinator
+### 5.8 Environmental mutation coordinator
 
-The Host coordinates **Host-mediated** mutating capability lifetimes around freshness-critical checks. This authority does not extend to arbitrary external processes.
+The Host coordinates **Host-mediated** mutating capability lifetimes around observation-sensitive checks. This authority does not extend to arbitrary external processes.
 
 The central separation is:
 
@@ -235,6 +249,8 @@ The central separation is:
 caller intent
 !=
 Agent semantic proposal
+!=
+Host-tracked observation provenance
 !=
 Application semantic acceptance
 !=
@@ -353,45 +369,91 @@ acceptance wins
 
 Pre-enqueue checks are advisory; the winning state is determined by revalidation inside canonical admission.
 
-### 6.10 PlanningObservationIdentity is evidence of observation, not isolation
+### 6.10 PlanningObservationIdentity is sealed after semantic planning
 
-Every creation draft is bound to a bounded planning observation `B0` representing the repository/Workspace facts materially used to produce it.
+The Host must not bind the final ProgramCreationDraft only to a token captured before the planner discovers what it needs to inspect.
 
-Before canonical creation, while Host-mediated mutating execution is excluded, the Host performs a final observation. If that observation does not match `B0`, or equivalence cannot be established, creation rejects stale/fail-closed.
+A correct first-slice contract permits either of these implementation families:
+
+**Full planning-view strategy**
+
+```text
+Host gives planner a bounded immutable/snapshot-like view
+or a digestable complete bounded view
+→ every permitted planning read is covered
+→ final draft binds to that view identity
+```
+
+**Tracked dependency strategy**
+
+```text
+Host supplies read-only planning capabilities
+→ every file/directory/search/Git/config/CodeIntelligence observation delivered to the planner carries Host-observed identity/dependency metadata
+→ Host accumulates the complete dependency set
+→ Agent submits draft D
+→ Host seals the accumulated dependency set into Bplan
+→ D is bound to Bplan
+```
+
+The final identity is sealed **after** the proposal is produced, not before planning starts.
+
+If a planning input cannot be represented in the selected observation model, or the planner can read Workspace state through an untracked side channel, the Host cannot honestly claim complete observation provenance. The first-slice creation path must then fail closed or use the full-view strategy.
+
+### 6.11 Sealed observation completeness includes non-file reads
+
+A tracked planning dependency is not necessarily just a path digest.
+
+Examples that may need representation include:
+
+- file content/version;
+- directory listing/absence;
+- search/query result set;
+- Git HEAD/status/diff information;
+- repository configuration;
+- CodeIntelligence revision/provider observation;
+- Host-canonical facts supplied to planning.
+
+If a plan depends on an absence/query result, recording only files later opened is insufficient.
+
+### 6.12 Rechecking the sealed planning base is observational, not isolation
+
+Before canonical creation, while Host-mediated mutating execution is excluded, the Host re-evaluates the sealed `Bplan` dependencies/full view.
+
+If the recheck differs or equivalence is unknown, creation rejects stale/fail-closed.
 
 But:
 
 ```text
-last Host observation == B0
+last Host recheck == Bplan
 ```
 
 means only that. It does **not** mean:
 
 ```text
-external worktree == B0 at SQLite commit
+external worktree == Bplan at SQLite commit
 ```
 
 because an external writer can change files after the check.
 
-### 6.11 Host-mediated mutation exclusion at freshness-critical boundaries
+### 6.13 Host-mediated mutation exclusion at observation-sensitive boundaries
 
-Final creation observation/admission cannot cross an already-running Host-mediated mutating capability.
+Final creation recheck/admission cannot cross an already-running Host-mediated mutating capability.
 
 A Host-owned Workspace mutation barrier (name/implementation open) must ensure:
 
-- no Host-mediated mutator is still executing when the last creation observation is taken;
+- no Host-mediated mutator is still executing when the final creation observation is taken;
 - unresolved/indeterminate Host-mediated mutation fails closed for quiescence;
 - no unrelated Host-mediated mutator starts before the creation admission completes.
 
 Before ProgramAttempt dispatch, the Host reacquires the same class of exclusion and performs another observation check.
 
-### 6.12 Host-mediated exclusion may need to span ProgramAttempt execution
+### 6.14 Host-mediated exclusion may need to span ProgramAttempt execution
 
 If Phase 1 promises that unrelated **Host-mediated** mutators cannot race an active ProgramAttempt, the barrier must cover environmental execution lifetime rather than only `program.attempt.started` append.
 
 The exact acquisition/release/transfer rules remain a freeze-readiness dependency.
 
-### 6.13 No continuous external-worktree freshness claim
+### 6.15 No continuous external-worktree freshness claim
 
 Neither the creation barrier nor canonical admission prevents a human editor or non-ALCODE process from changing the repository.
 
@@ -399,19 +461,21 @@ This study therefore proves no continuous attempt/worktree snapshot property.
 
 A separate attempt-time out-of-band mutation detection/fail-closed contract must be selected before Phase 1 freeze if runtime correctness depends on detecting those changes.
 
-### 6.14 Pre-Program planning is read-only
+### 6.16 Pre-Program planning is read-only
 
 Before Program creation there is no ProgramAttempt. Creation planning may inspect bounded Workspace state; mutating capability requests fail closed.
 
-### 6.15 Bounded contract
+Read-only access used for planning must participate in the selected full-view or tracked-dependency observation model if its result can influence D.
 
-Draft work, dependencies, paths, verification requirements, text, and serialized/public representation are bounded before presentation/admission.
+### 6.17 Bounded contract
 
-### 6.16 No future concrete evidence identity in immutable requirements
+Draft work, dependencies, paths, verification requirements, text, planning-observation representation, and serialized/public representation are bounded before presentation/admission.
+
+### 6.18 No future concrete evidence identity in immutable requirements
 
 Future ArtifactRefs/evidenceRefs can later support satisfaction but cannot themselves be the creation-time identity of an immutable requirement.
 
-### 6.17 Pending draft is Host-owned durable control state
+### 6.19 Pending draft is Host-owned durable control state
 
 An acceptable pending draft cannot exist only in Agent or renderer memory. Its exact semantics/currentness must survive reconnect/restart.
 
@@ -464,22 +528,25 @@ objective
 
 **Classification:** reject as the normative first-slice authority model.
 
-## 10. Alternative D — Agent proposes; Application accepts exact draft; Host single-consumes and creates
+## 10. Alternative D — Agent proposes; Host seals observation dependencies; Application accepts exact draft; Host single-consumes and creates
 
 Preferred semantic flow:
 
 ```text
 caller objective
 → Host opens creation request R
-→ Host captures planning observation B0
-→ read-only Agent proposes D(B0)
-→ Host validates structure/bounds/policy and adds mandatory Host requirements
-→ Host canonically presents current pending draft D/H(D,B0,P0) under R
+→ Host starts bounded read-only planning observation tracking
+→ Agent chooses/read-inspects repository facts through tracked Host interfaces
+→ Agent proposes D
+→ Host seals Bplan from the complete tracked observation dependency set
+   OR binds D to the complete bounded planning-view snapshot
+→ Host validates D + Bplan structure/bounds/policy and adds mandatory Host requirements
+→ Host canonically presents current pending draft D/H(D,Bplan,P0) under R
 → pending interaction blocks ordinary idle completion
 → Application accept command A targets exact D/H
 → Host acquires Host-mediated Workspace mutation exclusion
 → waits/fails closed on active/unreconciled Host mutator
-→ Host performs last external observation check against B0
+→ Host rechecks sealed Bplan
 → mismatch/unknown => stale, no Program
 → Host enters serialized canonical admission
 → revalidates R/D/pending interaction/session/policy
@@ -494,17 +561,17 @@ caller objective
 Important qualification:
 
 ```text
-last Host observation matched B0
+last Host observation matched sealed Bplan
 ```
 
-is the external-state fact available to the creation transaction. The transaction does not certify that no external process wrote after that observation.
+is the external-state evidence available to the creation transaction. The transaction does not certify that no external process wrote after that observation.
 
 Before first ProgramAttempt dispatch:
 
 ```text
 acquire Host-mediated mutation exclusion
 → ensure Host-mediated quiescence/reconciliation
-→ perform another observation check against accepted planning base
+→ recheck the accepted sealed planning base
 → mismatch/unknown => no dispatch
 → match => ProgramAttempt may be canonically admitted
 ```
@@ -514,7 +581,8 @@ Again, the check proves the last Host observation, not external filesystem isola
 **Advantages**
 
 - preserves natural Agent planning;
-- Agent remains a proposer, not semantic acceptance authority;
+- observation base covers dependencies discovered during planning rather than guessing them in advance;
+- Agent remains proposer, not semantic acceptance authority;
 - exact immutable burden is accepted explicitly;
 - Host policy minima are non-removable;
 - one draft/request is single-consumed across racing command IDs;
@@ -525,13 +593,14 @@ Again, the check proves the last Host observation, not external filesystem isola
 
 **Disadvantages**
 
-- adds a creation-draft/accept interaction;
-- adds durable pending-draft lifecycle and session-completion integration;
-- requires `PlanningObservationIdentity`;
+- adds creation-draft/accept interaction;
+- adds durable pending lifecycle/session integration;
+- requires complete Host-tracked read provenance or a bounded complete planning view;
+- requires a sealed `PlanningObservationIdentity`;
 - requires Host-mediated mutation coordination;
-- does not solve arbitrary external edits after the last observation.
+- does not solve arbitrary external edits after the final observation.
 
-**Classification:** **preferred for semantic authorship/authorization, conditional on separate attempt-time out-of-band mutation semantics before Phase 1 freeze.**
+**Classification:** **preferred for semantic authorship/authorization, conditional on a complete bounded planning-observation strategy and separate attempt-time out-of-band mutation semantics before Phase 1 freeze.**
 
 ## 11. Alternative E — canonical `planning` ProgramState lifecycle then finalize
 
@@ -575,21 +644,64 @@ Caller explicitly authorizes the Host to accept whatever bounded Agent plan pass
 
 ```text
 creation request R with objective O
-→ capture B0
-→ Agent proposes D(B0)
+→ start Host-tracked read-only planning
+→ Agent reads F1, directory Q, Git G, configuration C through tracked interfaces
+→ Agent proposes D
+→ Host seals Bplan = identities/dependencies of F1 + Q + G + C
 → Host validates + policy-adds
-→ canonical pending D/H under R
+→ canonical pending D/H(D,Bplan,P0) under R
 → Agent may become idle; session remains active because pending interaction blocks idle completion
 → Application A accepts D/H
 → acquire Host-mediated mutation exclusion
-→ Host last-observation check matches B0
+→ Host recheck of sealed Bplan matches
 → enter canonical admission
 → R/D/interaction/session/policy all current
 → atomic consume(R,D) + resolve interaction + A→P + complete Program batch/attachment
 → P active
 ```
 
-## 16. Agent-idle races draft presentation
+## 16. Planner discovers a relevant path after planning starts
+
+```text
+planning begins
+→ Agent reads repository index/search result Q
+→ Q reveals file F not known at start
+→ Agent reads F
+→ D depends on F
+```
+
+Required result:
+
+```text
+F and Q are included in the sealed dependency set Bplan
+```
+
+A pre-planning token that omitted F cannot be the final authoritative planning base.
+
+## 17. A dependency changes during planning
+
+```text
+Agent reads A@v1
+→ Workspace changes A to v2
+→ Agent later reads B@v1
+→ Agent proposes D based on observed A@v1/B@v1
+→ Host seals those observed dependencies
+```
+
+Before creation, recheck against the sealed set cannot silently treat current A@v2 as equivalent to A@v1. Mismatch => stale/re-plan unless the selected equivalence model can prove semantic equivalence deterministically.
+
+## 18. Untracked planning read
+
+```text
+Agent can inspect Workspace fact X through a side channel not represented by Host tracking/full view
+→ D may depend on X
+```
+
+The Host cannot claim complete `PlanningObservationIdentity` provenance.
+
+First-slice response: fail closed for this creation mode or remove that side channel from semantic planning. The Agent may not self-assert “X did not matter” as canonical freshness evidence.
+
+## 19. Agent-idle races draft presentation
 
 Possible concurrent messages:
 
@@ -619,7 +731,7 @@ session stop becomes canonical
 
 There is no state in which an already-current pending draft is invalidated by a stale idle-completion snapshot.
 
-## 17. Explicit stop races acceptance
+## 20. Explicit stop races acceptance
 
 ```text
 pending D under session S
@@ -644,7 +756,7 @@ creation admission consumes D and creates/attaches P
 → cannot retroactively invalidate P
 ```
 
-## 18. Draft superseded while acceptance waits
+## 21. Draft superseded while acceptance waits
 
 ```text
 A targets D1
@@ -655,11 +767,11 @@ A targets D1
 
 Creation admission revalidates and rejects D1 stale. A pre-wait check does not authorize later creation.
 
-## 19. Policy/session changes while acceptance waits
+## 22. Policy/session changes while acceptance waits
 
 Same rule: after barrier acquisition, creation admission revalidates policy and source-session/pending-interaction currency. If either changed, old acceptance rejects stale.
 
-## 20. Two distinct accept commands race one draft
+## 23. Two distinct accept commands race one draft
 
 ```text
 A1(commandId=1) targets D
@@ -670,7 +782,7 @@ Canonical admission serializes them.
 
 If A1 consumes D and creates P, A2 observes D already consumed and resolves duplicate/noop referencing P. Distinct command IDs do not create P2.
 
-## 21. Same-command response loss/crash
+## 24. Same-command response loss/crash
 
 ```text
 A accepted
@@ -681,7 +793,7 @@ A accepted
 
 Retry resolves to P; no second ProgramStateId.
 
-## 22. Crash during accepted-creation transaction
+## 25. Crash during accepted-creation transaction
 
 Recovery sees either:
 
@@ -702,18 +814,18 @@ D consumed by P
 
 Never a partial active Program if those facts share one transaction.
 
-## 23. Workspace changes while draft is pending
+## 26. Workspace changes while draft is pending
 
 ```text
-D planned at B0
-→ Workspace/repository observation becomes B1
+D bound to sealed Bplan
+→ a dependency in Bplan changes
 → A accepts D
-→ Host last-observation check sees B1
+→ Host final recheck sees mismatch
 ```
 
-If `B1 != B0` or equivalence cannot be proven: stale/fail-closed; no Program creation from D.
+Mismatch/unknown => stale/fail-closed; no Program creation from D.
 
-## 24. Host-mediated mutation already executing
+## 27. Host-mediated mutation already executing
 
 Current architecture can have:
 
@@ -723,15 +835,15 @@ operation.started canonical
 → Program creation acceptance arrives
 ```
 
-Creation cannot treat event order as quiescence. It waits/fails closed until Host-mediated mutation execution is terminal and required reconciliation is resolved, then performs its last observation check.
+Creation cannot treat event order as quiescence. It waits/fails closed until Host-mediated mutation execution is terminal and required reconciliation is resolved, then performs its last observation recheck.
 
-## 25. External write after final creation observation
+## 28. External write after final creation observation
 
 Unavoidable without stronger filesystem isolation:
 
 ```text
 Host-mediated mutation exclusion held
-→ Host observes B0
+→ Host rechecks sealed Bplan successfully
 → external editor writes B1
 → SQLite accepted-creation transaction commits P
 ```
@@ -741,62 +853,62 @@ This history is **not excluded by Alternative D**.
 What is true canonically is:
 
 ```text
-P was semantically authorized from exact draft D bound to B0
+P was semantically authorized from exact draft D bound to sealed Bplan
 and
-the Host's last pre-creation observation matched B0
+the Host's last pre-creation recheck matched Bplan
 ```
 
 What is **not** established is:
 
 ```text
-worktree equalled B0 at Program transaction commit
+worktree equalled Bplan at Program transaction commit
 ```
 
 The Program may therefore exist canonically even though an external change crossed the observation-to-commit window. Program creation is not a claim that execution is safe against that change. Before execution, the Host observes again, and the final frozen runtime contract must separately define attempt-time out-of-band mutation detection/fail-closed behavior.
 
-## 26. Program parked, Workspace later changes
+## 29. Program parked, Workspace later changes
 
-The creation barrier is not held while an active Program waits for a session/dispatch. A later dispatch performs another observation check under Host-mediated mutation exclusion.
+The creation barrier is not held while an active Program waits for a session/dispatch. A later dispatch rechecks the sealed planning base under Host-mediated mutation exclusion.
 
 A mismatch prevents dispatch. A match means only that the Host's last check matched; it is not filesystem snapshot isolation.
 
-## 27. External write after dispatch observation
+## 30. External write after dispatch observation
 
 ```text
-Host last pre-dispatch observation matches accepted base
+Host last pre-dispatch recheck matches sealed planning base
 → external writer changes repository
 → ProgramAttempt starts
 ```
 
-This is also possible without a stronger runtime mechanism.
+This is possible without a stronger runtime mechanism.
 
 Therefore the study does **not** describe pre-dispatch observation as proof that the worktree is unchanged at attempt start or during attempt execution. The attempt-time out-of-band mutation policy is a separate freeze dependency.
 
-## 28. Host-mediated mutator tries to cross attempt start
+## 31. Host-mediated mutator tries to cross attempt start
 
 This case **is** under Host control. If the frozen contract promises Host-mediated mutation isolation, the scheduler acquires environmental mutation authority before its last observation check and does not release a gap before ProgramAttempt Host-mediated mutation authority begins.
 
-## 29. Agent replacement during planning
+## 32. Agent replacement during planning
 
-Before a draft is Host-owned/pending, partial Agent-local planning is disposable. Replacement Agent can re-plan from durable caller intent and a fresh observation.
+A replacement Agent cannot inherit an unsealed self-asserted observation base. Planning restarts from durable caller intent unless the Host can continue the same bounded tracked planning episode without losing observation provenance.
 
-Once exact D is Host-owned and pending, a replacement Agent cannot substitute a different D2 under D's identity.
+Once exact D+Bplan is Host-owned and pending, a replacement Agent cannot substitute D2 under D's identity.
 
-## 30. Host/UI restart after draft presentation
+## 33. Host/UI restart after draft presentation
 
-Pending Host state recovers exact draft/lossless reference, digest, request identity, planning observation, policy identity, source session, lifecycle, and consumed ProgramStateId if applicable.
+Pending Host state recovers exact draft/lossless reference, digest, sealed planning observation identity, request identity, policy identity, source session, lifecycle, and consumed ProgramStateId if applicable.
 
 Renderer-local state is not needed to decide currentness.
 
-## 31. Pending interaction resolved without creation
+## 34. Pending interaction resolved without creation
 
 Rejection/withdrawal/defined expiry/supersession clears the creation interaction as a blocker. No `program.cancelled` fact is needed because no Program existed.
 
-## 32. Planner requests mutation before Program exists
+## 35. Planner requests mutation before Program exists
 
 Fail closed. Pre-Program semantic planning is read-only.
 
-## 33. Future ArtifactRef/evidenceRef proposed as immutable requirement identity
+## 36. Future ArtifactRef/evidenceRef proposed as immutable requirement identity
 
 Reject. The creation-time requirement identifies a stable logical predicate/obligation; future evidence later satisfies it.
 
@@ -804,7 +916,7 @@ Reject. The creation-time requirement identifies a stable logical predicate/obli
 
 # Part VI — Preferred semantic shapes
 
-## 34. ProgramCreationDraft
+## 37. ProgramCreationDraft
 
 Illustrative shape only:
 
@@ -820,17 +932,19 @@ interface ProgramCreationDraft {
 }
 ```
 
+`planningObservation` is Host-sealed after semantic planning. It is not an arbitrary Agent-provided digest.
+
 Draft-local keys wire work/verification before canonical Program identities exist. The Host mints canonical `ProgramStateId`, work-item IDs, and verification-obligation IDs during accepted creation.
 
-The exact draft digest covers every semantic field whose change would alter acceptance.
+The exact draft digest covers every semantic field whose change would alter acceptance, including the sealed planning observation identity and policy identity.
 
-## 35. Pending creation lifecycle
+## 38. Pending creation lifecycle
 
 Host-owned Application control state needs semantics equivalent to:
 
 ```text
 creation request R
-  └─ current exact draft D
+  └─ current exact draft D + sealed Bplan
        ├─ pending/current
        ├─ superseded/rejected/withdrawn/expired
        └─ consumed by ProgramStateId P
@@ -840,25 +954,37 @@ At most one current draft exists under the first-slice request model, and a requ
 
 Pending current D blocks ordinary idle completion of the source session.
 
-## 36. PlanningObservationIdentity
+## 39. PlanningObservationIdentity
 
-This is a bounded description/digest of repository/Workspace observations materially used by planning. Final fields are open, but may include/digest:
+The architectural requirement is **complete bounded provenance for the planning view that actually influenced the proposal**.
 
-- Git HEAD;
-- dirty-worktree/bounded Workspace fingerprint;
-- repository configuration identity;
-- relevant-path observations;
-- CodeIntelligence revision/provider observation when relied upon;
-- Host canonical source-event cut supplied to planning.
+The final implementation may choose one of two families, provided it proves completeness:
 
-Required semantics:
+### 39.1 Full bounded planning view
 
-1. the Host can compare a later observation with the planning base;
-2. unknown equivalence fails closed for creation/dispatch decisions that require a match;
-3. the identity remains observational evidence, not a second canonical Workspace truth;
-4. matching it never implies transactional exclusion of external writers.
+The Host gives planning a bounded snapshot/view whose full identity can be recorded and rechecked. All permitted semantic planning reads are inside that view.
 
-## 37. Mandatory verification authorship
+### 39.2 Host-tracked observation dependency set
+
+Every read-only observation delivered to planning contributes deterministic dependency metadata to a Host-owned accumulator. The Host seals the accumulator only after the Agent submits the proposal.
+
+The dependency model must cover the semantics of the read, not only file paths. For example, a directory listing or search query may depend on a result set/absence state.
+
+### 39.3 Required properties
+
+Whichever family is selected:
+
+1. all Workspace/repository observations that can influence D are covered;
+2. the Host, not the Agent, establishes/seals the identity;
+3. sealing occurs after the relevant planning reads/proposal, not before dependency discovery;
+4. the representation is bounded;
+5. the Host can later re-evaluate/equivalence-check it;
+6. unknown/incomplete equivalence fails closed;
+7. matching is evidence of the Host observation only, not transactional external-write exclusion.
+
+This is a freeze-readiness design dependency; this study intentionally does not pretend the exact digest/schema is already selected.
+
+## 40. Mandatory verification authorship
 
 The Agent may propose task-specific closed deterministic verification requirements. Host policy may add non-removable requirements.
 
@@ -866,13 +992,13 @@ The Host can deterministically validate schema, bounds, predicate kind, paramete
 
 The Host cannot generally prove semantic sufficiency of an arbitrary finite verification set for natural-language intent. That is why semantic acceptance is a distinct role.
 
-## 38. Initial topology authorship
+## 41. Initial topology authorship
 
 The Agent proposes repository-specific DAG decomposition. The Host validates bounds, dependency integrity, cycles, field shape, and policy. The Application accepts the exact topology as part of D.
 
 This does not grant Agent post-creation automatic `program.work.added` authority.
 
-## 39. Accepted-creation transaction
+## 42. Accepted-creation transaction
 
 One serialized event-store transaction atomically establishes:
 
@@ -903,9 +1029,9 @@ Exact event spelling is implementation design; atomic semantic effects are not.
 
 Immediately before append, the admission revalidates all **canonical** currentness conditions: R/D, interaction, source session, policy, and competing transitions.
 
-The last Workspace observation check is evidence supplied to this decision; because the external worktree is not transactionally coupled to SQLite, the append does not upgrade that observation into a filesystem-at-commit guarantee.
+The last sealed-observation recheck is evidence supplied to this decision; because the external worktree is not transactionally coupled to SQLite, the append does not upgrade that observation into a filesystem-at-commit guarantee.
 
-## 40. Session terminal linearization
+## 43. Session terminal linearization
 
 Phase 1 integration must strengthen current session-stop behavior.
 
@@ -929,7 +1055,7 @@ If a pending creation interaction exists and stop wins, that same logical cut in
 
 If Program creation won first, stop sees the Program-attached state and applies the final Program/session stop semantics rather than relying on a pre-create snapshot.
 
-## 41. Host-mediated Workspace mutation exclusion
+## 44. Host-mediated Workspace mutation exclusion
 
 This study does not prescribe a lock/class name. It requires coordination over **Host-mediated mutating execution lifetimes**, not merely event append.
 
@@ -939,7 +1065,7 @@ Creation sequence:
 accept received
 → acquire Host-mediated mutation exclusion
 → wait/fail closed on active/unreconciled Host mutator
-→ take last Workspace observation
+→ recheck sealed Bplan
 → mismatch/unknown => stale
 → canonical R/D/session/policy revalidation + atomic create
 → release
@@ -950,7 +1076,7 @@ Dispatch sequence:
 ```text
 acquire Host-mediated mutation exclusion
 → quiescence/reconciliation check
-→ take last accepted-base observation
+→ recheck accepted sealed Bplan
 → mismatch/unknown => no dispatch
 → admit ProgramAttempt
 → retain/transfer Host-mediated mutation authority if final execution model requires it
@@ -962,17 +1088,17 @@ These sequences exclude Host-mediated races. They do not exclude external proces
 
 # Part VII — Relationship to existing Phase 1 decisions
 
-## 42. Completion contract
+## 45. Completion contract
 
 If verification-centered completion is promoted, this study supplies the missing authorship/acceptance boundary for immutable mandatory verification requirements.
 
-## 43. Verification freshness
+## 46. Verification freshness
 
 Keep distinct:
 
 ```text
 PlanningObservationIdentity
-  → observation base for initial semantic plan
+  → sealed observation base for initial semantic plan
 
 ProgramCreationRequestId / ProgramCreationDraftId
   → exact semantic authorization + single consumption
@@ -986,27 +1112,27 @@ verification subjectGeneration
 
 Do not collapse these identities.
 
-## 44. Agent work addition
+## 47. Agent work addition
 
 Agent authorship of an exact accepted **initial** draft is different from Agent authority to mutate required topology after Program activation.
 
 This study does not reopen the existing recommendation to defer automatic post-creation Agent topology mutation.
 
-## 45. Structural bounds
+## 48. Structural bounds
 
-Creation draft and pending Application projection need final local/aggregate Program bounds plus an explicit bounded serialized representation.
+Creation draft, pending Application projection, and planning-observation dependency representation need final local/aggregate limits plus an explicit bounded serialized representation.
 
-## 46. Operation correlation and uncertainty
+## 49. Operation correlation and uncertainty
 
 Creation/dispatch must fail closed on relevant Host-mediated mutating operations that are still executing or unresolved/indeterminate. This composes with, rather than replaces, operation uncertainty semantics.
 
-## 47. Scheduler/environmental concurrency
+## 50. Scheduler/environmental concurrency
 
 “One active ProgramAttempt per Workspace” alone does not exclude foreground/non-Program mutating capabilities.
 
 If promoted, Phase 1 needs a separate Host-mediated environmental mutation-exclusion invariant or an equivalent capability/scheduler integration rule.
 
-## 48. Session lifecycle
+## 51. Session lifecycle
 
 A pending Program-creation interaction is a new Host-owned blocker to **automatic idle completion**.
 
@@ -1014,23 +1140,23 @@ Both draft presentation and automatic session terminal admission need same-lane 
 
 Explicit stop remains available but must linearize against acceptance and atomically invalidate a pending draft if stop wins.
 
-## 49. Out-of-band runtime mutation
+## 52. Out-of-band runtime mutation
 
 External/non-Host mutation is a **separate freeze-readiness decision**.
 
-Neither `PlanningObservationIdentity` nor Host-mediated mutation exclusion can guarantee continuous worktree state. The eventual Phase 1 contract must define how an active ProgramAttempt detects/fails closed on out-of-band changes relevant to its execution/evidence/verification.
+Neither sealed `PlanningObservationIdentity` nor Host-mediated mutation exclusion can guarantee continuous worktree state. The eventual Phase 1 contract must define how an active ProgramAttempt detects/fails closed on out-of-band changes relevant to execution/evidence/verification.
 
 ---
 
 # Part VIII — Acceptance-proof consequences
 
-## 50. Existing ACs can absorb the creation-authorship decision
+## 53. Existing ACs can absorb the creation-authorship decision
 
 No new AC family appears necessary for authorship itself.
 
 - **AC-10-02:** complete accepted objective/topology/mandatory verification established at one rebuildable creation cut.
 - **AC-10-03:** source-session creation/attachment; pending creation blocks idle completion at terminal admission; explicit stop versus acceptance linearizes deterministically.
-- **AC-10-05:** initial DAG/bounds; last pre-dispatch observation mismatch blocks dispatch; Host-mediated mutation coordination at dispatch.
+- **AC-10-05:** initial DAG/bounds; planning-observation completeness/bounds; last pre-dispatch recheck mismatch blocks dispatch; Host-mediated mutation coordination at dispatch.
 - **AC-10-06:** active/unreconciled Host-mediated mutating operation blocks protected creation/dispatch; uncertainty remains uncertainty.
 - **AC-10-08:** runtime evidence cannot rewrite creation-time mandatory requirements.
 - **AC-10-09:** replacement/idle cannot promote, discard, or invalidate pending creation state through stale snapshots; creation recovery preserves single consumption/exactly-one Program mapping.
@@ -1038,11 +1164,30 @@ No new AC family appears necessary for authorship itself.
 
 The separately unresolved attempt-time out-of-band mutation policy may require additional refinements to AC-10-04/05/06/07 once selected.
 
-## 51. Required negative proofs if promoted
+## 54. Required negative proofs if promoted
 
 ```text
 Agent draft exists + no exact Application acceptance
 → no Program
+```
+
+```text
+planner discovers F after planning begins
+→ D depends on F
+→ sealed Bplan includes F (and discovery/query dependency where relevant)
+```
+
+```text
+planner reads fact X through an untracked channel
+→ Host cannot prove complete planning base
+→ creation flow fails closed / channel not permitted
+```
+
+```text
+A@v1 read during planning
+→ A becomes v2 before acceptance
+→ sealed Bplan recheck mismatches
+→ stale; no Program
 ```
 
 ```text
@@ -1092,25 +1237,19 @@ crash inside accepted-creation transaction
 ```
 
 ```text
-D planned at B0
-→ last Host pre-creation observation sees B1
-→ stale; no Program
-```
-
-```text
 Host-mediated mutator still executing
-→ creation cannot take protected final observation/create across its lifetime
+→ creation cannot recheck/create across its execution lifetime
 ```
 
 ```text
-last Host observation sees B0
-→ external process writes B1 before SQLite commit
+last Host recheck matches Bplan
+→ external process writes before SQLite commit
 → Program may still commit
-→ system does NOT claim worktree-at-commit == B0
+→ system does NOT claim worktree-at-commit == Bplan
 ```
 
 ```text
-last Host pre-dispatch observation sees accepted base
+last Host pre-dispatch recheck matches Bplan
 → external process writes before attempt execution
 → this study does NOT claim the attempt remained current
 → separately selected runtime out-of-band policy must govern
@@ -1123,29 +1262,29 @@ pre-Program planner requests mutating capability
 
 ```text
 Host/UI restart with pending draft
-→ exact draft/currentness/blocker state rebuilds from Host-owned state
+→ exact draft + sealed planning base + currentness/blocker state rebuilds from Host-owned state
 ```
 
 ---
 
 # Part IX — Comparison and recommendation
 
-## 52. Comparison
+## 55. Comparison
 
-| Alternative | Semantic authority | Natural-language UX | Observation provenance | Single-consumption/idempotence | Session-lifecycle coherence | Result |
+| Alternative | Semantic authority | Natural-language UX | Planning observation completeness | Single-consumption/idempotence | Session-lifecycle coherence | Result |
 |---|---|---|---|---|---|---|
-| A. Application full contract | strong | weak default | can be explicit | strong | simple | accommodate |
+| A. Application full contract | strong | weak default | caller-dependent | strong | simple | accommodate |
 | B. Host deterministic synthesis | unsupported for general semantics | good | possible | possible | simple | reject |
 | C. Agent auto-admit | weak | excellent | possible | possible | simple | reject |
-| D. Exact draft acceptance + atomic single-consume/create | **strong** | good | **explicit but non-isolating** | **strong** | **explicit linearization** | **prefer conditionally** |
-| E. Canonical planning lifecycle | strong | good | explicit possible | strong | large new lifecycle | defer |
-| F. Delegated auto-accept | intentionally weaker | excellent | explicit possible | strong | simple | defer |
+| D. Seal planning observations + exact acceptance + atomic single-consume/create | **strong** | good | **required/provable strategy** | **strong** | **explicit linearization** | **prefer conditionally** |
+| E. Canonical planning lifecycle | strong | good | still required | strong | large new lifecycle | defer |
+| F. Delegated auto-accept | intentionally weaker | excellent | still required | strong | simple | defer |
 | G. Objective-only mutable contract | weak | good | complex | complex | complex | reject |
-| H. Model/judge acceptance | no deterministic principal | good | possible | possible | simple | advisory only |
+| H. Model/judge acceptance | no deterministic principal | good | still required | possible | simple | advisory only |
 
-## 53. Recommendation
+## 56. Recommendation
 
-**Recommend Alternative D for the first executable Phase 1.0 semantic creation model, conditional on resolving the separately identified attempt-time out-of-band mutation policy before Phase 1 freeze.**
+**Recommend Alternative D for the first executable Phase 1.0 semantic creation model, conditional on selecting a complete bounded planning-observation strategy and resolving the separately identified attempt-time out-of-band mutation policy before Phase 1 freeze.**
 
 Preferred authority chain:
 
@@ -1154,20 +1293,23 @@ caller objective
         ↓
 Host-owned creation request R
         ↓
-PlanningObservationIdentity B0
+bounded read-only Host-tracked planning episode
         ↓
-read-only Agent semantic proposal D
+Agent chooses observations and proposes D
+        ↓
+Host seals complete Bplan after proposal
+(full bounded view OR complete tracked dependency set)
         ↓
 Host deterministic validation + policy additions
         ↓
-Host-owned exact pending D/H(D,B0,P0)
+Host-owned exact pending D/H(D,Bplan,P0)
         ↓
 pending interaction blocks automatic idle completion at terminal admission
         ↓
 Application accept A targets exact D
         ↓
 Host-mediated mutation exclusion
-+ last Host observation compared with B0
++ last Host recheck of sealed Bplan
         ↓
 serialized canonical revalidation:
   D/R current + unconsumed
@@ -1186,23 +1328,30 @@ Program active
 
 The concise authority rule is:
 
-> **The caller authors intent; the Agent proposes semantics; Host policy may add mandatory constraints; the Application accepts one exact Host-owned pending contract; the Host alone revalidates and single-consumes that authorization while making complete Program creation atomic and canonical. PlanningObservationIdentity records what repository state the plan was based on, but neither it nor SQLite admission certifies the external worktree state at commit time.**
+> **The caller authors intent; the Agent proposes semantics from bounded Host-observed inputs; the Host seals the complete planning observation base after the proposal and may add mandatory policy constraints; the Application accepts one exact Host-owned pending contract; the Host alone revalidates and single-consumes that authorization while making complete Program creation atomic and canonical. The sealed observation base records what planning depended on, but neither it nor SQLite admission certifies external worktree state at commit time.**
 
-This is the smallest model found that preserves natural Agent planning without silently granting the Agent immutable completion-burden authority or creating duplicate Programs under retry/race.
+This is the smallest model found that preserves natural Agent planning without silently granting the Agent immutable completion-burden authority, accepting a plan whose actual planning dependencies are untracked, or creating duplicate Programs under retry/race.
 
 ---
 
 # Part X — Remaining freeze-readiness dependencies
 
-## 54. Closed verification-requirement predicate taxonomy
+## 57. Closed verification-requirement predicate taxonomy
 
 The final contract must define the closed deterministic requirement predicates well enough to author immutable creation-time obligations without future concrete evidence IDs or free-text truth evaluation.
 
-## 55. PlanningObservationIdentity
+## 58. Complete bounded PlanningObservationIdentity
 
-The final contract must define the minimum bounded observation representation and equivalence rule. It should reuse Git/Workspace/CodeIntelligence observation substrate where sufficient and must not be described as filesystem isolation.
+The final contract must choose/prove a complete bounded planning-view strategy:
 
-## 56. Host-mediated Workspace mutation barrier
+- full bounded planning snapshot/view; or
+- Host-tracked dependency set covering **every** Workspace/repository observation that can influence D.
+
+It must define representation, sealing point, bounds, query/absence semantics, re-evaluation/equivalence rules, restart behavior, and treatment of any otherwise-untracked read channels.
+
+The final identity is sealed after planning/proposal dependency discovery, not merely captured before the Agent begins.
+
+## 59. Host-mediated Workspace mutation barrier
 
 The final contract must define:
 
@@ -1215,7 +1364,7 @@ The final contract must define:
 - foreground work rejection/queueing/delay;
 - read-only concurrency.
 
-## 57. Pending creation lifecycle and session-terminal integration
+## 60. Pending creation lifecycle and session-terminal integration
 
 The final contract must specify Host-owned Application control state sufficient to prove:
 
@@ -1231,7 +1380,7 @@ Both draft presentation and session terminal transitions must revalidate on the 
 
 This does not require a canonical `planning` ProgramState lifecycle.
 
-## 58. Attempt-time out-of-band mutation detection
+## 61. Attempt-time out-of-band mutation detection
 
 This is a **separate correctness dependency**.
 
@@ -1246,7 +1395,7 @@ Credible solution families to study separately include:
 
 Until this is resolved, no consolidated Phase 1 contract should claim continuous ProgramAttempt/worktree freshness.
 
-## 59. Planning status
+## 62. Planning status
 
 This document remains a recommendation only.
 
