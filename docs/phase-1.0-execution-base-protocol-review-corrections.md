@@ -2,19 +2,19 @@
 
 **Status:** incorporated correction to `docs/phase-1.0-execution-base-protocol-study.md`  
 **Approval:** non-normative planning only; not approved; not frozen; implementation not authorized  
-**Applies to study head:** the PR #41 study beginning at `2a7b81d913f350157bb4318ab386bc1970d53282`
+**Applies to:** PR #41 execution-base protocol study and all later consolidation work that consumes it
 
-This file records two correctness corrections identified during review of the execution-base protocol study.
+This document records correctness corrections identified during review of the execution-base protocol study.
 
-**Precedence:** where this correction conflicts with wording in `docs/phase-1.0-execution-base-protocol-study.md`, this correction controls the recommendation. A later consolidation must use the corrected semantics below, not the superseded wording.
+**Precedence:** where this correction conflicts with `docs/phase-1.0-execution-base-protocol-study.md`, this document controls. A later consolidation must use the corrected semantics below, not superseded wording in the initial study.
 
-The corrections do not amend `docs/phase-1.0-plan.md`, change AC-10, approve/freeze Phase 1.0, or authorize implementation.
+These corrections do not amend `docs/phase-1.0-plan.md`, change AC-10, approve/freeze Phase 1.0, or authorize implementation.
 
 ---
 
-## 1. Persist WorkspaceAccessClass in immutable operation history
+# 1. Persist WorkspaceAccessClass in immutable operation history
 
-### 1.1 Problem
+## 1.1 Problem
 
 The study recommends:
 
@@ -24,7 +24,7 @@ WorkspaceEffectGeneration
   of Host-classified Workspace-mutating operations
 ```
 
-and introduces a Host-owned request-time classification:
+and introduces:
 
 ```ts
 type WorkspaceAccessClass =
@@ -33,19 +33,17 @@ type WorkspaceAccessClass =
   | "may_write";
 ```
 
-The current implementation's `operation.requested` payload persists only `isReadOnly`; it does **not** persist this new Workspace-specific classification.
+Current `operation.requested` persists `isReadOnly`, but not this Workspace-specific classification.
 
-If replay later consults the current capability registry/provider to recover `WorkspaceAccessClass`, generation is not deterministic. Capability metadata can change, providers can disappear, and a non-read-only capability may have external effects while having Workspace access `none`.
+If rebuild asks the **current** capability registry what an old operation's Workspace access was, replay is not deterministic. Providers can be replaced, bindings can change, and a non-read-only operation can have Workspace access `none`.
 
-Therefore the original study was incomplete wherever it implied that generation could be rebuilt from operation effects without also making request-time Workspace classification immutable.
+## 1.2 Corrected invariant
 
-### 1.2 Corrected invariant
+> **Every operation admitted into the Phase 1 Workspace-effect protocol records its Host-authorized `WorkspaceAccessClass` in immutable canonical root operation history. Replay consumes that persisted request-time classification and never asks the current capability registry to reinterpret the historical operation.**
 
-> **Every operation admitted into the Phase 1 Workspace-effect lineage records its Host-authorized `WorkspaceAccessClass` in immutable canonical operation history at the root operation request. Replay consumes that persisted classification and never asks the current capability registry what the historical operation meant.**
+The natural location is `operation.requested`.
 
-The natural location is `operation.requested` because it is already the durable root of operation identity and request semantics.
-
-Illustrative Phase 1 payload extension:
+Illustrative shape:
 
 ```ts
 interface OperationRequestedPayloadV2 {
@@ -54,82 +52,70 @@ interface OperationRequestedPayloadV2 {
   args: unknown;
   isReadOnly: boolean;
   workspaceAccessClass: "none" | "read_only" | "may_write";
+  // see §2 for operation-local execution/quiescence provenance
 }
 ```
 
 Exact schema spelling/version is implementation design. The semantic requirement is not.
 
-### 1.3 Request-time authority
+## 1.3 Request-time authority
 
-The persisted value is determined by the Host at request admission from the then-authorized capability binding/policy contract.
-
-Rules:
+The Host determines and persists the class from the then-authorized binding/policy contract:
 
 ```text
-trusted Host binding says none
+trusted binding => none
 → persist none
 
-trusted Host binding says read_only
+trusted binding => read_only
 → persist read_only
 
-trusted Host binding says may_write
+trusted binding => may_write
 → persist may_write
 
 missing / malformed / untrusted Workspace classification
 → persist may_write conservatively
 ```
 
-The Agent, tool result, model output, or later plugin generation cannot rewrite the historical classification.
+The Agent, tool result, later provider generation, or model output cannot rewrite it.
 
-A later provider replacement does not reinterpret an already-requested operation.
+## 1.4 `WorkspaceAccessClass` is not `isReadOnly`
 
-### 1.4 WorkspaceAccessClass remains distinct from isReadOnly
+They answer different questions:
 
-Do not derive the new field mechanically from `isReadOnly` for new Phase 1 operations.
+```text
+isReadOnly
+  generic operation/effect/policy semantics
+
+WorkspaceAccessClass
+  whether this operation can touch the Workspace environmental domain
+```
 
 Examples:
 
 ```text
-network POST capability
+network POST:
   isReadOnly = false
-  WorkspaceAccessClass = none
-```
+  workspaceAccessClass = none
 
-```text
-repository grep
+repository grep:
   isReadOnly = true
-  WorkspaceAccessClass = read_only
-```
+  workspaceAccessClass = read_only
 
-```text
-arbitrary shell
+arbitrary shell:
   isReadOnly = false
-  WorkspaceAccessClass = may_write
+  workspaceAccessClass = may_write
 ```
 
-The two fields answer different questions:
+Do not mechanically derive the new field from `isReadOnly` for new Phase 1 operations.
+
+## 1.5 Corrected generation reducer
 
 ```text
-isReadOnly
-  → generic operation/effect/policy semantics
-
-WorkspaceAccessClass
-  → whether this invocation participates in Workspace environmental coordination
-    and Workspace-effect lineage
-```
-
-### 1.5 Generation reducer
-
-The corrected generation rule is:
-
-```text
-for an operation admitted into the Workspace-effect protocol:
-
 persisted workspaceAccessClass != may_write
 → never advances WorkspaceEffectGeneration
 
 persisted workspaceAccessClass == may_write
-AND effect has not reached confirmed
+AND operation effect has not reached confirmed
 → no advance
 
 persisted workspaceAccessClass == may_write
@@ -137,423 +123,732 @@ AND operationId reaches canonical EffectStatus=confirmed for the first time
 → advance WorkspaceEffectGeneration exactly once
 ```
 
-Replay uses only canonical request/effect/reconciliation facts.
+Replay uses canonical request/effect/reconciliation facts only.
 
-It does not consult:
-
-- current capability metadata;
-- current plugin/provider registry;
-- current Host policy;
-- Agent assertions;
-- watcher state.
-
-### 1.6 Existing/legacy operation histories need a deterministic protocol origin
-
-Pre-Phase-1 operation rows/events do not contain `WorkspaceAccessClass`. They must not be retrospectively reinterpreted using whatever capability registry happens to exist during replay.
-
-Preferred migration/activation rule:
+It must not consult:
 
 ```text
-recover/reconcile every pre-existing operation whose effect may still be active/uncertain
-→ prove Host-mediated Workspace mutation quiescence as required by Correction 2
-→ obtain complete current ExecutionObservationIdentity O0
-→ canonically establish the Workspace execution-protocol baseline
-→ set WorkspaceEffectGeneration origin G0 = 0
-→ from that canonical boundary onward, every participating operation.requested
-  carries persisted WorkspaceAccessClass
+current capability metadata
+current plugin/provider registry
+current Host policy
+Agent assertions
+watcher state
 ```
 
-The baseline fact may have an implementation event name such as:
+## 1.6 Legacy histories need a deterministic protocol origin
+
+Pre-Phase-1 operation history lacks this field. Do not retrospectively classify legacy operations from current provider metadata.
+
+Preferred activation sequence:
+
+```text
+recover existing durable state
+→ resolve or surface every pre-existing mutation uncertainty required for safe activation
+→ prove Host-mediated mutator quiescence under §3/§4
+→ obtain complete current ExecutionObservationIdentity O0
+→ canonically establish Phase 1 Workspace-execution baseline B0
+→ define WorkspaceEffectGeneration G0 = 0 at B0
+→ all later participating operation.requested events persist WorkspaceAccessClass
+```
+
+Illustrative event name:
 
 ```text
 workspace.execution.baseline.established
 ```
 
-but the exact spelling is not selected here.
+The name is not selected here. Its meaning is limited:
 
-Its meaning is limited:
+> after required recovery/quiescence, the Host accepted complete observation O0 as the origin of the Phase 1 Workspace execution lineage.
 
-> at activation cut C, after required recovery/quiescence checks, the Host accepted complete current observation O0 as the origin of the Phase 1 Workspace execution lineage.
+It does not fabricate causal generations for operations that predate the protocol.
 
-It does **not** claim to reconstruct a causal Workspace-effect generation for operations that occurred before the protocol existed.
+## 1.7 Rebuild proof
 
-This is safe because execution freshness requires the current observed base, while the generation ordinal exists to distinguish **subsequent Host-known causal transitions** from that accepted origin.
-
-### 1.7 Rebuild proof
-
-Delete/rebuild must prove:
+Required history:
 
 ```text
-baseline event B at sequence S, G=0
-→ operation O1 requested with persisted class none, confirmed
-→ G remains 0
-→ operation O2 requested with persisted class may_write, indeterminate
-→ G remains 0
-→ O2 reconciled confirmed
-→ G becomes 1 exactly once
-→ provider registry replaced
-→ rebuild
-→ same G=1 and same O2 ownership without consulting replacement provider
+baseline B0, G0
+→ O1 requested class none, effect confirmed
+→ G0
+→ O2 requested class may_write, effect indeterminate
+→ G0
+→ O2 reconciliation confirmed
+→ G1
+→ capability registry/provider replaced
+→ delete projection + rebuild
+→ still G1 without consulting replacement provider
 ```
 
-Also prove:
+Also:
 
 ```text
-legacy operation before baseline lacks workspaceAccessClass
+legacy operation before B0 lacks WorkspaceAccessClass
 → rebuild does not infer its class from current registry
-→ generation origin remains the canonical baseline
+→ baseline remains the generation origin
 ```
-
-### 1.8 Consequence for the main study
-
-Sections describing:
-
-- `WorkspaceAccessClass`;
-- generation derivation;
-- operation root ownership;
-- replay/recovery;
-- AC-10-06 generation proofs;
-
-must be read with this additional invariant:
-
-> **request-time Workspace classification is itself a canonical input to the replayable generation reducer.**
 
 ---
 
-## 2. Mutation exclusion cannot be released merely because an operation became indeterminate
+# 2. Persist the operation-local provider/quiescence contract used by recovery
 
-### 2.1 Problem
+## 2.1 Why WorkspaceAccessClass alone is insufficient
 
-The study's cancellation/timeout discussion allowed wording equivalent to:
+Mutation quiescence can depend on the execution provider incarnation that actually started an operation.
+
+History:
+
+```text
+operation O starts through provider/binding generation P0
+P0 permits a detached writer to outlive the Host/provider call
+→ Host crashes
+→ provider is replaced by P1
+P1 guarantees Host-lifetime containment
+```
+
+Restart must not inspect P1 and conclude that O's old writer could not have survived. That would apply a new provider's containment semantics to an old operation.
+
+The earlier capability-resolution validation deliberately did not require provider-generation provenance because no then-current acceptance predicate consumed it. This execution-base protocol adds such a consumer: **recovery/quiescence may need to reason about the provider incarnation and containment contract that actually owned O.**
+
+Therefore operation-local provider provenance is now required for this narrow purpose.
+
+This does **not** select a ProgramAttempt-wide provider snapshot.
+
+## 2.2 Corrected invariant
+
+> **A `may_write` operation persists the immutable Host-authorized execution/quiescence contract—and, where recovery or reconciliation can address a particular provider incarnation, that incarnation/binding identity—used when the operation starts. Restart/replay never substitutes the current provider's containment semantics for the historical operation's semantics.**
+
+## 2.3 Minimal semantic shape
+
+Illustrative root/request semantics:
+
+```ts
+type MutationContainmentContract =
+  | "operation_scoped_containment"
+  | "host_lifetime_containment"
+  | "external_writer_may_survive";
+
+interface WorkspaceExecutionBindingProvenance {
+  contractVersion: 1;
+  mutationContainment: MutationContainmentContract;
+  providerBindingRevision?: string;
+  providerGenerationId?: string;
+}
+```
+
+Exact names and whether provider identity is one field or several remain implementation design.
+
+The mandatory property is that every fact used later to prove historical quiescence is stable canonical operation provenance rather than mutable registry lookup.
+
+## 2.4 Closed contract semantics
+
+### `operation_scoped_containment`
+
+The Host-authorized adapter guarantees that its explicit quiescence proof covers all Workspace-mutation-capable descendants/resources of that operation.
+
+The operation still needs an actual quiescence proof; merely receiving a timeout/cancel outcome is not enough.
+
+### `host_lifetime_containment`
+
+The Host-authorized provider guarantees that any Workspace-mutation-capable execution resource created under the operation cannot survive the provider/Host containment lifetime identified by the persisted provenance.
+
+On a later Host lifetime, recovery may use that **persisted historical contract** plus proof the relevant prior containment lifetime ended to establish quiescence.
+
+### `external_writer_may_survive`
+
+The provider contract admits that a mutation-capable writer may survive the caller/Host/provider lifetime.
+
+Host restart alone cannot establish quiescence. Recovery needs provider-specific evidence or explicit authorized external recovery.
+
+## 2.5 Missing/unknown contract fails closed
+
+For a new Phase 1 `may_write` operation:
+
+```text
+missing / malformed / untrusted mutation-containment contract
+→ treat as external_writer_may_survive
+```
+
+Do not optimistically infer containment from current implementation behavior.
+
+## 2.6 Provider identity is operation-local, not Program authority
+
+Persisting provider/binding provenance here does not collapse:
+
+```text
+ProgramState revision
+ProgramAttemptId
+operationId
+provider generation
+WorkspaceEffectGeneration
+```
+
+It simply lets recovery answer:
+
+> which historical execution/containment contract governed operation O?
+
+The operation remains O because of `operationId`; provider identity does not replace ProgramAttempt ownership.
+
+## 2.7 Rebuild/replacement proof
+
+```text
+O requested under P0
+workspaceAccessClass = may_write
+mutationContainment = external_writer_may_survive
+providerGenerationId = P0
+→ Host crashes
+→ current provider is P1 with host_lifetime_containment
+→ rebuild
+→ O still uses P0/external-survival semantics
+→ restart cannot infer quiescence from P1
+```
+
+And the reverse:
+
+```text
+O requested under persisted host_lifetime_containment P0
+→ P0 containment lifetime provably ends with Host/provider loss
+→ P1 differs
+→ recovery may establish O quiescent from the persisted P0 contract + ended-lifetime proof
+→ no need to ask P1 what P0 meant
+```
+
+---
+
+# 3. Effect certainty and mutation quiescence are separate
+
+## 3.1 Problem
+
+The initial study allowed wording equivalent to:
 
 ```text
 retain environmental coordination until execution returns
 OR
-until the Host can durably classify the operation as indeterminate
+until the Host can durably classify the operation indeterminate
 ```
 
 That `OR` is unsafe.
 
 A timed-out/cancelled capability may:
 
-- ignore cancellation;
-- continue executing after the caller stops awaiting it;
-- leave a child/grandchild process running;
-- detach a process that keeps writing the Workspace;
-- return an indeterminate outcome while environmental writes are still possible.
-
-Durably recording:
-
 ```text
-EffectStatus = indeterminate
+ignore cancellation
+continue after the caller stops awaiting it
+leave a child/grandchild process running
+detach a writer
+return an indeterminate outcome while later writes remain possible
 ```
 
-answers:
+`EffectStatus=indeterminate` answers whether the effect is known. It does not prove the writer stopped.
 
-> do we know whether/what effect occurred?
+## 3.2 Corrected separation
 
-It does **not** answer:
-
-> has the mutating executor stopped being able to write?
-
-Releasing the mutation coordinator and beginning reconciliation while the original writer can still mutate would make the reconciliation observation itself stale or meaningless.
-
-### 2.2 Corrected separation
-
-Keep these concepts distinct:
+Keep two independent state machines:
 
 ```text
 Effect certainty
   confirmed | absent | indeterminate | not_applicable
 
 Mutation quiescence
-  proven_quiescent | unknown
+  unknown | proven_quiescent
 ```
 
-The exact type/event spelling is open. The distinction is mandatory.
+Effect certainty is operation/effect authority.
 
-Effect certainty belongs to the durable operation/reconciliation model.
+Quiescence is the environmental safety property required before another Host mutator or stable reconciliation observation can cross the old writer's lifetime.
 
-Quiescence is the Host/provider control property needed before another Host-mediated Workspace mutator or authoritative reconciliation observation may proceed.
+## 3.3 Release rule
 
-### 2.3 Corrected mutation-sublease release rule
-
-> **A Workspace-mutating operation's environmental exclusion may be released for ordinary/reconciliation use only after that operation's ability to produce further Workspace writes is proven quiescent. Merely persisting a terminal outcome or `EffectStatus=indeterminate` is insufficient.**
+> **A `may_write` operation's environmental exclusion/barrier may be released for ordinary/reconciliation use only after that operation's ability to produce further Workspace writes is proven quiescent under its persisted historical execution contract. Terminal outcome or effect classification alone is insufficient.**
 
 Normal case:
 
 ```text
-capability executor returns
-AND Host adapter proves its mutation lifetime is quiescent
-→ mutation sublease may end
-→ terminal/reconciliation rules continue
+executor returns
+AND Host adapter proves all mutation-capable descendants/resources quiescent
+→ quiescence proven
 ```
 
-Timeout/cancellation case:
+Timeout case:
 
 ```text
-signal cancellation/timeout
-→ executor/descendants may still write
-→ persist outcome/effect uncertainty as allowed
+timeout/cancel signalled
+→ caller returns timed_out/cancelled
+→ effect may be indeterminate or even already confirmed
+→ descendant writer may still run
+→ quiescence remains unknown
+→ Workspace remains blocked
+```
+
+## 3.4 Evidence that is not quiescence proof by itself
+
+None of these alone is enough:
+
+```text
+AbortSignal sent
+timeout fired
+caller stopped awaiting
+operation terminal event appended
+effect marked indeterminate
+effect marked confirmed
+quiet watcher
+no change observed for a short interval
+current replacement provider claims stronger containment
+```
+
+Quiescence proof is Host/provider-specific and bound to the persisted operation-local contract from §2.
+
+## 3.5 `confirmed` may precede quiescence
+
+A `may_write` operation can have a known confirmed effect while a descendant may still produce further writes.
+
+Therefore this history is valid:
+
+```text
+operation effect confirmed
+→ WorkspaceEffectGeneration advances once
 → mutation quiescence remains unknown
-→ do not let another Host mutator/reconciliation inspection cross that writer
+→ no trusted post-effect Program base yet
+→ Workspace mutation/reconciliation barrier remains
 ```
 
-### 2.4 What counts as quiescence proof
+Generation tracks the operation's first confirmed effect transition, not the moment every possible write finished.
 
-Proof is capability/provider-specific and Host-owned.
+The eventual post-quiescence observation establishes the stable checked state that a Program can adopt.
 
-Examples can include:
+## 3.6 `absent` requires quiescence for a may-write operation
 
-- direct process handle known exited with all mutation-capable children contained by a Host-owned process/job group;
-- provider operation contract says completion atomically ends the mutation lifetime;
-- isolated Workspace provider revokes/terminates the execution environment;
-- explicit external/user recovery proves the detached writer is gone.
+A final claim of `EffectStatus=absent` would be unsafe while the same writer may still act.
 
-Examples that are **not** sufficient by themselves:
-
-- `AbortSignal` was sent;
-- timeout fired;
-- caller stopped awaiting the process;
-- `operation.completed` was appended;
-- effect was marked indeterminate;
-- no filesystem change was observed for a short interval;
-- watcher is quiet.
-
-### 2.5 Unknown quiescence is a Workspace execution barrier
-
-If quiescence cannot be proven:
+Therefore for `workspaceAccessClass=may_write`:
 
 ```text
-Workspace mutation quiescence = unknown
-→ no new ProgramAttempt
-→ no ordinary Host may_write capability
-→ no reconciliation result that depends on a stable Workspace observation
-→ no verification satisfaction/completion that requires a trusted execution base
+final absent resolution
+requires
+proven_quiescent first
 ```
 
-The Host may surface diagnostics/control to the Application.
+An intermediate diagnostic may suspect no effect, but canonical final absence used for recovery cannot precede quiescence.
 
-A safe recovery path may require:
+## 3.7 Reconciliation requires quiescence
 
-- terminating/containing the writer;
-- closing/restarting the responsible execution provider;
-- explicit user intervention;
-- or, in a future architecture, abandoning an isolated attempt Workspace.
-
-The system must not manufacture progress by simply releasing the mutex.
-
-### 2.6 Reconciliation cannot start while the original writer is still live/unknown
-
-Corrected reconciliation sequence:
+Correct sequence:
 
 ```text
-operation effect indeterminate
-→ first establish proven mutation quiescence
+effect indeterminate
+→ establish proven quiescence under historical contract
 → acquire reconciliation environmental authority
 → obtain reconciliation evidence/observations
-→ canonical resolution confirmed / absent / unresolved
+→ canonical resolution confirmed | absent | unresolved
 ```
 
-If quiescence remains unknown, reconciliation that relies on the same live Workspace remains blocked.
-
-This is stronger than merely preserving effect uncertainty and is necessary to make reconciliation evidence trustworthy.
-
-### 2.7 Host crash/restart does not automatically prove quiescence
-
-A Host process death releases in-memory locks, but it may not prove an external/detached child process stopped.
-
-Therefore Phase 1 startup must treat a surviving prior mutating operation as requiring both:
-
-```text
-effect reconciliation
-AND
-mutation-quiescence establishment
-```
-
-where the capability/provider model admits lingering execution.
-
-If the Host has a containment mechanism whose lifetime guarantees descendants die with the Host/provider, that guarantee can establish quiescence. Otherwise startup remains fail-closed until quiescence is proven or the Workspace is explicitly recovered by an authorized path.
-
-### 2.8 Corrected cancellation/timeout sequence
-
-Read the main study's cancellation section as:
-
-```text
-Program cancellation/attempt interruption wins
-→ prohibit new Program operations
-→ signal in-flight mutator cancellation
-→ persist terminal/indeterminate operation fact when known
-→ KEEP environmental mutation exclusion/barrier while writer quiescence is unknown
-→ once proven quiescent:
-     release live writer exclusion
-     retain effect-uncertainty barrier if effect remains indeterminate
-→ reconcile effect
-→ only after safe current-base reauthorization may a fresh attempt start
-```
-
-This yields two sequential barriers when needed:
-
-```text
-writer-liveness barrier
-then
-external-effect-certainty barrier
-```
-
-They must not be collapsed.
-
-### 2.9 Required negative proofs
-
-Add:
-
-```text
-timed-out mutator ignores AbortSignal
-→ operation effect becomes indeterminate
-→ child still can write
-→ no reconciliation / other Host mutation crosses child lifetime
-```
-
-```text
-operation marked indeterminate
-→ writer quiescence unknown
-→ Workspace does not become mutation-admissible merely because canonical uncertainty exists
-```
-
-```text
-writer later proven quiescent
-→ effect still indeterminate
-→ other ordinary mutation still blocked by effect-uncertainty policy until reconciliation
-```
-
-```text
-Host crashes with detached mutator possible
-→ reopen does not infer quiescence from Host death alone
-→ capability/provider containment proof or explicit recovery required
-```
-
-```text
-reconciliation begins only after quiescence proof
-→ reconciliation observation cannot be invalidated by the original Host-controlled writer continuing to execute
-```
-
-### 2.10 Consequence for the main study
-
-Any wording in the main study that allows environmental coordination to be released solely because an in-flight mutator has been durably classified `indeterminate` is superseded.
-
-The corrected invariant is:
-
-> **Effect uncertainty can be canonical while mutation liveness is still unsafe. Quiescence is a separate prerequisite for releasing environmental exclusion and for trustworthy reconciliation.**
+If quiescence remains unknown, a reconciliation result that depends on the same live Workspace is not trustworthy and remains blocked.
 
 ---
 
-## 3. Corrected consolidated execution sequence
+# 4. Unknown quiescence is durable canonical barrier state
 
-With both review corrections applied, the critical mutation path becomes:
+## 4.1 Why an in-memory coordinator is insufficient
+
+History:
 
 ```text
-Host-authorized capability binding
-→ determine request-time WorkspaceAccessClass
-→ acquire required Workspace coordinator reservation/sublease
-→ pre-observe exact current base
-→ canonical operation.requested persists WorkspaceAccessClass
+may_write O starts
+→ O has confirmed effect
+→ terminal effect fact persisted
+→ detached child can still write
+→ quiescence unknown
+→ Host crashes
+```
+
+If unknown quiescence exists only in an in-memory mutex, restart sees a terminal confirmed operation and may have neither a nonterminal-operation recovery case nor unresolved effect uncertainty to block on.
+
+The environmental exclusion would silently disappear.
+
+Therefore quiescence/barrier state must be reconstructible from canonical history.
+
+## 4.2 Corrected invariant
+
+> **For every `may_write` operation, canonical history makes mutation quiescence reconstructible. From the operation's environmental start until a canonical quiescence proof is admitted, replay treats that operation as an outstanding Workspace writer barrier regardless of whether execution outcome/effect status is already terminal.**
+
+## 4.3 Preferred event/projection shape
+
+The exact event name is open. Semantics can be equivalent to:
+
+```text
+operation.requested
+  persists WorkspaceAccessClass + execution/quiescence provenance
+
+operation.started for may_write
+  → derived quiescence status = unknown / writer barrier active
+
+operation.completed / interrupted / reconciliation facts
+  → update outcome/effect only
+  → DO NOT implicitly clear writer barrier
+
+operation.mutation_quiesced
+  → Host-owned monotonic proof under persisted historical contract
+  → derived quiescence status = proven_quiescent
+  → writer barrier clears
+```
+
+A normal capability adapter that proves quiescence at return may append the terminal fact and `operation.mutation_quiesced` in the same canonical batch.
+
+A timeout/cancel path that cannot prove quiescence omits the quiesced fact, even if it can append a terminal/indeterminate/confirmed effect fact.
+
+## 4.4 Quiescence fact is monotonic
+
+Once correctly proven for operation O:
+
+```text
+unknown → proven_quiescent
+```
+
+There is no transition back for the same historical writer. The proof means the old operation can no longer produce Workspace writes under the persisted containment contract.
+
+If a later new operation writes, it has a new `operationId` and its own quiescence state.
+
+## 4.5 Canonical proof contents
+
+A quiescence admission needs enough stable provenance to show what rule was used, for example:
+
+```ts
+interface MutationQuiescedPayload {
+  operationId: string;
+  proofKind:
+    | "operation_containment_ended"
+    | "host_provider_lifetime_ended"
+    | "external_recovery";
+  providerBindingRevision?: string;
+  providerGenerationId?: string;
+}
+```
+
+Exact fields are open. The Host must validate the proof against the **persisted request-time contract**, not current provider metadata.
+
+## 4.6 Restart barrier
+
+Before enabling ProgramAttempt dispatch, ordinary `may_write` capability admission, stable Workspace reconciliation, verification satisfaction, or completion:
+
+```text
+rebuild operation/quiescence projection
+→ find every post-baseline may_write operation that started and lacks canonical proven-quiescent fact
+→ attempt allowed provider-specific historical quiescence proof
+→ if proof succeeds, canonically record quiescence
+→ if proof cannot be established, keep Workspace fail-closed
+```
+
+This applies even when:
+
+```text
+execution outcome is terminal
+AND effectStatus = confirmed
+```
+
+Effect certainty does not clear the writer barrier.
+
+## 4.7 Host crash does not itself prove quiescence
+
+Whether Host/provider loss proves quiescence depends on the operation's persisted historical containment contract.
+
+```text
+persisted host_lifetime_containment
++ proof relevant old containment lifetime ended
+→ quiescence may be proven
+```
+
+```text
+persisted external_writer_may_survive
+→ Host death alone is insufficient
+→ explicit provider/external recovery evidence required
+```
+
+Do not inspect a replacement provider and apply its contract retroactively.
+
+## 4.8 Two barriers may remain after timeout
+
+A timed-out mutator can produce:
+
+```text
+Barrier A: writer-liveness/quiescence unknown
+Barrier B: effect certainty indeterminate
+```
+
+The safe order is:
+
+```text
+first prove writer quiescence
+→ then reconcile effect uncertainty
+→ then direct current observation/rebase
+→ then fresh ProgramAttempt
+```
+
+They are separate and both may need durable state.
+
+---
+
+# 5. Corrected mutation sequence
+
+With all review corrections applied:
+
+```text
+Host resolves capability binding
+→ determine WorkspaceAccessClass
+→ determine closed MutationContainmentContract
+→ capture provider/binding incarnation identity if historical recovery may address it
+→ acquire Workspace coordinator authority
+→ direct pre-observation
+→ canonical operation.requested persists:
+     operationId
+     WorkspaceAccessClass
+     operation-local execution/quiescence provenance
 → operation.started
+→ for may_write: canonical history now derives quiescence=unknown / writer barrier active
 → environmental execution
-→ establish execution outcome / effect status when possible
-→ establish whether mutation lifetime is proven quiescent
 
-if writer quiescence unknown:
-  persist available operation uncertainty
-  → keep Workspace mutation admission blocked
-  → do not reconcile against unstable Workspace
+when execution outcome/effect information becomes known:
+  persist operation outcome/effect facts as allowed
+  if effect first becomes confirmed and persisted class is may_write:
+     WorkspaceEffectGeneration advances exactly once
+  DO NOT clear writer barrier merely from terminal/effect state
 
-once writer proven quiescent:
+if historical contract + Host evidence prove writer quiescent:
+  canonically admit mutation-quiesced fact
+  → writer barrier clears
+
+if quiescence unknown:
+  no ordinary Host mutation
+  no stable reconciliation
+  no Program continuation/verification/completion that assumes trusted base
+
+once quiescent:
   if effect confirmed:
-    first confirmed transition for persisted may_write operation
-    → G advances exactly once
-    → complete post-observation required for same-attempt continuation
+     obtain complete post observation
+     → current-attempt continuation only if all Program/currentness predicates still hold
 
   if effect absent:
-    → G unchanged
-    → complete post-observation/currentness still required
+     G unchanged
+     → obtain complete current observation
 
   if effect indeterminate:
-    → G unchanged
-    → current attempt non-continuable
-    → reconciliation
+     reconcile
+     → confirmed: first confirmed transition advances G once
+     → absent: G unchanged
+     → unresolved: effect barrier remains
 
-reconciliation uses persisted historical WorkspaceAccessClass
-→ confirmed: first confirmed transition advances G exactly once
-→ absent: G unchanged
-→ unresolved: uncertainty remains
-```
-
-Replay reconstructs causal lineage from:
-
-```text
-canonical protocol baseline
-+ immutable operation.requested WorkspaceAccessClass
-+ canonical operation effect/reconciliation transitions
-```
-
-not from the current capability registry.
-
----
-
-## 4. Acceptance-criterion correction
-
-If these study conclusions are later consolidated, AC-10-06 and AC-10-09 need explicit proof of both corrections.
-
-### AC-10-06
-
-Prove:
-
-```text
-request-time workspaceAccessClass persisted
-→ provider replaced
-→ replay produces identical WorkspaceEffectGeneration
-```
-
-and:
-
-```text
-indeterminate effect
-!=
-proof executor stopped
-```
-
-### AC-10-09
-
-Prove:
-
-```text
-Host reopen with prior mutator that may still have a live external writer
-→ no mutation/reconciliation/scheduler admission
-→ quiescence established by capability/provider-specific proof
-→ then effect reconciliation/current observation
-→ then normal admission may resume
+reconciliation and replay use persisted historical operation semantics,
+not the current provider registry
 ```
 
 ---
 
-## 5. Status after correction
+# 6. Protocol baseline and legacy histories
 
-These corrections strengthen the original recommendation rather than changing its direction.
+The Phase 1 execution protocol still needs a deterministic activation origin because legacy operations lack the new request-time fields.
+
+Before baseline B0:
+
+```text
+recover existing canonical state
+→ deal with pre-existing mutation uncertainty under legacy recovery semantics
+→ establish that no pre-baseline Host-controlled writer remains capable of mutating the Workspace
+→ obtain complete current ExecutionObservationIdentity O0
+→ canonical B0
+→ G0 = 0
+```
+
+From B0 onward:
+
+```text
+every participating operation.requested persists WorkspaceAccessClass
+and required execution/quiescence provenance
+```
+
+Replay never manufactures those fields for older events from the current registry.
+
+If safe baseline activation cannot establish that no legacy writer remains live, Phase 1 execution-protocol activation fails closed rather than pretending B0 is stable.
+
+---
+
+# 7. Required negative proofs
+
+## 7.1 Historical classification replay
+
+```text
+O requested under provider P0
+workspaceAccessClass = none
+→ provider replaced by P1 where same tool name is may_write
+→ rebuild
+→ historical O remains none
+→ no false G advance
+```
+
+## 7.2 Historical containment replay
+
+```text
+O requested under P0
+mutationContainment = external_writer_may_survive
+→ Host crashes
+→ P1 says host_lifetime_containment
+→ restart
+→ P1 cannot prove old O quiescent merely by its own current contract
+```
+
+## 7.3 Normal atomic quiescence
+
+```text
+may_write O runs under operation_scoped_containment
+→ adapter proves all mutation-capable descendants ended
+→ terminal fact + mutation-quiesced admitted atomically
+→ writer barrier clears
+```
+
+## 7.4 Timeout ignores cancellation
+
+```text
+may_write O starts
+→ timeout
+→ child keeps writing
+→ terminal timed_out/indeterminate persisted
+→ no mutation-quiesced fact
+→ writer barrier survives
+→ no reconciliation/other Host mutation crosses child lifetime
+```
+
+## 7.5 Confirmed terminal before quiescence
+
+```text
+O effect confirmed
+→ G advances
+→ quiescence unknown
+→ Host crashes
+→ replay sees terminal confirmed + missing quiesced fact
+→ Workspace still blocked
+```
+
+This is the key proof that environmental safety does not vanish on restart.
+
+## 7.6 Absent cannot precede quiescence
+
+```text
+may_write O writer still possibly live
+→ attempted final absent resolution
+→ reject/defer until quiescence proven
+```
+
+## 7.7 Reconciliation after quiescence only
+
+```text
+O indeterminate
+→ writer quiescence unknown
+→ reconciliation request
+→ blocked
+→ quiescence later proven
+→ reconciliation may inspect stable Workspace
+```
+
+## 7.8 Host-lifetime containment proof
+
+```text
+O request persisted host_lifetime_containment + P0 identity
+→ Host/P0 lifetime ends
+→ recovery proves that historical containment lifetime ended
+→ append O mutation-quiesced idempotently
+→ replacement P1 semantics irrelevant to O
+```
+
+## 7.9 Detached writer survives Host
+
+```text
+O persisted external_writer_may_survive
+→ Host dies
+→ detached process still possible
+→ restart cannot infer quiescence
+→ Workspace remains fail-closed until external/provider proof
+```
+
+## 7.10 Duplicate quiescence admission
+
+```text
+same proof retried
+→ same operationId already proven quiescent
+→ no duplicate semantic transition
+→ WorkspaceEffectGeneration unaffected
+```
+
+---
+
+# 8. Acceptance-criterion consequences
+
+If these conclusions are later consolidated, existing AC families absorb them.
+
+## AC-10-06 — operation correlation / uncertainty / effect lineage
+
+Require proof that:
+
+```text
+request-time WorkspaceAccessClass is immutable canonical operation history
+provider replacement cannot alter generation rebuild
+first confirmed persisted may_write operation advances G exactly once
+quiescence state does not alter or duplicate G
+```
+
+Also keep explicit:
+
+```text
+indeterminate effect != proof writer stopped
+confirmed effect != proof writer stopped
+```
+
+## AC-10-09 — recovery barrier
+
+Require proof that:
+
+```text
+operation-local containment/provider provenance is replayable
+started may_write without quiesced fact is a durable writer barrier
+terminal confirmed may_write without quiesced fact is also a durable writer barrier
+restart applies the historical containment contract, not replacement-provider semantics
+unknown quiescence blocks mutation/reconciliation/scheduler admission
+quiescence proof is canonical/idempotent
+only after quiescence may effect reconciliation establish a stable current base
+```
+
+## AC-10-05 — scheduler/environmental coordination
+
+Require the Workspace coordinator to consult the rebuilt outstanding-writer barrier before granting ProgramAttempt reservations or mutation/reconciliation leases.
+
+---
+
+# 9. Status after review corrections
 
 The preferred architecture remains:
 
 ```text
-versioned complete execution observation
+versioned complete ExecutionObservationIdentity
 +
 Host Workspace mutation coordination
 +
 operation-derived WorkspaceEffectGeneration
 +
-fail-closed drift/uncertainty
+fail-closed drift/effect uncertainty
 +
-explicit rebase before fresh attempt
+explicit Application rebase before fresh attempt
 ```
 
-But two additional statements are now mandatory:
+Four additional statements are now mandatory:
 
-1. **the operation's Workspace classification is immutable canonical request history;**
-2. **effect uncertainty and mutator quiescence are separate barriers.**
+```text
+1. WorkspaceAccessClass is immutable request-time canonical operation history.
+
+2. Any provider/containment semantics used later to prove historical mutator
+   quiescence are immutable operation-local provenance; current provider
+   metadata cannot reinterpret an old operation.
+
+3. Effect certainty and mutation quiescence are separate state machines.
+
+4. Unknown mutation quiescence is a durable/rebuildable Workspace writer
+   barrier until a Host-validated canonical quiescence proof is admitted.
+```
+
+These corrections strengthen the original direction; they do not authorize implementation or make Phase 1.0 approved/frozen.
