@@ -7,15 +7,13 @@
 
 ## 1. Question
 
-The Program-creation study deliberately makes creation-time `PlanningObservationIdentity` / `Bplan` a **creation-to-first-execution bridge only**. That is correct: once a legitimate Program-correlated mutation changes the Workspace, comparing every later dispatch back to immutable creation-time state would stall normal execution.
+The Program-creation study deliberately makes creation-time `PlanningObservationIdentity` / `Bplan` a **creation-to-first-execution bridge only**. Once legitimate Program execution mutates the Workspace, comparing later dispatches back to immutable creation-time state would stall normal execution.
 
-That leaves a separate runtime contract question:
+The remaining question is:
 
-> **How does the Host decide that a ProgramAttempt, capability result, evidence admission, verification satisfaction, successor dispatch, and completion decision are fresh with respect to the current Workspace after execution has begun — while distinguishing known Host-mediated effects from unexpected out-of-band changes and preserving uncertainty across crash/recovery?**
+> **How does the Host decide that a ProgramAttempt, capability result, evidence admission, verification satisfaction, successor dispatch, and completion decision are fresh with respect to the current Workspace after execution begins — while distinguishing known Host-mediated effects from unexpected out-of-band changes and preserving uncertainty across crash/recovery?**
 
-This is not the same question as verification freshness. Verification freshness answers whether one obligation remains satisfied for its current subject generation. This study asks whether execution claims are being made against a Workspace state the Host can still treat as current enough for the relevant canonical cut.
-
-The study also asks what Phase 1 can **honestly guarantee** when a human editor or non-ALCODE process can modify the live repository without participating in Host admission.
+This is distinct from verification freshness. Verification freshness asks whether one obligation remains satisfied for its current `subjectGeneration`. Execution freshness asks whether an execution claim is being made against a Workspace state the Host can still treat as current enough for the relevant Host boundary.
 
 ---
 
@@ -23,48 +21,58 @@ The study also asks what Phase 1 can **honestly guarantee** when a human editor 
 
 ## 2. In scope
 
-This study covers execution freshness from first ProgramAttempt dispatch through later attempts and Program completion, including:
+This study covers:
 
-- the execution-state identity used at ProgramAttempt dispatch;
-- how legitimate Host-mediated mutating effects advance that identity;
-- how read-only and mutating capability results are tied to the current execution base;
-- out-of-band Workspace changes observed between Host decision boundaries;
-- interaction with `operationId`, ProgramState revision, ProgramAttemptId, verification `subjectGeneration`, and creation-time `PlanningObservationIdentity`;
-- indeterminate operation effects and reconciliation;
-- restart/replay requirements;
-- successor ProgramAttempt dispatch after earlier legitimate mutation;
+- execution-state identity at ProgramAttempt dispatch;
+- legitimate Host-mediated mutation progression;
+- read-only and mutating capability freshness;
+- out-of-band Workspace changes;
+- operation/effect uncertainty and reconciliation;
+- successor dispatch after legitimate mutation;
+- restart/replay;
 - foreground/non-Program Host-mediated mutations;
-- verification and Completion Oracle composition.
+- verification-freshness composition;
+- Completion Oracle composition.
 
 ## 3. Out of scope
 
 This study does not:
 
-- implement ProgramState or ProgramAttempt;
-- select an exact filesystem hashing implementation;
+- implement Phase 1;
+- select an exact hashing algorithm;
 - promise filesystem snapshot isolation;
-- claim that chokidar, Git, CodeIntelligence, or a filesystem watcher is canonical authority;
-- make arbitrary external processes obey the Host's Workspace lock or mutation barrier;
+- promote chokidar, Git, CodeIntelligence, or a watcher to canonical authority;
+- make arbitrary external writers participate in Host admission;
 - replace per-obligation verification freshness;
-- define the complete Program-creation planning-observation schema;
-- define the final Host-mediated mutation-barrier implementation;
-- amend the governing Phase 1.0 plan.
+- finalize the planning-observation schema;
+- finalize the Host-mediated mutation-barrier implementation;
+- amend the governing plan.
 
 ## 4. Honest guarantee boundary
 
-A live Workspace is not transactionally coupled to the canonical SQLite event store. A human editor can write after a Host observation and before the next filesystem operation. Therefore Phase 1 cannot honestly claim serializable filesystem transactions merely by introducing a generation counter or watcher.
+A live Workspace is not transactionally coupled to the SQLite event store. A human editor can write after a Host observation and before the next filesystem operation. Therefore neither a counter nor a watcher can provide serializable filesystem semantics.
 
 The strongest first-slice guarantee considered achievable without stronger isolation is:
 
-> **At every defined freshness-sensitive Host boundary, the Host revalidates canonical Program/Attempt currency and a bounded Host-observed execution base under Host-mediated mutation exclusion. Known Host-mediated mutation effects advance a durable causal lineage only through canonical operation/effect semantics. Unexpected observed divergence fails closed for the current ProgramAttempt. Indeterminate effects remain uncertainty and block dependent progress until reconciliation. This proves boundary-checked freshness and durable uncertainty handling; it does not prove that an arbitrary external writer could not race between two observations or during a capability's environmental execution.**
+> **At defined freshness-sensitive Host boundaries, the Host revalidates canonical Program/Attempt currency and a bounded Host-observed execution base under Host-mediated mutation coordination. Known Host-mediated mutation effects advance a durable causal lineage only through canonical operation/effect semantics. Unexpected observed divergence fails closed for the current ProgramAttempt. Indeterminate effects remain uncertainty and block dependent progress until reconciliation. This is boundary-checked freshness, not proof that an arbitrary external writer could not race between observations or during environmental execution.**
 
-If Phase 1 requires the stronger property:
+An additional limitation follows directly:
 
 ```text
-no external writer can race a ProgramAttempt mutation
+O0 observed
+→ external state changes O0 → O1 → O0 between checked cuts
+→ later observation again equals O0
 ```
 
-then a filesystem/repository isolation mechanism is required. No counter, watcher, or canonical event ordering can manufacture that property.
+A pure state-equality check can miss that transient ABA history. A watcher or provider monotonic revision may make such a history observable, but watcher silence is not proof. If correctness requires proving that **no intermediate external mutation occurred**, stronger isolation or a trustworthy monotonic Workspace-provider revision is required.
+
+If Phase 1 requires:
+
+```text
+no external writer can race Program execution
+```
+
+then an isolated/transactional Workspace provider is required. No canonical counter can manufacture that property over a shared live worktree.
 
 ---
 
@@ -72,61 +80,49 @@ then a filesystem/repository isolation mechanism is required. No counter, watche
 
 ## 5. Decision method
 
-For each alternative this study asks:
+For every alternative, ask:
 
 1. what fact is canonical;
 2. what is only an observation;
 3. what exact state a ProgramAttempt claims;
-4. how a legitimate mutating operation changes that state;
+4. how legitimate mutation changes that state;
 5. how unexpected change is detected;
-6. what happens when detection is incomplete or equivalence is unknown;
-7. what survives Host crash/restart;
-8. what happens when an external effect is `indeterminate`;
-9. whether replay reconstructs the same authority without current watcher memory;
-10. whether the design composes with verification freshness rather than replacing it;
-11. what guarantee remains impossible without stronger isolation.
+6. what happens when equivalence is unknown;
+7. what survives restart/replay;
+8. what happens under indeterminate effect;
+9. how verification freshness composes;
+10. what remains impossible without isolation.
 
-Correctness is a gate. Simplicity does not compensate for:
+Correctness is a gate. Reject designs that:
 
-- duplicated canonical authority;
-- stale-attempt admission;
-- treating an observation token as mutation authority;
-- losing effect uncertainty;
-- replay dependence on process-local counters;
-- automatically blessing unexplained Workspace drift;
-- making legitimate Program mutations look like stale external changes;
-- using creation-time `Bplan` as a perpetual runtime baseline.
+- duplicate canonical authority;
+- admit stale-attempt claims;
+- treat watcher state as mutation authority;
+- lose effect uncertainty;
+- depend on an in-memory counter for replay;
+- silently bless unexplained drift;
+- self-invalidate every legitimate Program mutation;
+- use creation-time `Bplan` as a perpetual runtime baseline.
 
 ---
 
 # Part III — Repository facts
 
-## 6. Program execution freshness is not implemented yet
+## 6. Phase 1 execution freshness is not implemented
 
-Phase 1.0 remains planning-only. Current runtime code has no ProgramState or ProgramAttempt execution-freshness implementation.
+ProgramState and ProgramAttempt remain planning concepts. Current code provides constraints and precedents, not a hidden implementation of this contract.
 
-The existing runtime nevertheless exposes important architectural facts and precedents that constrain a correct Phase 1 design.
+## 7. HostRuntime is Workspace-scoped
 
-## 7. One HostRuntime owns one locked Workspace runtime domain
+`packages/host-runtime/src/host.ts` builds one Host runtime around one `LockedWorkspaceStore`, one `CanonicalAdmissionQueue`, capability broker, session manager, context service, and durable-work dispatcher.
 
-`packages/host-runtime/src/host.ts` constructs one `HostRuntime` around one `LockedWorkspaceStore`, one `CanonicalAdmissionQueue`, one capability broker, one session manager, one context service, and one durable-work dispatcher.
+That makes the Workspace runtime/admission domain the natural grain for Workspace-wide causal effect lineage.
 
-This makes the Workspace runtime/admission domain the natural grain for a Workspace-scoped causal effect lineage.
+It does not make the Host the sole filesystem writer.
 
-It does **not** mean the Host controls every writer to the repository.
+## 8. Workspace lock is Host/process ownership, not file isolation
 
-## 8. The Workspace lock excludes another cooperating Host, not arbitrary editors
-
-`packages/workspace/src/lock.ts` implements a process-scoped lock for opening the ALCODE Workspace store. It is explicitly a Host/process ownership primitive.
-
-It does not lock repository files against:
-
-- an IDE;
-- a shell outside ALCODE;
-- another non-ALCODE process;
-- a human writing files directly.
-
-Therefore:
+`packages/workspace/src/lock.ts` is a process-scoped lock around ALCODE Workspace ownership/storage. It does not prevent an IDE, shell, human, or non-ALCODE process from changing repository files.
 
 ```text
 Workspace store ownership
@@ -134,75 +130,59 @@ Workspace store ownership
 filesystem isolation
 ```
 
-## 9. Canonical admission is a serialization point, not an execution-lifetime lock
+## 9. Canonical admission serializes append decisions, not environmental lifetimes
 
-`CanonicalAdmissionQueue` serializes canonical event-store append work for a Workspace.
+`CanonicalAdmissionQueue` is suitable for exact currentness checks, atomic event batches, stale/duplicate rejection, operation ownership, and terminal decisions.
 
-That is suitable for:
-
-- exact attempt/currentness checks;
-- atomic operation/attempt correlation;
-- atomic effect-lineage transitions;
-- stale/duplicate rejection;
-- terminal Program decisions.
-
-It is not sufficient to exclude an environmental mutation that executes outside the queue.
+It does not stop an already-started capability from mutating the environment outside the queue.
 
 ## 10. Capability execution crosses the canonical boundary
 
-Current `packages/host-runtime/src/capability-broker.ts` does roughly:
+Current `packages/host-runtime/src/capability-broker.ts` admits:
 
 ```text
-canonical admission:
-  operation.requested
-  operation.started
-  action.recorded
-
-then outside canonical admission:
-  capability.execute(...)
-
-then later canonical admission:
-  operation.completed / failed / rejected
-  evidence.recorded where applicable
+operation.requested
+operation.started
+action.recorded
 ```
 
-So:
+before calling `capability.execute(...)` outside canonical admission. Terminal operation/evidence facts are admitted later.
+
+Therefore:
 
 ```text
-operation.started became canonical
+canonical operation.started
+!=
+environmental effect completed
 ```
 
-is not equivalent to:
+A Workspace generation cannot safely advance merely because `operation.requested` or `operation.started` became canonical.
 
-```text
-the environmental effect is complete
-```
+## 11. Operation model already preserves effect uncertainty
 
-Any execution-freshness design that advances Workspace state at request/start merely because the event was admitted is unsound.
+`packages/storage/src/operations.ts` and ADR 0003 separate:
 
-## 11. Operation identity already separates lifecycle from effect certainty
-
-`packages/storage/src/operations.ts` and ADR 0003 model one durable root `operationId` with separate concepts for:
-
-- execution lifecycle;
-- effect status;
+- lifecycle/execution outcome;
+- external effect status;
 - reconciliation status.
 
-The accepted architectural rule from ADR 0003 is:
+A mutation can be `indeterminate` after crash/failure/cancellation/timeout. The accepted rule is effectively-once where supported, otherwise preserve uncertainty.
 
-> Effectively once where supported, otherwise detect and preserve uncertainty.
+Execution freshness must compose with this model rather than infer effect certainty from a later filesystem snapshot.
 
-A mutating operation interrupted by crash can have an **indeterminate** effect. That state is durable and must not be silently converted into either "nothing happened" or "the current Workspace is fresh".
+## 12. Current startup recovery **surfaces** uncertainty; it is not yet a runtime barrier
 
-## 12. Startup recovery already treats mutation uncertainty as a barrier
+Current Host startup invokes interrupted-operation recovery and returns pending operation IDs. Recovery records interrupted mutations as indeterminate/pending for reconciliation. Current startup/capability paths do **not** generally prevent all subsequent ordinary capability execution merely because such pending operations exist.
 
-Current Host startup enters recovery before ordinary new work. Surviving started/requested mutating operations are reconciled rather than blindly retried.
+So the repository provides precedent for **durably surfacing and preserving mutation uncertainty**, not an already-implemented global execution barrier.
 
-This is strong precedent for the Phase 1 rule:
+The Phase 1 rule proposed by this study is stronger and new:
 
-> unresolved external-effect uncertainty blocks creation of a new trusted execution base.
+> unresolved effect uncertainty must block creation/use of a trusted Program execution base where that uncertainty could make the claim unsafe.
 
-## 13. CodeIntelligence has an observation token, not Program authority
+That requires explicit Phase 1 admission/scheduling integration.
+
+## 13. CodeIntelligence token is observation infrastructure
 
 `packages/code-intelligence/src/types.ts` defines:
 
@@ -214,92 +194,73 @@ interface CodeRevisionToken {
 }
 ```
 
-`WorkspaceRevisionTracker` in `packages/code-intelligence/src/tracker.ts` maintains this token from:
+`WorkspaceRevisionTracker` advances observation generations from chokidar events and explicit Host mutation notifications and recomputes bounded baseline fingerprints for relevant epoch changes.
 
-- a bounded baseline fingerprint;
-- chokidar-observed changes;
-- explicit Host mutation notifications.
+Useful properties:
 
-Ordinary changes advance `generation`; relevant configuration/baseline changes can bump `epoch` and recompute the fingerprint.
+- cheap change signal;
+- observation token attached to CodeIntelligence results;
+- Host and watcher changes can invalidate caches.
 
-This is useful **observation infrastructure**.
+It is not canonical Program authority because it is currently in-memory/cache-oriented, does not encode operation/attempt causation, and cannot by itself distinguish current-attempt effects from external writes.
 
-It is not suitable as canonical Program execution authority as currently defined because:
+## 14. CodeIntelligence uses before/after observation, not retry
 
-- it is an in-memory tracker;
-- watcher events are observations, not canonical effect decisions;
-- it does not encode `operationId` or ProgramAttempt causation;
-- it cannot by itself distinguish a legitimate current-attempt write from an external write;
-- its counter is designed for CodeIntelligence invalidation/cache coherence;
-- restart/replay semantics are different from canonical Program semantics.
+`packages/code-intelligence/src/service.ts` captures the revision token before a provider query and again afterward. If the token changed, the returned observation is marked non-current/incomplete with a diagnostic. It does **not** automatically retry the provider query.
 
-## 14. CodeIntelligence already uses optimistic re-observation
+This is useful precedent for:
 
-`packages/code-intelligence/src/service.ts` captures a revision token before a provider query, queries the provider, captures the token again, and retries once if the token changed.
+```text
+observe before
+→ perform read/query
+→ observe after
+→ downgrade/reject freshness when state changed
+```
 
-That is useful precedent for a **boundary re-observation pattern**.
+It is not a precedent for automatic retry, and it does not provide durable ProgramAttempt authority.
 
-It does not solve durable ProgramAttempt authority because the retry rule is query-local and does not preserve canonical external-effect uncertainty.
+## 15. Durable work demonstrates replayable claims
 
-## 15. Durable work already demonstrates replayable claim/recovery patterns
+`packages/host-runtime/src/work-dispatcher.ts` records requested/claimed/interrupted/completed facts and rebuilds its ledger by replay.
 
-`packages/host-runtime/src/work-dispatcher.ts` records durable requested/claimed/interrupted/completed work states and reconstructs its ledger by replay.
+The relevant principle is that durable execution authority should be reconstructible rather than living only in process memory.
 
-This supports the broader Phase 1 principle that execution authority must be reconstructible from canonical history rather than surviving only in process memory.
+## 16. Creation-time Bplan has one finite role
 
-## 16. Creation-time Bplan has a deliberately finite role
+`docs/phase-1.0-program-creation-authorship-study.md` makes `Bplan` the semantic planning base and requires its last runtime equality/equivalence recheck at **first ProgramAttempt dispatch only**.
 
-`docs/phase-1.0-program-creation-authorship-study.md` now requires:
+After legitimate execution mutation, successor dispatch uses execution-aware current state.
 
-- complete bounded planning provenance;
-- exact Application acceptance;
-- final accepted planning-base recheck before creation;
-- one final creation-time `Bplan` recheck before **first ProgramAttempt dispatch only**.
+## 17. Verification freshness is separate
 
-After legitimate execution mutation, successor dispatch must use an execution-aware current base.
+The open-decisions study recommends per-obligation `subjectGeneration` with fail-closed unknown-impact invalidation. That remains the home for verification satisfaction currency.
 
-This study defines that successor-side model.
-
-## 17. Verification freshness is already a separate proposed contract
-
-`docs/phase-1.0-open-decisions-study.md` recommends per-obligation monotonic `subjectGeneration`:
-
-- satisfaction belongs to one obligation generation;
-- relevant mutation advances that obligation generation;
-- known disjoint mutation may preserve it;
-- unknown relevance fails closed.
-
-That remains the correct conceptual home for **verification satisfaction freshness**.
-
-Execution freshness needs a Workspace/Attempt-level mechanism, but it must not collapse into one global verification epoch.
+Execution freshness must not become a Program-global verification epoch.
 
 ---
 
 # Part IV — Identity separation
 
-## 18. The identities solve different problems
-
-The following must remain conceptually distinct:
+## 18. Distinct identities
 
 ```text
 PlanningObservationIdentity
-  creation-time semantic-planning provenance
-  bridge to first execution only
+  creation-time planning provenance; bridge to first execution
 
 ProgramState revision
-  canonical task-state revision / proposal currency
+  canonical Program semantic revision / proposal currency
 
 ProgramAttemptId
   fresh non-reusable execution claim
 
 operationId
-  durable external-operation/effect identity
+  durable operation/effect identity
 
 WorkspaceEffectGeneration
-  proposed durable ordinal of Host-known confirmed mutating effects
+  proposed replayable ordinal of Host-known confirmed mutating effects
 
 ExecutionObservationIdentity
-  proposed Host observation of live Workspace state at a freshness cut
+  proposed Host observation of live Workspace state at a checked cut
 
 verification subjectGeneration
   per-obligation satisfaction currency
@@ -308,40 +269,26 @@ CodeRevisionToken
   CodeIntelligence/cache observation token
 ```
 
-Similarity of names is not semantic equivalence.
+Do not collapse them merely because several contain counters or fingerprints.
 
-## 19. Why one universal generation is insufficient
+## 19. Why one counter cannot solve the problem
 
-A single global integer cannot simultaneously prove:
+One integer cannot simultaneously prove:
 
-- what bytes/state the Host observed;
-- why that state changed;
-- whether a change came from the current ProgramAttempt;
-- whether an interrupted tool may have partially changed the Workspace;
-- whether one verification obligation is stale;
-- whether an external editor changed the Workspace without a Host operation.
+- what state the Host observed;
+- why it changed;
+- whether a current Program operation caused a known effect;
+- whether a crashed operation partially ran;
+- whether an external writer changed state outside Host history;
+- which verification obligations are stale.
 
-A correct design therefore needs at least a causal dimension and an observation dimension.
+At least two axes are required: **causal Host-effect lineage** and **live-state observation**.
 
 ---
 
 # Part V — Required properties
 
-## 20. Exact current-attempt admission
-
-At every Program-originated operation request, evidence admission, verification admission, successor dispatch, and terminal completion cut, the Host revalidates:
-
-- exact current ProgramState revision where relevant;
-- exact current ProgramAttemptId where relevant;
-- Program lifecycle still permits the transition;
-- no winning cancellation/supersession transition;
-- no unresolved Workspace/effect uncertainty that makes the claim unsafe.
-
-These checks occur inside the canonical admission that admits the relevant fact when the decision is canonical.
-
-## 21. ProgramAttempt has an execution base
-
-Every ProgramAttempt begins with an exact Host-owned execution base.
+## 20. ProgramAttempt has an exact execution base
 
 Illustrative semantic shape:
 
@@ -352,974 +299,686 @@ interface ProgramAttemptExecutionBase {
 }
 ```
 
-The exact field spelling is open. The architectural requirement is not.
+The Host owns this base.
 
-The first ProgramAttempt derives this base only after the accepted creation-time planning base passes its first-dispatch recheck.
+The first attempt derives it after the accepted `Bplan` first-dispatch recheck. Successor attempts derive it from current execution-aware Workspace state.
 
-A successor ProgramAttempt derives its base from the current execution-aware Workspace state, not from creation-time `Bplan`.
+## 21. Initial and current expected base are distinct
 
-## 22. Attempt initial base and current expected base are distinct
+A ProgramAttempt can execute multiple correlated capability operations. A legitimate mutation must not automatically invalidate the same attempt that requested it.
 
-A ProgramAttempt may execute multiple correlated capability operations. A legitimate mutating operation must not automatically invalidate the very attempt that requested it.
+Therefore each attempt has:
 
-Therefore the attempt has:
+- immutable initial execution base;
+- Host-derived/rebuildable current expected base.
 
-```text
-initial execution base
-```
+The current expected base may advance only through Host-owned effect/drift/reconciliation transitions, never Agent assertion.
 
-and a Host-derived/rebuildable:
+## 22. WorkspaceEffectGeneration is causal, not a filesystem digest
 
-```text
-current expected execution base
-```
+Proposed meaning:
 
-that can advance through confirmed Program-correlated mutations.
+> a Workspace-scoped monotonic ordinal of Host-known **confirmed mutating effects**.
 
-The current expected base is never advanced by an Agent assertion.
+Rules:
 
-## 23. WorkspaceEffectGeneration is causal, not a filesystem hash
+- read-only operation: unchanged;
+- proven effect absent: unchanged;
+- confirmed Host mutating effect: advance exactly once;
+- indeterminate effect: do not manufacture a trusted next generation;
+- external drift: does not pretend to be a Host effect-generation transition.
 
-The proposed `WorkspaceEffectGeneration` means:
+A mutating operation that reports success but makes no observable byte difference may still conservatively count as one Host-confirmed effect transition if that is the selected operation semantics. The generation is lineage, not content equality.
 
-> a durable monotonic ordinal of Host-known **confirmed mutating effects** in this Workspace authority domain.
+## 23. ExecutionObservationIdentity is observation, not mutation authority
 
-It does **not** mean:
+It records a bounded Host-observed identity of live Workspace state at a defined cut.
 
-> exact current filesystem contents.
+The final representation must specify:
 
-A generation advances only through canonical operation/effect semantics, exactly once per qualifying confirmed effect transition.
-
-A read-only operation does not advance it.
-
-An operation proven to have no effect does not advance it.
-
-An indeterminate effect does not create a trusted next generation merely because the Host wants to continue.
-
-## 24. ExecutionObservationIdentity is observation, not canonical mutation authority
-
-The proposed `ExecutionObservationIdentity` records a bounded Host-observed identity of the live Workspace at a defined cut.
-
-Its exact representation may use Git/files/digests/CodeIntelligence components, but it must have explicit semantics for:
-
-- included state;
-- exclusions;
-- absence/directory/query semantics where relevant;
+- covered state and exclusions;
 - bounds;
 - equality/equivalence;
+- Git/untracked/ignored semantics;
+- directory/absence semantics where needed;
+- remote Workspace/provider semantics;
 - unknown/incomplete observation;
-- restart re-observation.
+- restart behavior.
 
-A canonical event may authoritatively record that:
+A canonical fact may authoritatively mean:
 
 ```text
 Host observed O at cut C
 ```
 
-without claiming that O is eternal canonical filesystem truth.
+without claiming O is eternal filesystem truth.
 
-## 25. Known Host effects advance causal lineage
+## 24. Exact current-attempt revalidation
 
-For a Program-correlated mutating operation:
+At Program-originated operation request, current evidence admission, verification admission, successor dispatch, and completion terminal cut, revalidate as applicable:
 
-```text
-request under exact current ProgramAttempt / expected base
-→ operation executes under Host-mediated mutation coordination
-→ terminal effect becomes confirmed
-→ Host obtains post-effect observation O1
-→ canonical admission records terminal/evidence as allowed
-  + advances WorkspaceEffectGeneration exactly once
-  + advances the attempt's expected execution base to (G+1, O1)
-```
+- exact ProgramState revision;
+- exact current ProgramAttemptId;
+- Program lifecycle;
+- cancellation/supersession;
+- current expected execution base;
+- no unresolved effect/drift condition that makes the claim unsafe.
 
-Where atomic batching is feasible, the effect-lineage advance and canonical terminal/evidence admission should share the same admission cut so replay cannot observe terminal success with the old causal generation.
+Canonical authorization is revalidated inside the same admission that admits the canonical fact.
 
-## 26. Effect-none leaves causal lineage unchanged
+## 25. Confirmed Host effects advance the causal base
 
-If reconciliation proves a mutating operation had no effect:
+For a current Program-correlated mutation:
 
 ```text
-G remains G
+A expects (G,O0)
+→ exact operation request admitted
+→ capability executes under Host-mediated mutation coordination
+→ effect confirmed
+→ Host observes O1
+→ terminal/evidence semantics admitted
+→ WorkspaceEffectGeneration G→G+1 exactly once
+→ A current expected base becomes (G+1,O1)
 ```
 
-A new observation may still be required before continuation, especially after crash, but the Host does not fabricate a mutating-effect generation.
+Where feasible, terminal effect recognition and generation advance belong to the same serialized semantic cut so replay cannot see a confirmed effect with the old causal lineage.
 
-## 27. Indeterminate effects block a trusted next base
+## 26. Effect absent leaves causal generation unchanged
 
-If a mutating operation is interrupted, times out, fails with uncertain side effects, or otherwise has `effectStatus = indeterminate`:
+Reconciliation proving the effect absent leaves `G` unchanged. A fresh observation may still be required after crash, but no false Host-effect generation is minted.
+
+## 27. Indeterminate effect blocks trusted base advancement
+
+If effect is indeterminate:
 
 ```text
-trusted expected base advancement is blocked
+no trusted (G+1,O1)
 ```
 
-The ProgramAttempt cannot simply capture the current Workspace and call it fresh, because doing so would erase the distinction between:
+Simply observing current files and adopting them would erase whether the operation ran, partially ran, or was mixed with unrelated change.
 
-- effect happened;
-- effect did not happen;
-- effect partially happened;
-- unrelated external change happened.
-
-Reconciliation must resolve the effect semantics or the uncertainty remains visible/blocking.
+Reconciliation must resolve the effect or uncertainty remains blocking for dependent execution/evidence/verification/completion.
 
 ## 28. Unexpected observed divergence fails closed
 
-At a freshness-sensitive boundary, if:
+At a checked boundary:
 
 ```text
-current Host observation != expected execution observation
+Ocurrent != Oexpected
 ```
 
-and the divergence is not already accounted for by the canonical transition being admitted, the current ProgramAttempt loses freshness for dependent canonical claims.
+with no corresponding canonical effect transition that accounts for the change means the current ProgramAttempt loses freshness for dependent claims.
 
-The Host records/reports the stale/drift condition through a durable/rebuildable mechanism before allowing successor execution.
-
-The exact event spelling is implementation design.
-
-## 29. Out-of-band drift is not converted into Host effect lineage
-
-An observed external edit does **not** automatically increment `WorkspaceEffectGeneration` as if the Host caused a confirmed operation.
-
-Otherwise the system would lose causation:
+Preferred first-slice rule:
 
 ```text
-external write
-→ watcher increments generation
-→ looks indistinguishable from confirmed Host effect
+unexpected drift
+→ do not silently replace Oexpected
+→ invalidate/supersede current attempt for dependent claims
+→ establish current Workspace state through explicit rebase/replan/revalidation
+→ mint a fresh ProgramAttemptId
 ```
 
-Instead:
+## 29. External drift does not increment Host effect lineage
 
-- Host-known effect lineage remains what canonical operation history says it is;
-- the observation mismatch marks the current expected base stale/uncertain;
-- a later rebase/replan/re-dispatch path establishes a new execution base from current observed Workspace state under explicit Host policy.
+If a human edits the Workspace, no Host operation suddenly exists. Therefore external drift cannot be represented as if it were a confirmed Host mutation merely to keep counters moving.
 
-## 30. Watchers are early-warning sensors, not proof of absence
+The two-axis base allows:
 
-A watcher/CodeIntelligence token may quickly signal drift and invalidate caches.
+```text
+same WorkspaceEffectGeneration G
++ different accepted observation Onew
+```
+
+after an explicit drift/rebase boundary.
+
+## 30. Watchers are sensors, not proof of absence
+
+Watcher/CodeIntelligence change signals can invalidate caches and trigger earlier checks.
 
 But:
 
 ```text
-no watcher event observed
+no watcher event
 ```
 
-is not sufficient proof that no external edit occurred.
+is not sufficient evidence that no external mutation occurred.
 
-Freshness-sensitive Host decisions require the selected direct observation/equivalence check, not watcher silence alone.
+Correctness-sensitive boundaries use the selected direct observation/equivalence mechanism.
 
-## 31. Host-mediated foreground mutation cannot race an active protected attempt
+## 31. Host-mediated mutators need environmental coordination
 
-A non-Program/foreground Host-mediated mutating capability must not cross the active ProgramAttempt's protected mutation lifetime merely because it has a different session or no ProgramState.
+A foreground/non-Program Host mutator must not cross a protected active ProgramAttempt mutation lifetime simply because it belongs to another session.
 
-The Host-mediated Workspace mutation barrier/scheduler integration must prevent that race or force an explicit serialized handoff.
+The mutation barrier/scheduler integration must serialize or reject/delay it.
 
-If such a mutation completes while a Program is parked, it advances Workspace effect lineage. A later ProgramAttempt starts from the newer current base after revalidation/replanning as required.
+This is additional Phase 1 work; canonical admission ordering alone is insufficient.
 
-## 32. External writers remain a residual race without isolation
+## 32. External writers remain outside Host exclusion
 
-A human/non-ALCODE writer can still change the Workspace:
+The hybrid can detect covered divergence at later boundaries and prevent stale canonical claims after detection. It cannot prove exclusive byte-level causation in a shared worktree.
 
-- immediately after a pre-operation observation;
-- while a shell command is executing;
-- immediately after a terminal observation.
-
-The hybrid model can:
-
-- detect many such changes at later boundaries;
-- fail closed when it observes unexplained divergence;
-- ensure stale evidence/verification/completion does not cross a later checked cut;
-- preserve indeterminate Host-operation effects.
-
-It cannot prove sole causation of every byte transition in a live shared worktree.
-
-That stronger property requires isolation.
-
-## 33. Restart reconstructs causal lineage, then re-observes live state
-
-A canonical causal generation can be rebuilt by replay.
-
-A live Workspace observation cannot be trusted merely because the prior process recorded one before crashing.
-
-On restart/resume:
+In particular:
 
 ```text
-replay canonical WorkspaceEffectGeneration and Program/operation state
-→ reconcile surviving uncertain operations
-→ obtain a fresh Host observation of live Workspace
-→ compare against the latest trusted expected base where meaningful
-→ mismatch/unknown => fail closed / stale / reconciliation path
-→ match => continuation may be admitted
+pre-check O0
+→ external edit
+→ tool system call
 ```
 
-No in-memory watcher generation is required to survive the crash as authority.
-
-## 34. Verification subjectGeneration stays separate
-
-A confirmed mutation can have two consequences:
+and:
 
 ```text
-WorkspaceEffectGeneration advances globally for the Workspace effect
+tool mutates
++ external editor mutates concurrently
+→ post-observation O1
 ```
 
-and, independently:
+remain possible without stronger isolation.
+
+## 33. Restart rebuilds causation, then re-observes state
+
+On restart:
 
 ```text
-relevant VerificationObligation.subjectGeneration advances
+replay Program/operation state and WorkspaceEffectGeneration
+→ surface/reconcile surviving indeterminate operations
+→ obtain fresh live Workspace observation
+→ compare to latest trusted expected observation where meaningful
+→ mismatch/unknown => fail closed for affected Program execution
 ```
 
-A known disjoint mutation may advance Workspace effect lineage while preserving a particular verification obligation's satisfaction.
+The replayable causal lineage does not depend on a watcher generation surviving process death.
 
-Unknown verification impact fails closed for that obligation even if execution freshness itself is current.
+## 34. Verification subjectGeneration stays distinct
 
-## 35. Completion requires both execution and verification currentness
+One confirmed Workspace effect can advance one global effect generation while affecting zero, one, or many verification obligations.
 
-The Completion Oracle must reject completion if any of the following is unresolved at the terminal cut:
+Known-disjoint effect:
 
-- current ProgramAttempt is stale/superseded where an active attempt claim matters;
-- active Program-originated operations remain unfinished;
-- any mutating operation has indeterminate/unreconciled effect relevant to the Program/Workspace safety contract;
-- observed Workspace drift has invalidated the trusted current execution base and has not been reconciled/rebased;
-- mandatory verification obligations are not satisfied for their current `subjectGeneration`;
-- ordinary existing completion invariants are false.
+```text
+WorkspaceEffectGeneration advances
+verification obligation may remain satisfied
+```
 
-Execution freshness is necessary but not sufficient for completion.
+Unknown/relevant effect:
+
+```text
+WorkspaceEffectGeneration advances
+verification subjectGeneration advances / old satisfaction invalidates
+```
+
+## 35. External drift also participates in verification invalidation
+
+Verification cannot invalidate only for Host-correlated mutations. If the Host observes external drift and later establishes a new accepted execution observation, verification impact must be evaluated against the drift too.
+
+Where exact changed scope is known, known-disjoint obligations may remain current. Where impact is unknown, fail-closed invalidation applies.
+
+The external drift does **not** need a fake WorkspaceEffectGeneration increment to invalidate verification; the obligation's own `subjectGeneration` is the verification authority.
+
+## 36. Completion requires execution and verification currentness
+
+The Completion Oracle rejects terminal completion while any of these remains unresolved:
+
+- stale/superseded current attempt claim where relevant;
+- active Program-originated operations;
+- indeterminate mutating effects that matter to Workspace/Program safety;
+- unresolved execution drift/rebase state;
+- mandatory verification not satisfied for current `subjectGeneration`;
+- ordinary existing completion invariants.
+
+Execution freshness is necessary, not sufficient.
 
 ---
 
-# Part VI — Freshness-sensitive boundaries
+# Part VI — Freshness-sensitive cuts
 
-## 36. First ProgramAttempt dispatch
-
-The first dispatch is the handoff from creation-time planning provenance to runtime execution state:
+## 37. First ProgramAttempt dispatch
 
 ```text
-accepted ProgramCreationDraft + Bplan
-→ Host-mediated mutation exclusion
-→ final first-dispatch recheck of accepted Bplan
-→ current Workspace observation O0
+accepted Program + Bplan
+→ acquire Host-mediated mutation coordination
+→ first-dispatch Bplan recheck
+→ observe live O0
 → current causal generation G0
-→ admit fresh ProgramAttemptId A0 with initial execution base (G0, O0)
+→ admit fresh ProgramAttempt A0 at (G0,O0)
 ```
 
-No later attempt compares directly to immutable `Bplan`.
+No successor attempt compares directly to `Bplan`.
 
-## 37. Program-originated mutating operation request
+## 38. Mutating operation request
 
-Before a mutating capability request becomes a Program-linked durable operation, canonical admission revalidates:
+Before Program-linked `operation.requested` is admitted:
 
-- exact current ProgramState revision;
-- exact current ProgramAttemptId;
-- expected causal generation;
-- attempt not already stale/cancelled/superseded;
+- exact current Program/Attempt ownership;
+- current expected causal generation/base;
 - no unresolved prior effect uncertainty;
-- Host-mediated mutation authority available.
+- Host-mediated mutation authority available;
+- direct observation check where required by the selected observation contract.
 
-A direct current observation check occurs at the defined pre-effect boundary when required by the selected observation model.
+## 39. Read-only result/evidence
 
-## 38. Read-only operation result/evidence
+A read-only operation never advances Workspace effect generation.
 
-A read-only operation cannot advance `WorkspaceEffectGeneration`.
+For Workspace-dependent reads:
 
-If the Workspace observation changes across the read and the result depends on mutable Workspace state, the result is not automatically current Program evidence. It must be tied to its observed revision/base or rejected/retried according to the final capability/evidence contract.
+```text
+observe before
+→ perform read
+→ observe after
+```
 
-This generalizes the optimistic re-observation pattern already used by CodeIntelligence.
+If the observation changed, the result is stale/non-current rather than unqualified Program evidence. The final policy may retry explicitly, but current CodeIntelligence does not provide a generic auto-retry precedent.
 
-## 39. Mutating operation terminal/evidence admission
-
-At terminal handling:
+## 40. Mutating terminal/evidence cut
 
 ### Confirmed effect
 
 ```text
-operation effect confirmed
-+ exact operation/attempt ownership still valid for admission semantics
-+ post-effect Workspace observation O1 available
-→ advance WorkspaceEffectGeneration exactly once
-→ update attempt expected base to (G+1, O1)
-→ admit qualifying evidence with exact operation lineage
+confirmed effect
++ durable operation ownership
++ post-effect observation
+→ generation advance exactly once
+→ attempt expected-base advance
+→ qualifying evidence admission subject to currentness rules
 ```
-
-Late evidence from a superseded attempt does not automatically become current Program evidence even if the Workspace observation happens to match.
 
 ### Effect absent
 
-```text
-no causal generation advance
-```
+No causal advance.
 
 ### Effect indeterminate
 
-```text
-no trusted next base
-→ reconciliation/uncertainty barrier
-```
+No trusted base advance; reconciliation barrier.
 
-## 40. Successor ProgramAttempt dispatch
-
-A successor dispatch uses the current execution-aware base:
+## 41. Successor ProgramAttempt dispatch
 
 ```text
-latest replayable WorkspaceEffectGeneration Gk
-+ fresh Host observation Ok
+latest replayable causal generation Gk
++ fresh current observation Ok
 + current ProgramState revision
-+ no unresolved effect/drift barrier
-→ fresh non-reusable ProgramAttemptId Ak
-```
-
-It does not require:
-
-```text
-Ok == creation-time Bplan
-```
-
-because earlier legitimate Program effects may have intentionally changed the Workspace.
-
-## 41. Verification satisfaction admission
-
-Verification admission revalidates:
-
-- exact obligation identity;
-- exact current `subjectGeneration`;
-- qualifying evidence provenance;
-- no unresolved effect/drift condition that makes the verification subject observation unsafe;
-- Program/Attempt currency rules applicable to the evidence source.
-
-Execution freshness does not replace the obligation generation.
-
-## 42. Completion Oracle cut
-
-Immediately before canonical terminal completion, the Host revalidates current Program/Attempt state, operation uncertainty, execution-drift status, and verification obligations inside the same serialized admission that can append `program.completed`.
-
-A prior successful Workspace observation is not permanent authorization for completion.
-
----
-
-# Part VII — Alternatives
-
-## 43. Alternative A — boundary re-observation only
-
-Model:
-
-```text
-capture Workspace fingerprint/token
-→ compare at important boundaries
-→ mismatch means stale
-```
-
-### Advantages
-
-- conceptually small;
-- can use existing observation infrastructure;
-- catches many external edits;
-- no new durable causal counter.
-
-### Correctness problems
-
-It does not explain **why** state changed.
-
-If a current ProgramAttempt legitimately writes files:
-
-```text
-O0 != O1
-```
-
-A pure comparison model either:
-
-- falsely declares the legitimate operation stale; or
-- simply adopts O1 as the new baseline.
-
-The latter is unsafe as an authority rule because it can silently bless unrelated/external changes mixed into the same interval.
-
-It also has weak crash/replay semantics if the authoritative baseline is only process memory.
-
-### Classification
-
-**Reject as the sole execution-authority model.**
-
-Retain re-observation as one component of the final design.
-
-## 44. Alternative B — canonical Workspace generation only
-
-Model:
-
-```text
-Host stores one durable Workspace generation G
-→ every Host mutating effect increments G
-→ ProgramAttempt claims G
-```
-
-### Advantages
-
-- durable and replayable;
-- cheap comparisons;
-- natural Workspace runtime grain;
-- clean successor-attempt sequencing.
-
-### Correctness problems
-
-Generation alone cannot detect an external writer that never participates in Host canonical admission.
-
-It also cannot distinguish:
-
-- confirmed effect;
-- absent effect;
-- indeterminate effect;
-
-unless it is explicitly composed with operation semantics.
-
-If it increments at `operation.requested` or `operation.started`, it lies about effects that may never occur.
-
-### Classification
-
-**Insufficient alone. Accommodate as the causal half of a stronger model.**
-
-## 45. Alternative C — attempt-scoped observation token only
-
-Model:
-
-```text
-ProgramAttempt starts with O0
-→ read-only operations require O == expected
-→ successful mutation captures O1 and replaces expected token
-```
-
-### Advantages
-
-- naturally scoped to one execution episode;
-- directly reflects observed Workspace state;
-- successor operations can use updated post-mutation observation.
-
-### Correctness problems
-
-It conflates observed state with causal authority.
-
-After a mutating interval, adopting O1 cannot tell whether O1 contains:
-
-- only the Program operation's effects;
-- an external edit;
-- partial effects after failure;
-- some combination.
-
-Crash/restart also requires a separate durable lineage or conservative re-observation policy.
-
-### Classification
-
-**Reject as the sole model.**
-
-Its "current expected observation" concept is useful inside the preferred hybrid.
-
-## 46. Alternative D — immutable filesystem/repository isolation per ProgramAttempt
-
-Model families include:
-
-- isolated Git worktree;
-- filesystem snapshot/overlay;
-- container/VM workspace;
-- transactional workspace provider with explicit commit/merge.
-
-### Advantages
-
-- strongest causal attribution;
-- external live-worktree edits do not race the isolated attempt;
-- clear pre/post state;
-- can make mutation windows much easier to reason about.
-
-### Costs and scope
-
-- major new Remote Workspace / filesystem semantics;
-- tool paths/processes must be forced into isolated view;
-- merge/commit/conflict semantics become part of Program authority;
-- platform-specific behavior;
-- shell/tool escape paths become correctness issues;
-- current Host architecture executes capabilities against the live Workspace.
-
-### Classification
-
-**Architecturally strongest; defer as a first-slice requirement unless Phase 1 explicitly demands continuous isolation from external writers.**
-
-The final first-slice contract should preserve a seam for stronger workspace providers later.
-
-## 47. Alternative E — watcher/token generation as authority
-
-Model:
-
-```text
-CodeRevisionToken / chokidar generation changes
-→ generation becomes Program freshness authority
-```
-
-### Advantages
-
-- infrastructure exists;
-- cheap early invalidation;
-- reacts to Host and external changes.
-
-### Correctness problems
-
-- watcher silence does not prove absence of change;
-- events can duplicate/coalesce/delay;
-- current token is in-memory/cache-oriented;
-- Host-known operation causation is not encoded;
-- restart/replay does not reconstruct the same semantic authority;
-- one watcher generation cannot preserve operation effect uncertainty.
-
-### Classification
-
-**Reject as canonical authority. Retain as advisory/early-warning observation infrastructure.**
-
-## 48. Alternative F — hybrid durable effect lineage + Host-observed execution base + fail-closed boundary checks
-
-Model:
-
-```text
-canonical WorkspaceEffectGeneration G
-  tracks only Host-known confirmed mutating effects
-
-ExecutionObservationIdentity O
-  records what the Host observed at a defined freshness cut
-
-ProgramAttempt current execution base = (G, O)
-```
-
-Known Program mutation:
-
-```text
-(G, O0)
-→ exact correlated operation request
-→ environmental execution under Host-mediated mutation coordination
-→ effect confirmed
-→ observe O1
-→ canonical terminal/evidence + G→G+1
-→ current expected base = (G+1, O1)
-```
-
-Unexpected observed change without a corresponding admitted effect transition:
-
-```text
-G unchanged
-+ Ocurrent != Oexpected
-→ out-of-band drift
-→ current attempt cannot continue dependent canonical claims
-```
-
-Indeterminate effect:
-
-```text
-operation effect indeterminate
-→ no trusted base advancement
-→ reconciliation barrier
-```
-
-Restart:
-
-```text
-replay G + Program/operation state
-→ reconcile uncertainty
-→ re-observe O
-→ match/equivalence required before continuation
-```
-
-### Advantages
-
-- causal and observational concepts remain separate;
-- replayable Host-known effect lineage;
-- legitimate Program mutations do not self-invalidate;
-- external drift can be detected without pretending the Host caused it;
-- operation uncertainty stays first-class;
-- successor dispatch naturally starts from latest current base;
-- CodeIntelligence/watcher infrastructure remains useful without becoming authority;
-- per-obligation verification freshness remains separate;
-- compatible with a future isolated Workspace provider.
-
-### Limitations
-
-- more state than a single counter;
-- exact observation schema still needs design;
-- exact mutation-barrier lifetime still needs design;
-- arbitrary external writes can still race between observations;
-- during an arbitrary shell mutation, the Host cannot generally prove that every observed byte transition was caused solely by that operation;
-- stronger continuous causality requires isolation.
-
-### Classification
-
-**Preferred for Phase 1.0, with an explicitly boundary-checked rather than snapshot-isolation guarantee.**
-
----
-
-# Part VIII — Adversarial histories
-
-## 49. First attempt, unchanged Workspace
-
-```text
-accepted Bplan
-→ final first-dispatch recheck matches
-→ observe O0
-→ current causal generation G0
-→ admit A0 at (G0, O0)
-```
-
-Normal result: A0 is current.
-
-## 50. External edit before first dispatch
-
-```text
-Program created from Bplan
-→ external editor changes dependency
-→ first-dispatch recheck differs
-```
-
-Required result:
-
-```text
-no ProgramAttempt dispatch
-```
-
-Creation remains canonical semantic authorization; it is not erased. The Program needs stale/replan/re-authorization handling according to final lifecycle policy.
-
-## 51. Legitimate current-attempt mutation
-
-```text
-A0 at (G0,O0)
-→ A0 requests mutating operation M
-→ exact A0/current-base admission succeeds
-→ M succeeds, effect confirmed
-→ Host observes O1
-→ canonical terminal + evidence + G0→G1
-→ A0 expected base becomes (G1,O1)
-```
-
-Required result:
-
-- A0 is not stale merely because its own authorized mutation changed the Workspace;
-- a later operation in A0 uses `(G1,O1)`;
-- a successor attempt starts from current execution-aware state rather than `Bplan`.
-
-## 52. Read-only operation races external edit
-
-```text
-A0 expects (G0,O0)
-→ read starts
-→ external editor changes Workspace
-→ read completes
-→ terminal freshness observation differs
-```
-
-Required result:
-
-- result is not admitted as unqualified current Program evidence;
-- retry/re-read may occur only under the final bounded policy;
-- no causal generation is advanced because there was no Host mutating effect.
-
-## 53. Host foreground mutator tries to race active ProgramAttempt
-
-```text
-A0 active
-→ foreground session requests Host-mediated mutation F
-```
-
-Preferred result:
-
-```text
-F cannot cross A0's protected mutation authority
-```
-
-It is queued/rejected/delayed according to final mutation-barrier policy.
-
-The system should not rely on detecting the damage after both execute concurrently.
-
-## 54. Host foreground mutation while Program is parked
-
-```text
-Program P exists, no active ProgramAttempt
-→ foreground Host mutation F executes
-→ F effect confirmed
-→ WorkspaceEffectGeneration G→G+1
-```
-
-Later P resume:
-
-```text
-fresh observation + current Program revision
-→ new ProgramAttempt uses current G+1 execution base
-```
-
-P does not compare back to immutable creation `Bplan` as a perpetual equality requirement.
-
-Whether P needs semantic replanning depends on what changed and the final Program policy; freshness alone does not answer objective adequacy.
-
-## 55. External edit while Program is parked
-
-```text
-P parked at last expected observation O0
-→ external process changes Workspace
-→ no Host operation advances G
-→ P later resumes
-→ Host re-observes O1 != O0
-```
-
-Required result:
-
-- do not silently resume under old execution assumptions;
-- current/previous attempt claim is stale;
-- Host must rebase/replan/revalidate before successor execution.
-
-## 56. Crash after mutation effect, before terminal append
-
-```text
-A0 requests M
-→ operation.started canonical
-→ M changes Workspace
-→ Host crashes before operation.completed / generation advance
-```
-
-On restart:
-
-- operation is `indeterminate` under ADR 0003;
-- replay still shows old trusted `WorkspaceEffectGeneration`;
-- current live observation may differ;
-- Host must not simply increment G because files differ;
-- Host must not simply adopt current observation and call the attempt fresh;
-- reconciliation decides whether effect is confirmed/absent/remaining indeterminate.
-
-If reconciliation confirms effect:
-
-```text
-advance effect lineage exactly once through reconciliation semantics
-→ obtain fresh observation
-→ establish a new trusted execution base before continuation
-```
-
-If unresolved:
-
-```text
-no successor dependent execution/completion
-```
-
-## 57. Failed command with partial side effect
-
-```text
-shell command changes file A
-→ later subcommand fails
-→ process exits non-zero
-```
-
-ADR 0003 says failure does not prove absence of effect.
-
-Required result:
-
-```text
-effect indeterminate unless tool-specific evidence resolves it
-→ no trusted execution-base advance
-→ reconciliation required
-```
-
-## 58. Duplicate watcher events for one Host mutation
-
-```text
-Host operation M confirmed once
-→ filesystem watcher emits multiple events
-```
-
-Required result:
-
-- `WorkspaceEffectGeneration` advances once because canonical operation/effect identity says one confirmed effect transition;
-- watcher duplicates may invalidate observation caches but do not mint extra canonical effect generations.
-
-## 59. Missed watcher event for external edit
-
-```text
-external edit occurs
-→ watcher misses/coalesces event
-→ later freshness-sensitive direct observation detects mismatch
-```
-
-Required result:
-
-- mismatch still fails closed;
-- watcher silence was never authority.
-
-If the selected direct observation itself does not cover the changed state, the contract must admit that limitation or expand the observation model. It cannot claim detection it cannot prove.
-
-## 60. External edit between pre-operation check and system call
-
-```text
-Host observes expected O0
-→ external writer changes file
-→ mutating capability starts milliseconds later
-```
-
-This race is possible in a shared live Workspace.
-
-The hybrid design does not claim otherwise.
-
-Later observation/verification may detect resulting divergence, but **pre-operation equality is not filesystem isolation**.
-
-If the required correctness property is to exclude this race entirely, Alternative D or equivalent stronger Workspace provider semantics are necessary.
-
-## 61. External edit during successful shell mutation
-
-```text
-A0 starts shell mutation M
-→ external editor also writes during M
-→ M exits successfully
-→ Host observes O1
-```
-
-The Host knows M reported a confirmed effect under current operation semantics. It does not generally know that every O0→O1 byte difference was caused solely by M.
-
-Required Phase 1 interpretation:
-
-- advance Host effect lineage for M exactly once if its effect status is confirmed;
-- O1 is the new Host-observed post-effect state;
-- do not claim exclusive byte-level causation;
-- later verification must validate the actual current subject state;
-- watcher/conflict signals may cause a stricter fail-closed classification if the final capability policy can identify a conflicting external write;
-- continuous sole-causation requires stronger isolation.
-
-## 62. External edit immediately after terminal observation
-
-```text
-M completes
-→ Host observes O1
-→ canonical terminal/effect-generation transition commits
-→ external editor writes O2 immediately afterward
-```
-
-The canonical record remains truthful:
-
-```text
-Host observed O1 at that cut
-```
-
-It does not claim O1 remained current forever.
-
-At the next freshness-sensitive boundary, direct re-observation detects O2 if covered by the observation model and fails closed/rebases accordingly.
-
-## 63. Successor attempt after legitimate mutation
-
-```text
-A0 produced confirmed mutation
-→ G0→G1, O1 current
-→ A0 ends
-→ scheduler selects next ready work
-→ successor A1 dispatches
-```
-
-Required base:
-
-```text
-A1 starts from current (G1,O1-or-fresh-equivalent)
++ no unresolved drift/effect barrier
+→ new ProgramAttempt Ak
 ```
 
 Not:
 
 ```text
-O == creation-time Bplan
+Ok == immutable creation-time Bplan
 ```
 
-## 64. Superseded attempt returns late after newer effect generation
+## 42. Verification satisfaction cut
+
+Revalidate:
+
+- exact obligation;
+- exact current `subjectGeneration`;
+- qualifying evidence provenance;
+- no unresolved execution drift/effect uncertainty that invalidates the observed verification subject;
+- applicable ProgramAttempt currency.
+
+## 43. Completion terminal cut
+
+Preliminary completion evaluation cannot authorize later completion. The final serialized cut revalidates Program/Attempt state, operations, drift/effect uncertainty, and verification currentness before `program.completed` can win.
+
+---
+
+# Part VII — Alternatives
+
+## 44. Alternative A — boundary re-observation only
+
+```text
+capture observation O
+→ compare at boundaries
+```
+
+**Pros:** small, detects many external changes, reuses observation infrastructure.
+
+**Failure:** no causal explanation. A legitimate mutation changes O. Either it self-invalidates or the Host silently adopts the new O, which can also bless unrelated change. Crash/replay authority is weak unless separately made durable.
+
+**Classification:** reject as sole authority; retain re-observation as a component.
+
+## 45. Alternative B — canonical Workspace generation only
+
+```text
+Host-confirmed mutation → G++
+ProgramAttempt claims G
+```
+
+**Pros:** durable, replayable, cheap, correct Workspace grain.
+
+**Failure:** external writers do not participate in canonical admission, so G alone cannot detect them. It also requires operation effect certainty; increment-at-request/start is unsound.
+
+**Classification:** insufficient alone; retain as causal half.
+
+## 46. Alternative C — attempt observation token only
+
+```text
+attempt starts O0
+→ successful mutation captures O1 as new expected token
+```
+
+**Pros:** directly represents observed state and in-attempt progression.
+
+**Failure:** adopting O1 after a mutation does not tell whether O1 contains only the intended effect, a concurrent external edit, partial effect, or a mixture. Restart also needs separate durable semantics.
+
+**Classification:** reject alone; retain expected-observation concept.
+
+## 47. Alternative D — isolated Workspace per ProgramAttempt
+
+Families:
+
+- isolated Git worktree;
+- filesystem snapshot/overlay;
+- container/VM workspace;
+- transactional remote Workspace provider.
+
+**Pros:** strongest causal attribution; live-worktree external edits cannot race the isolated attempt.
+
+**Costs:** new workspace/merge/conflict semantics, tool containment, platform/provider complexity, shell escape considerations, substantial first-slice scope.
+
+**Classification:** strongest architecture for continuous isolation; defer unless Phase 1 explicitly requires that stronger guarantee.
+
+## 48. Alternative E — watcher/CodeRevisionToken as authority
+
+**Pros:** existing low-cost change signal.
+
+**Failure:** watcher silence is not proof; events can coalesce/delay/duplicate; current token is in-memory/cache-oriented; no operation causation or durable effect uncertainty.
+
+**Classification:** reject as authority; keep as sensor/cache invalidator.
+
+## 49. Alternative F — hybrid durable effect lineage + observed execution base
+
+```text
+WorkspaceEffectGeneration G
+  = canonical Host-known confirmed effect lineage
+
+ExecutionObservationIdentity O
+  = Host-observed current Workspace state at checked cut
+
+ProgramAttemptExecutionBase = (G,O)
+```
+
+Confirmed current-attempt mutation:
+
+```text
+(G,O0)
+→ correlated operation
+→ effect confirmed
+→ observe O1
+→ G→G+1 exactly once
+→ expected base (G+1,O1)
+```
+
+Unexpected observation mismatch:
+
+```text
+G unchanged
++ Ocurrent != Oexpected
+→ drift
+→ current attempt cannot silently continue dependent claims
+```
+
+Indeterminate effect:
+
+```text
+no trusted next base
+→ reconciliation
+```
+
+**Pros:** separates causation and observation, replayable effect lineage, legitimate mutations do not self-invalidate, external drift remains visible, uncertainty preserved, successor dispatch natural, verification freshness remains separate, future isolation compatible.
+
+**Limitations:** more state; observation schema and barrier still need design; external shared-worktree races remain possible between checks.
+
+**Classification:** **preferred for Phase 1 if the intended guarantee is boundary-checked freshness rather than continuous isolation.**
+
+---
+
+# Part VIII — Adversarial histories
+
+## 50. First attempt unchanged
+
+```text
+Bplan recheck matches
+→ observe O0 at G0
+→ A0 starts (G0,O0)
+```
+
+Expected: current.
+
+## 51. External edit before first dispatch
+
+```text
+Program created
+→ external edit
+→ first-dispatch Bplan recheck mismatches
+```
+
+Expected: no attempt dispatch. Program creation remains canonical semantic authorization; lifecycle/replan policy handles staleness.
+
+## 52. Legitimate current-attempt mutation
+
+```text
+A0 (G0,O0)
+→ M requested under exact A0
+→ M effect confirmed
+→ observe O1
+→ G0→G1 exactly once
+→ A0 expected base (G1,O1)
+```
+
+Expected: A0 is not stale because its own authorized effect changed the Workspace.
+
+## 53. Read races external edit
+
+```text
+read begins at O0
+→ external edit
+→ read returns
+→ post-read observation != O0
+```
+
+Expected: read result non-current/rejected for current Program evidence; no causal generation advance.
+
+## 54. External ABA between checked cuts
+
+```text
+checked O0
+→ external edit O0→O1
+→ external revert O1→O0
+→ next checked observation equals O0
+```
+
+Expected statement: the boundary-only equality model may not detect this history. It must not claim that no intervening mutation occurred. A provider monotonic revision may detect it if trustworthy; otherwise only isolation can prove continuous non-interference.
+
+## 55. Foreground Host mutation races active attempt
+
+Preferred result: Host-mediated environmental mutation coordinator prevents the foreground mutator from crossing the protected ProgramAttempt mutation lifetime. Do not rely on detecting the race afterward.
+
+## 56. Host mutation while Program parked
+
+```text
+no active ProgramAttempt
+→ foreground Host mutation confirmed
+→ G→G+1
+→ later Program resume observes current O
+→ successor attempt starts from current (G+1,O)
+```
+
+Whether semantic replanning is necessary depends on impact; freshness alone does not rewrite Program semantics.
+
+## 57. External mutation while Program parked
+
+```text
+old expected O0
+→ Host offline/Program parked
+→ external edit
+→ resume observation O1 != O0
+```
+
+Expected: no silent resume under old attempt assumptions; explicit rebase/replan/revalidation before fresh attempt.
+
+## 58. Crash after effect before terminal append
+
+```text
+operation.started canonical
+→ mutation may occur
+→ crash before terminal/generation advance
+```
+
+Restart:
+
+- operation becomes/surfaces indeterminate under existing recovery semantics;
+- replay still has old trusted G;
+- live observation may differ;
+- do not infer `G+1` merely from changed files;
+- reconcile effect.
+
+Confirmed reconciliation: advance lineage exactly once and obtain fresh observation before dependent continuation.
+
+Absent reconciliation: G unchanged.
+
+Unresolved: block dependent Program execution/completion under final Phase 1 rules.
+
+## 59. Failed shell with partial effect
+
+Failure does not prove effect absent. Preserve `indeterminate` until tool-specific reconciliation/user resolution. Do not adopt current files as a trusted continuation base just to make progress.
+
+## 60. Duplicate watcher events
+
+One Host operation can produce many watcher notifications. `WorkspaceEffectGeneration` advances once because `operationId`/effect transition is the causal authority.
+
+## 61. Missed watcher event
+
+A later direct covered observation can still detect mismatch. Watcher silence was never sufficient proof.
+
+If the direct observation model excludes the changed state, the contract must admit that coverage limit rather than claiming detection.
+
+## 62. External edit between pre-check and tool call
+
+Possible in shared live Workspace. The hybrid does not claim exclusion. Later checks may detect consequences, but pre-check equality is not transaction isolation.
+
+## 63. External edit during successful mutator
+
+```text
+M mutates
++ external editor mutates concurrently
+→ M reports success
+→ Host observes O1
+```
+
+The Host may know M has a confirmed effect under operation semantics. It generally cannot prove every O0→O1 byte transition came solely from M.
+
+Required wording:
+
+- advance M's Host effect lineage once if effect confirmed;
+- O1 is post-effect observation, not exclusive-causation proof;
+- verification evaluates actual current subject state;
+- stronger sole-causation guarantee requires isolation.
+
+## 64. External edit immediately after terminal observation
+
+```text
+Host observes O1
+→ terminal/generation cut records that observation/effect
+→ external edit O2
+```
+
+The record is truthful that O1 was observed at the cut. It does not grant eternal freshness. Next checked boundary re-observes.
+
+## 65. Successor after legitimate mutation
+
+```text
+A0 effect advances (G0,O0)→(G1,O1)
+→ A0 ends
+→ A1 dispatches from current (G1,O1-or-equivalent)
+```
+
+Never compare A1 back to creation `Bplan` as a perpetual requirement.
+
+## 66. Late superseded-attempt effect
 
 ```text
 A0 superseded
-→ A1 becomes current at later execution base
-→ late A0 operation/result arrives
+→ A1 current
+→ late A0 operation effect/result arrives
 ```
 
-Required result:
+Separate:
 
-- late A0 result cannot become current Program evidence merely because its observation matches some current files;
-- exact immutable operation→attempt ownership exposes the stale source;
-- any real external effect that occurred remains a durable operation fact and may still influence Workspace causal/reconciliation state;
-- stale Program authority and real external effect are separate concepts.
+- real external effect: preserve/reconcile and advance Workspace lineage if confirmed;
+- stale Program authority: late A0 evidence does not become current merely because files happen to match.
 
-## 65. Verification after disjoint confirmed mutation
+## 67. Disjoint confirmed mutation after verification
 
 ```text
-obligation V satisfied at subjectGeneration 4
-→ Host mutation M confirmed
-→ WorkspaceEffectGeneration 9→10
-→ M proven disjoint from V's subject
+V satisfied at subjectGeneration 4
+→ Workspace Host effect G9→G10
+→ mutation proven disjoint from V
 ```
 
-Required result:
+Expected: execution lineage advances; V may remain satisfied.
 
-- execution base advances to generation 10;
-- V may remain satisfied at subjectGeneration 4 if disjointness is deterministically established;
-- no global "all verification stale because Workspace generation changed" rule.
+## 68. Unknown-impact confirmed mutation
 
-## 66. Verification after unknown-impact mutation
+Expected: execution lineage advances; affected/unknown obligation generation advances fail-closed.
+
+## 69. External drift after verification
 
 ```text
-Workspace effect confirmed
-→ impact on V cannot be proved disjoint
+V satisfied
+→ external drift observed
+→ Host establishes new accepted execution observation
 ```
 
-Required result:
+Expected: evaluate verification impact independently. Known disjoint may preserve; unknown/relevant invalidates. Do not invent a Host effect generation solely to trigger verification invalidation.
 
-- Workspace effect lineage advances;
-- V's `subjectGeneration` advances / prior satisfaction invalidates under fail-closed verification policy.
-
-## 67. Completion races unexpected drift
+## 70. Completion races drift
 
 ```text
-Completion Oracle preliminary evaluation says complete
-→ external edit occurs
-→ terminal admission later executes
+preliminary complete
+→ drift/effect uncertainty appears
+→ terminal admission runs
 ```
 
-If the final completion contract requires a Workspace freshness observation at terminal cut, the terminal admission must revalidate it there; a stale earlier snapshot cannot authorize `program.completed`.
+Expected: terminal revalidation rejects completion if the checked current predicates are no longer true.
 
-Even then, an external write can occur after the terminal observation/commit unless stronger isolation is used. Program completion therefore certifies the Host's terminal canonical predicates and observation at the cut, not eternal filesystem immutability after completion.
+An external write after the final terminal observation/commit remains outside any non-isolated guarantee.
 
-## 68. Host restart with no uncertain operation but changed live Workspace
+## 71. Restart after offline edit
 
 ```text
-last canonical trusted base = (G,O0)
-→ Host shuts down cleanly
-→ human edits repository while Host is offline
-→ Host restarts
+last trusted (G,O0)
+→ clean shutdown
+→ human edits while Host absent
+→ restart
+→ replay G
+→ observe O1 != O0
 ```
 
-Required result:
-
-```text
-replay G
-→ fresh observation O1
-→ O1 != O0
-→ parked/current Program execution assumptions are stale
-→ no silent continuation under old base
-```
-
-No watcher history during downtime is required to detect the mismatch if the direct observation model covers the change.
+Expected: do not resume old execution assumptions; no watcher history during downtime is required if the direct observation covers the change.
 
 ---
 
 # Part IX — Preferred semantic model
 
-## 69. WorkspaceEffectGeneration
-
-Illustrative semantic definition:
-
-```ts
-type WorkspaceEffectGeneration = number;
-```
+## 72. WorkspaceEffectGeneration
 
 Required properties:
 
-1. Workspace-scoped within one canonical admission domain;
+1. Workspace-scoped;
 2. monotonic;
-3. replayable from canonical events;
-4. advances exactly once for each qualifying Host-known confirmed mutating effect;
-5. does not advance for reads;
-6. does not advance for proven effect-absent outcomes;
-7. does not silently advance across indeterminate effects;
-8. external drift does not masquerade as a Host effect-generation transition.
+3. replayable;
+4. advances exactly once per qualifying Host-known confirmed mutating effect;
+5. unchanged for reads/effect-absent;
+6. not silently advanced across indeterminate effect;
+7. not advanced merely because external drift was observed.
 
-The exact initial value and event representation are implementation details.
+Exact initial value/event spelling is implementation detail.
 
-## 70. ExecutionObservationIdentity
+## 73. ExecutionObservationIdentity
 
-Illustrative opaque shape:
+Opaque conceptual shape:
 
 ```ts
 interface ExecutionObservationIdentity {
@@ -1328,21 +987,11 @@ interface ExecutionObservationIdentity {
 }
 ```
 
-The actual model may be richer. The architectural requirement is a bounded Host-observed identity with deterministic equality/equivalence semantics appropriate to the Workspace provider.
+Possible sources include Git/worktree state, bounded filesystem digests, CodeIntelligence observations, or remote Workspace provider revision IDs. This study promotes none specifically.
 
-Potential sources may include:
+The selected representation must have explicit coverage/equivalence semantics.
 
-- Git HEAD/index/worktree information;
-- bounded filesystem digests;
-- CodeIntelligence revision observations;
-- remote-workspace provider revision IDs;
-- provider-specific snapshot IDs.
-
-No single source is promoted by this study.
-
-## 71. ProgramAttemptExecutionBase
-
-Illustrative shape:
+## 74. ProgramAttemptExecutionBase
 
 ```ts
 interface ProgramAttemptExecutionBase {
@@ -1351,352 +1000,293 @@ interface ProgramAttemptExecutionBase {
 }
 ```
 
-The Host owns it.
+The Agent may receive this through AttemptProjection but cannot author/advance it.
 
-The Agent receives a projection sufficient to know the attempt/currentness context but cannot assert or advance the base.
+## 75. Attempt expected-base reducer
 
-## 72. Attempt expected-base projection
-
-The Host derives a current expected base for the active attempt from:
+Host derives current expected base from:
 
 ```text
-program.attempt.started(initial base)
-+ exact correlated confirmed effect transitions
-+ any explicit stale/drift/reconciliation transitions
+attempt initial base
++ correlated confirmed effect transitions
++ drift/stale transitions
++ reconciliation outcomes
 ```
 
-It is rebuildable.
+It is rebuildable from canonical history plus explicitly recorded observations; it is not an Agent-maintained mutable field.
 
-The Agent does not mutate this projection directly.
+## 76. Operation ownership remains root-causal
 
-## 73. Operation ownership
+`operation.requested` is the natural durable root binding operation to Program/ProgramAttempt. Later lifecycle/evidence facts inherit through immutable `operationId`.
 
-The open-decisions study's root ownership recommendation composes naturally:
+The exact final Phase 1 schema may copy identifiers into projections, but should not create two independent ownership authorities.
+
+## 77. Generation transition is idempotent by operation effect identity
+
+A confirmed effect transition must not increment twice under retry/recovery. `operationId` plus the canonical effect/reconciliation transition is the natural idempotency anchor.
+
+## 78. Drift fact means observation, not actor attribution
+
+When the Host records drift, its authoritative meaning is:
 
 ```text
-operation.requested
-  owns operationId
-  declares ProgramStateId / ProgramAttemptId ownership as selected by final contract
-  is admitted only against exact current attempt/revision/base
+at cut C, Host observed expected execution base mismatch
 ```
 
-Later operation/evidence facts derive ownership from immutable `operationId` rather than repeating mutable claims everywhere.
-
-A generation/base field may be copied into diagnostic/read-model projections, but canonical authority should have one clear owner.
-
-## 74. Effect-lineage transition ownership
-
-For a confirmed mutating operation, the Host should make the effect-generation transition part of the same serialized semantic cut that recognizes the qualifying terminal/reconciliation effect.
-
-Conceptually:
+not:
 
 ```text
-operation M effect becomes confirmed
-+ old WorkspaceEffectGeneration = G
-→ new generation = G+1
+actor X definitely wrote path Y
 ```
 
-Retry of the same terminal/reconciliation transition must not increment twice.
+unless separate evidence establishes that attribution.
 
-`operationId` provides the natural exactly-once causal key.
+## 79. No silent baseline replacement after unexplained drift
 
-## 75. Drift observation
-
-When the Host observes unexplained divergence, the durable fact should mean only:
-
-```text
-Host observed that expected execution observation no longer matched at cut C
-```
-
-It should not claim which external actor changed the Workspace unless separately known.
-
-That drift makes the current attempt non-current for dependent claims until a new/reconciled execution base is established.
-
-## 76. Rebase/replan boundary
-
-This study does not recommend silently updating a current attempt's expected observation after unexplained external drift.
-
-Preferred first-slice behavior:
+Preferred first slice:
 
 ```text
 unexpected drift
-→ current ProgramAttempt loses freshness
-→ no further dependent mutation/evidence/verification/completion under that attempt
-→ Host/Application/Agent obtains current state
-→ Program is revalidated/replanned as required
-→ fresh ProgramAttemptId starts from a new current execution base
+→ current attempt stale for dependent claims
+→ inspect current Workspace
+→ replan/revalidate as needed
+→ establish new accepted current observation
+→ fresh ProgramAttemptId
 ```
 
-This preserves the meaning of ProgramAttempt as an execution claim instead of turning it into a mutable lease over arbitrary state changes.
+This preserves ProgramAttempt as a meaningful claim rather than a mutable lease over arbitrary state changes.
 
-## 77. Relationship to ProgramState revision
+## 80. Drift does not automatically change ProgramState revision
 
-Unexpected Workspace drift does not automatically mean the ProgramState's semantic revision changed.
-
-These are separate questions:
-
-```text
-Workspace execution assumptions stale?
-```
-
-and:
-
-```text
-canonical Program topology/objective/blockers/revision changed?
-```
-
-A replan may later create a new Program revision if canonical Program semantics change. The initial drift observation itself should not fabricate a Program revision transition merely to make counters match.
+Execution-assumption staleness and Program semantic revision are distinct. A later replan may change canonical Program facts/revision, but drift observation alone should not fabricate a Program revision merely to synchronize counters.
 
 ---
 
 # Part X — Relationship to existing Phase 1 decisions
 
-## 78. Program creation
+## 81. Program creation
 
-Creation-time `PlanningObservationIdentity` proves what semantic planning depended on.
+`PlanningObservationIdentity` owns semantic planning provenance. First dispatch hands off from `Bplan` to runtime execution base. Runtime freshness owns progression afterward.
 
-First ProgramAttempt dispatch performs the final creation-base recheck and establishes runtime `ProgramAttemptExecutionBase`.
+## 82. Verification freshness
 
-After that handoff, runtime execution freshness owns the live progression.
-
-## 79. Verification freshness
-
-Execution generation and verification subject generation have different cardinalities:
+Cardinality is deliberately different:
 
 ```text
-one Workspace effect
-→ one WorkspaceEffectGeneration transition
-→ zero, one, or many VerificationObligation subjectGeneration transitions
+one Workspace Host effect or observed external drift
+→ zero/one/many verification subjectGeneration changes
 ```
 
-depending on deterministic impact analysis.
+according to deterministic impact analysis.
 
-## 80. Agent work topology
+## 83. Agent topology
 
-Deferring automatic Agent post-creation topology mutation does not remove execution-freshness needs. The fixed initial DAG can span multiple attempts and legitimate mutations.
+Fixed first-slice topology can still span many attempts/effects. Deferring Agent post-creation work addition does not eliminate runtime freshness.
 
-## 81. Structural bounds
+## 84. Structural bounds
 
-The final Phase 1 contract must bound:
+Bound:
 
-- `ExecutionObservationIdentity` serialized size;
-- any persisted drift/effect receipts;
-- replay/projection growth associated with generation transitions;
-- any path/observation sets used for impact analysis.
+- observation identity size;
+- persisted observation/drift receipts;
+- path/impact sets;
+- replay/projection growth.
 
-Do not store an unbounded full filesystem manifest in every canonical event.
+Do not persist an unbounded whole-filesystem manifest per event.
 
-## 82. Operation correlation
+## 85. Operation correlation
 
-Durable root operation ownership is essential to this study because stale Program authority and real external effect must remain separable.
+Stale Program authority and real external effect are independent. A stale attempt's operation may still have changed the Workspace; preserve/reconcile that effect without promoting stale evidence.
 
-A superseded attempt's operation may still have changed the Workspace. The Host must preserve that effect and update/reconcile Workspace state without granting the stale attempt current Program evidence authority.
+## 86. Cancellation
 
-## 83. Program cancellation
+Cancellation cuts Program authority; it does not roll back effects. Post-cancel operation effects still enter Workspace effect/reconciliation semantics, while stale/cancelled Program evidence remains inadmissible as current.
 
-Cancellation cuts off Program authority; it does not roll back external effects.
+## 87. Scheduler concurrency
 
-A mutating operation that crosses cancellation can still become:
+Per-Workspace single active ProgramAttempt simplifies the model but does not serialize foreground/non-Program Host mutators. Environmental mutation coordination remains necessary.
 
-- confirmed effect;
-- absent effect;
-- indeterminate effect.
+## 88. Completion Oracle
 
-Workspace effect lineage/reconciliation therefore continues to process real operation facts after Program cancellation, while late results cannot become current Program evidence.
-
-## 84. Scheduler concurrency
-
-Per-Workspace single active ProgramAttempt simplifies execution freshness, but it is not enough by itself.
-
-Foreground/non-Program Host-mediated mutators must participate in the same environmental mutation coordination.
-
-External writers remain outside Host scheduling.
-
-## 85. Completion Oracle
-
-The Completion Oracle consumes execution-freshness state as one predicate family, but does not own Workspace observation itself.
-
-Completion requires:
-
-- no unresolved current effect/drift barrier;
-- current verification obligations;
-- all ordinary Program completion invariants;
-- terminal admission linearization.
+Completion consumes execution-freshness status plus verification freshness and ordinary Program predicates. It does not turn Workspace observation into canonical filesystem truth.
 
 ---
 
 # Part XI — Acceptance-proof consequences
 
-## 86. Existing AC families can absorb the execution-freshness decision
+## 89. AC-10-04 — exact attempt validity
 
-No new AC family appears necessary if the final Phase 1 plan is consolidated carefully.
+Prove:
 
-### AC-10-04 — state-indexed attempt validity
+- attempt initial execution base is exact;
+- expected base advances only through Host-owned transitions;
+- unexplained drift makes current attempt stale for dependent claims;
+- stale attempt cannot regain authority by accidental later state equality.
 
-Add proofs that:
+## 90. AC-10-05 — scheduler/dispatch
 
-- each ProgramAttempt is bound to one initial execution base;
-- current expected base advances only through Host-owned correlated effect transitions;
-- unexplained drift makes the attempt stale for dependent claims;
-- stale attempt results cannot regain authority merely because current files later look similar.
+Prove:
 
-### AC-10-05 — scheduler / dispatch
+- first dispatch bridges from `Bplan`;
+- successor dispatch uses current execution-aware base;
+- `Bplan` is not perpetual;
+- Host foreground mutation cannot cross protected attempt mutation lifetime;
+- restart/resume re-observes current Workspace.
 
-Add proofs that:
+## 91. AC-10-06 — operation uncertainty/correlation
 
-- first dispatch bridges from accepted `Bplan`;
-- successor dispatch uses latest execution-aware base;
-- creation-time `Bplan` is never a perpetual successor-dispatch equality requirement;
-- Host-mediated foreground mutators cannot cross protected ProgramAttempt mutation lifetime;
-- restart/resume re-observes live Workspace before dispatch.
+Prove:
 
-### AC-10-06 — operation correlation / uncertainty
+- confirmed mutating effect advances effect lineage exactly once;
+- effect-absent leaves it unchanged;
+- indeterminate blocks trusted base advancement;
+- reconciliation-to-confirmed/absent resolves lineage exactly once;
+- stale attempt ownership does not erase real effect.
 
-Add proofs that:
+## 92. AC-10-07 — verification freshness
 
-- confirmed mutating effect advances Workspace effect lineage exactly once;
-- effect-absent does not advance it;
-- indeterminate effect blocks trusted base advancement;
-- reconciliation resolves lineage exactly once when effect becomes confirmed/absent;
-- stale attempt ownership does not erase a real external effect.
+Prove:
 
-### AC-10-07 — verification freshness
+- effect generation and `subjectGeneration` are distinct;
+- disjoint Host effect may preserve verification;
+- unknown-impact Host effect invalidates;
+- external drift also triggers impact evaluation/fail-closed invalidation without requiring fake Host-effect generation;
+- unresolved drift/effect uncertainty blocks unsafe satisfaction admission.
 
-Add proofs that:
+## 93. AC-10-08 — completion
 
-- Workspace effect generation and obligation `subjectGeneration` are distinct;
-- one global Workspace effect may leave known-disjoint verification current;
-- unknown impact invalidates obligation satisfaction;
-- execution drift blocks unsafe verification admission until current state is re-established.
-
-### AC-10-08 — completion
-
-Add terminal-race proof:
+Negative proof:
 
 ```text
 preliminary completion true
-→ Workspace drift/effect uncertainty appears before terminal cut
+→ drift/effect uncertainty before terminal cut
 → terminal revalidation rejects completion
 ```
 
-### AC-10-09 — recovery
+## 94. AC-10-09 — recovery
 
-Add proof:
+Prove:
 
 ```text
-Host restart
-→ replay causal effect generation
-→ reconcile interrupted mutations
-→ re-observe live Workspace
-→ mismatch/unknown prevents silent resume
+restart
+→ replay causal lineage
+→ surface/reconcile interrupted effects
+→ direct re-observation
+→ mismatch/unknown prevents affected Program continuation
 ```
 
-## 87. Required negative proofs if promoted
+This is a **new Phase 1 barrier requirement**, not a statement that current Host startup already globally blocks work.
+
+## 95. Required negative proofs
 
 ```text
-ProgramAttempt A at (G,O)
-→ external edit observed with no correlated Host effect transition
+A at (G,O)
+→ unexplained covered drift observed
 → A cannot continue dependent mutation/evidence/verification/completion
 ```
 
 ```text
-ProgramAttempt A legitimately mutates Workspace
-→ effect confirmed
-→ G advances exactly once
+A legitimately mutates
+→ confirmed effect
+→ G advances once
 → A may continue from new expected base
-→ A is not self-invalidated merely because O changed
 ```
 
 ```text
-operation.started
-→ Host crash after possible external effect
-→ no terminal effect fact
+operation started
+→ crash after possible effect
+→ no terminal fact
 → restart does not fabricate G+1
-→ operation remains indeterminate until reconciliation
 ```
 
 ```text
-reconciliation proves effect absent
+reconciliation absent
 → G unchanged
 ```
 
 ```text
-reconciliation proves effect confirmed
-→ G advances exactly once
+reconciliation confirmed
+→ G advances once
 ```
 
 ```text
-same operation terminal/reconciliation retried
+terminal/reconciliation retry
 → no duplicate generation advance
 ```
 
 ```text
-watcher emits duplicate events
-→ no duplicate canonical effect generations
+duplicate watcher events
+→ no duplicate effect generations
 ```
 
 ```text
-watcher emits no event
-→ direct boundary observation can still detect covered drift
-→ watcher silence is never canonical proof
+watcher silence
+→ not proof of no change
 ```
 
 ```text
-foreground Host mutator requests execution while ProgramAttempt owns protected mutation lifetime
-→ mutator cannot cross that lifetime
+external ABA O0→O1→O0 between checks
+→ boundary equality may not detect history
+→ system does not claim continuous non-interference
 ```
 
 ```text
-external editor changes Workspace while Host is offline
-→ restart re-observation differs
-→ old attempt/base is not silently resumed
+foreground Host mutator during protected ProgramAttempt
+→ cannot cross mutation lifetime
 ```
 
 ```text
-confirmed disjoint mutation
-→ WorkspaceEffectGeneration advances
-→ unrelated verification obligation may remain satisfied
+external edit while Host offline
+→ restart re-observation mismatch
+→ no silent old-base resume
 ```
 
 ```text
-unknown-impact mutation
-→ WorkspaceEffectGeneration advances
-→ affected/unknown verification obligations invalidate fail-closed
+disjoint Host effect
+→ G advances
+→ unrelated verification may remain current
 ```
 
 ```text
-first ProgramAttempt mutates Workspace legitimately
-→ successor dispatch does not compare live Workspace to creation-time Bplan
+external drift with unknown verification impact
+→ verification invalidates fail-closed
+→ no fake Host-effect generation required
 ```
 
 ```text
-late superseded-attempt operation effect is real
-→ Workspace effect is preserved/reconciled
-→ stale attempt evidence does not become current Program evidence
+first attempt legitimately mutates
+→ successor dispatch uses runtime base
+→ no equality check against creation Bplan
+```
+
+```text
+late stale-attempt real effect
+→ preserve/reconcile Workspace effect
+→ reject stale Program evidence authority
 ```
 
 ---
 
 # Part XII — Comparison
 
-## 88. Comparison matrix
+## 96. Matrix
 
-| Alternative | Causal authority | Detects external drift | Legitimate mutation continuity | Crash/replay | Preserves indeterminate effects | Continuous isolation | Result |
+| Alternative | Causal authority | External drift | Legitimate mutation continuity | Replay | Indeterminate effect | Continuous isolation | Result |
 |---|---|---|---|---|---|---|---|
-| A. Boundary re-observation only | weak | yes, at covered cuts | ambiguous | weak unless separately persisted | weak | no | reject alone |
-| B. Canonical Workspace generation only | strong for Host effects | no | strong | strong | only if composed with operation model | no | partial |
-| C. Attempt observation token only | weak/observational | yes, at cuts | possible but causally ambiguous | weak | weak | no | reject alone |
-| D. Filesystem/repository isolation | strong | external live drift irrelevant to isolated attempt | strong | provider-dependent | strong if integrated | **yes** | defer / future strongest |
-| E. Watcher/token as authority | weak | best-effort | ambiguous | weak | weak | no | reject as authority |
-| F. Hybrid effect lineage + observation + fail-closed cuts | **strong Host causation + explicit observation** | **yes at defined covered cuts** | **strong** | **strong causal replay + re-observation** | **strong** | no | **prefer** |
+| A. Re-observation only | weak | at covered cuts | ambiguous | weak alone | weak | no | reject alone |
+| B. Canonical generation only | strong for Host effects | no | strong | strong | good if composed | no | partial |
+| C. Attempt token only | observational | at cuts | possible but ambiguous | weak alone | weak | no | reject alone |
+| D. Isolated Workspace | strong | live external drift excluded from attempt | strong | provider-dependent | strong if integrated | **yes** | strongest, defer |
+| E. Watcher token authority | weak | best-effort | ambiguous | weak | weak | no | reject as authority |
+| F. Hybrid lineage + observation | **strong Host causation + explicit observation** | **at defined covered cuts** | **strong** | **strong causation + re-observation** | **strong** | no | **prefer** |
 
 ---
 
 # Part XIII — Recommendation
 
-## 89. Recommended first-slice contract
+## 97. Recommendation
 
-**Recommend Alternative F: a hybrid two-axis execution-freshness model composed with Host-mediated mutation exclusion and operation uncertainty.**
+**Recommend Alternative F for the Phase 1 first slice, provided the intended guarantee is boundary-checked execution freshness rather than continuous filesystem isolation.**
 
 Use:
 
@@ -1704,206 +1294,190 @@ Use:
 WorkspaceEffectGeneration
 ```
 
-for durable/replayable **Host-known confirmed mutation lineage**, and:
+for durable Host-known confirmed mutation lineage, and:
 
 ```text
 ExecutionObservationIdentity
 ```
 
-for bounded Host observation of the live Workspace at freshness-sensitive cuts.
+for bounded Host observation at freshness-sensitive cuts.
 
-Bind each ProgramAttempt to an initial:
+Every ProgramAttempt starts from:
 
 ```text
 ProgramAttemptExecutionBase = (WorkspaceEffectGeneration, ExecutionObservationIdentity)
 ```
 
-and derive its current expected execution base through exact correlated confirmed effects.
+and its Host-derived expected base may advance through exact correlated confirmed effects.
 
-The key transition rules are:
+Rules:
 
 ```text
-read-only / effect absent
-→ no WorkspaceEffectGeneration advance
+read / effect absent
+→ no effect-generation advance
 ```
 
 ```text
 confirmed Host mutating effect
-→ WorkspaceEffectGeneration advances exactly once
-→ capture/accept new post-effect observation
-→ current attempt expected base advances
+→ G advances exactly once
+→ capture post-effect observation
+→ current expected base advances
 ```
 
 ```text
 indeterminate effect
-→ no trusted base advancement
+→ no trusted next base
 → reconciliation barrier
 ```
 
 ```text
-unexpected observed divergence with no corresponding admitted effect transition
-→ out-of-band drift
-→ current ProgramAttempt loses freshness for dependent canonical claims
-→ no silent baseline update
+unexpected observed divergence
+→ no fake Host effect generation
+→ current attempt stale for dependent claims
+→ explicit rebase/replan before fresh attempt
 ```
 
 ```text
-successor ProgramAttempt
-→ starts from latest execution-aware current base
-→ never requires equality to immutable creation-time Bplan
+successor attempt
+→ latest execution-aware base
+→ never perpetual creation-Bplan equality
 ```
 
-## 90. Why this wins
+## 98. Why this wins
 
-It is the smallest design found that simultaneously preserves:
+It is the smallest model found that jointly preserves:
 
 - Host canonical ownership;
-- legitimate in-attempt mutation continuity;
-- durable operation/effect causation;
-- crash/replay correctness;
-- external-drift detection at defined cuts;
-- fail-closed uncertainty;
-- successor-dispatch semantics;
-- separation from verification freshness;
-- compatibility with future stronger Workspace isolation.
+- legitimate in-attempt mutation;
+- replayable external-effect causation;
+- crash uncertainty;
+- external drift detection at defined cuts;
+- successor execution;
+- verification-freshness separation;
+- compatibility with future isolated Workspace providers.
 
-A single generation loses observation truth. A single observation token loses causation. A watcher loses authority/replay. Full isolation is stronger but materially larger than the current first-slice architecture.
+One generation loses observation. One observation loses causation. Watchers lose authority/replay. Full isolation is stronger but significantly expands the architecture.
 
-## 91. Residual limitation is intentional and must be explicit
+## 99. Guarantee wording if promoted
 
-The recommended model **does not** guarantee that an arbitrary external writer cannot modify the live Workspace between checks or during a shell/tool mutation.
+Use language equivalent to:
 
-The contract must not use phrases such as:
+> **Execution freshness is checked and fail-closed at defined Host boundaries. Host-mediated mutating execution participates in Workspace mutation coordination, and Host-known effect lineage is canonical/replayable. External/non-Host writers remain outside that exclusion; their covered changes are detected by later observations when visible to the selected observation model, not prevented transactionally. The contract does not claim continuous mutation-history detection or exclusive byte-level causation without stronger isolation.**
 
-```text
-Workspace unchanged throughout ProgramAttempt
-```
+## 100. Confidence and falsifiers
 
-unless stronger isolation is later selected.
-
-The honest first-slice statement is:
-
-> **Execution freshness is checked and fail-closed at defined Host boundaries, Host-mediated mutating execution is serialized/excluded through the Workspace mutation coordinator, and canonical Host-effect lineage is replayable. External/non-Host writers remain outside that exclusion; their covered changes are detected by re-observation at later boundaries, not prevented transactionally.**
-
-## 92. Confidence
-
-**High** confidence in the architectural separation:
+**High confidence** in separating:
 
 ```text
-causal Host effect lineage
+Host effect lineage
 !=
 live Workspace observation
 !=
 verification subject generation
 ```
 
-**Medium-high** confidence that the hybrid is the correct Phase 1 first-slice tradeoff if boundary-checked freshness is the intended guarantee.
+**Medium-high confidence** in the hybrid as the Phase 1 tradeoff under a boundary-checked guarantee.
 
-**Low-to-medium** confidence in the exact `ExecutionObservationIdentity` representation until the planning-observation and Workspace-provider semantics are selected/measured.
+**Low-to-medium confidence** in exact observation representation until Workspace/provider semantics are chosen and measured.
 
-If Phase 1 instead requires continuous sole-writer / snapshot-consistent execution against arbitrary external editors, this recommendation is falsified and stronger isolation becomes mandatory.
+The recommendation is falsified if Phase 1 requires any of:
+
+- proof that no external writer changed relevant state during an attempt;
+- proof of complete mutation-history continuity between checks;
+- exclusive byte-level causal attribution for arbitrary shell/tool effects.
+
+Those requirements push the architecture toward isolated/transactional Workspace execution.
 
 ---
 
 # Part XIV — Remaining freeze-readiness dependencies
 
-## 93. Exact ExecutionObservationIdentity semantics
+## 101. ExecutionObservationIdentity
 
-The final contract must choose:
+Define:
 
 - representation;
-- covered Workspace state;
+- coverage;
 - bounds;
-- equality/equivalence rules;
-- Git dirty/untracked/ignored-file semantics;
-- directory/absence semantics where needed;
-- remote Workspace/provider semantics;
-- restart re-observation behavior;
-- handling when complete observation cannot be obtained.
+- equality/equivalence;
+- Git dirty/untracked/ignored semantics;
+- absence/directory semantics;
+- remote/provider revision semantics;
+- incomplete observation behavior;
+- restart behavior.
 
-Unknown equivalence must fail closed at a correctness-sensitive cut.
+Unknown equivalence fails closed where correctness depends on it.
 
-## 94. Exact Host-mediated Workspace mutation barrier
+## 102. Host-mediated Workspace mutation barrier
 
-The final contract must define:
+Define:
 
-- owner;
-- acquisition order relative to canonical admission;
-- which capabilities count as mutating;
+- owning Host subsystem;
+- acquisition/release order;
+- mutating capability classification;
 - read-only concurrency;
-- foreground/non-Program mutation behavior;
-- ProgramAttempt lifetime transfer/release;
-- cancellation and timeout;
-- Host crash;
-- reconciliation interaction;
-- deadlock/queueing policy.
+- foreground/non-Program behavior;
+- ProgramAttempt lifetime transfer;
+- cancellation/timeout/crash;
+- indeterminate/reconciliation interaction;
+- queueing/deadlock behavior.
 
-Canonical admission alone is not this barrier.
+## 103. Effect-generation transition ownership
 
-## 95. Exact effect-generation event ownership
-
-The final contract must define how one confirmed effect advances `WorkspaceEffectGeneration` exactly once across:
+Define exactly-once advancement across:
 
 - normal terminal success;
-- terminal retry/idempotence;
+- terminal retry;
 - crash after effect before terminal record;
 - reconciliation to confirmed;
 - reconciliation to absent;
-- stale/superseded ProgramAttempt ownership;
+- stale/superseded attempt;
 - Program cancellation.
 
-`operationId` should be the natural causal idempotency key, but exact event/schema design remains open.
+`operationId` is the natural causal idempotency key; exact event spelling remains open.
 
-## 96. Drift lifecycle / rebase policy
+## 104. Drift/rebase lifecycle
 
-The final contract must define the Host-owned state transition after unexpected drift:
+Define:
 
-- current attempt invalidation/supersession;
-- whether ProgramState revision changes immediately or only if semantic replanning changes Program facts;
+- attempt invalidation/supersession;
+- ProgramState-revision interaction;
 - Application/read-model surfacing;
-- Agent replan/revalidation flow;
-- when a fresh ProgramAttempt may be minted.
+- Agent replan flow;
+- verification invalidation from external drift;
+- when a new accepted execution observation and fresh attempt may be established.
 
-This study recommends **no silent in-attempt baseline replacement after unexplained drift**.
+Preferred first slice: **no silent in-attempt baseline replacement after unexplained drift**.
 
-## 97. Capability observation contract
+## 105. Capability observation contract
 
-The final contract must define what a capability can report about:
+Define what capabilities can provide about:
 
 - read observation identity;
-- mutating affected paths where known;
-- post-effect observations;
+- affected paths where known;
+- post-effect observation;
 - effect certainty;
 - reconciliation evidence.
 
-Unknown affected paths may conservatively invalidate verification obligations without invalidating the entire causal effect lineage.
+Unknown affected paths may conservatively invalidate verification without changing the meaning of Workspace Host-effect lineage.
 
-## 98. Closed verification-requirement taxonomy remains separate
+## 106. Verification predicate taxonomy remains separate
 
-This study does not close the verification predicate taxonomy required by Program creation. That remains a separate planning dependency.
+This study does not close the creation-time verification-requirement predicate taxonomy.
 
-## 99. Structural bounds still require empirical values
+## 107. Structural values remain empirical
 
-The architecture should bound execution-observation and drift/effect records, but exact ceilings still need corpus/measurement evidence rather than intuition.
+Execution-observation and drift/effect records need bounded representation, but exact ceilings still require measurement.
 
-## 100. Stronger isolation remains an explicit future branch
+## 108. Stronger isolation remains an explicit future branch
 
-If boundary-checked freshness proves insufficient for product requirements, the next design family to study is not a more elaborate counter. It is an isolated/transactional Workspace provider:
-
-```text
-ProgramAttempt executes against isolated revision
-→ Host knows exact base
-→ external live Workspace edits cannot race it
-→ explicit merge/commit/reconciliation boundary
-```
-
-That would be a larger architecture decision and should be studied as such.
+If boundary checks prove insufficient, study an isolated/transactional Workspace provider rather than adding more counters to a shared worktree.
 
 ---
 
 # Part XV — Planning status
 
-## 101. Status
+## 109. Status
 
 This document remains a recommendation only.
 
@@ -1912,7 +1486,7 @@ It does not:
 - amend `docs/phase-1.0-plan.md`;
 - supersede `docs/phase-1.0-open-decisions-study.md`;
 - supersede `docs/phase-1.0-program-creation-authorship-study.md`;
-- consolidate `docs/phase-1.0-artifact-evidence-amendment.md`;
+- consolidate the artifact-evidence amendment;
 - approve or freeze Phase 1.0;
 - authorize implementation.
 
