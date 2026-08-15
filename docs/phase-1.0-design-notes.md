@@ -299,3 +299,193 @@ ProgramState
 ```
 
 This is compatible with the current Phase 1.0 direction and does not require subagents, remote workers, distributed leases, timers, browser execution, or another workflow engine.
+
+## ArtifactRef and inspection seam — Phase 1.0 accommodation
+
+The project-level artifact-rendering study in `docs/artifact-rendering-design-notes.md` exposes a contract issue that Phase 1.0 should accommodate before approval without making rendering itself a Phase 1.0 implementation obligation.
+
+The current ALCODE contracts have an asymmetric content model:
+
+- `@alcode/agent-core` already defines `ImageContent` and permits it in `UserMessage`, but `ToolResultMessage.content` and `AgentToolResult.content` are `TextContent[]`;
+- `@alcode/transcript` likewise restricts `TranscriptToolResultMessage.content` and `tool.result.appended` content to transcript text blocks;
+- Agent Protocol `tool.result` inherits that transcript restriction, while Host `capability.result.result` remains untyped `unknown`;
+- `HostArtifactStore` already provides bounded content-addressed `HostArtifactReference` values with `artifact:sha256:` handles, digest, size, and optional media type;
+- context reconstruction consumes durable `Message[]`, so any richer result that must survive Agent replacement has to be representable through canonical transcript replay rather than only through one in-memory Agent generation.
+
+These are implementation facts, not a request to change those packages during planning.
+
+### Minimal durable invariant
+
+Phase 1.0 should avoid freezing a ProgramAttempt or verification contract that assumes decisive capability evidence is necessarily textual.
+
+The minimum planning invariant is:
+
+> A ProgramAttempt and its verification evidence may refer to a Host-retained content-addressed artifact. An inspectable representation delivered to an Agent is a representation of that artifact, not a second artifact authority and not an ephemeral-path identity.
+
+Conceptually:
+
+```text
+ProgramAttempt
+→ Host-admitted capability invocation
+→ HostArtifactStore retention
+→ ArtifactRef + provenance
+→ negotiated Agent inspection representation
+→ Host-observed inspection-delivery fact
+→ verification evidence admission
+→ ProgramState revision
+```
+
+`ArtifactRef` here means the ALCODE-owned content-addressed reference concept already embodied by `HostArtifactReference`; the final public type name and package placement remain open.
+
+### Canonical reference versus Agent representation
+
+The durable result should prefer a stable artifact reference over embedding large visual bytes into canonical ProgramState or transcript events.
+
+A provisional content model to evaluate is:
+
+```ts
+type DurableToolResultContent =
+  | TextContent
+  | ArtifactReferenceContent;
+```
+
+An `ArtifactReferenceContent` would identify the admitted Host artifact and enough bounded metadata to validate/materialize it. Exact fields remain open.
+
+Image delivery is a separate Agent Protocol concern:
+
+```text
+ArtifactRef
+→ Host validates digest/media type/bounds
+→ optional Host transformation to an inspectable representation
+→ negotiated Agent Protocol delivery
+→ Agent inference
+```
+
+A vision-capable Agent may receive image content derived from the artifact. An Agent that cannot consume the required representation must not silently satisfy an inspection obligation. The Host should record either successful inspection delivery or an explicit inability/failure path.
+
+This keeps canonical artifact identity independent of any one model/provider encoding while preserving replaceable-Agent semantics.
+
+### Produced artifact versus inspection representation
+
+Phase 1.0 verification should be able to distinguish the artifact produced by a capability from the representation actually inspected by the Agent.
+
+For example:
+
+```text
+source subject generation G
+→ SVG ArtifactRef R
+→ bounded rasterization
+→ PNG ArtifactRef I
+→ Agent generation A receives I
+→ inspection evidence refers to R, I, A, and G
+```
+
+`R` and `I` are separate content-addressed artifacts with explicit derivation/provenance. Inspection of `I` does not silently mean the Agent received the original bytes of `R`.
+
+### Minimum provenance needed for verification freshness
+
+The exact provenance schema remains open, but Phase 1.0 should leave room for verification evidence that binds at least:
+
+```text
+ProgramStateId
+ProgramAttemptId
+exact ProgramState revision / verification subject generation
+capability or operation identity
+produced ArtifactRef
+source ArtifactRef/digest or source subject identity when applicable
+inspection ArtifactRef when different from produced artifact
+Agent generation / delivery identity when inspection is required
+transformation identity/version/profile when a derived representation is used
+```
+
+These fields do not all need to live directly on the artifact-store record. The important requirement is that canonical evidence can resolve the chain from the current verification obligation to the exact retained content and execution episode that produced or inspected it.
+
+### Freshness must reuse ProgramState invalidation
+
+Artifact rendering and inspection must not introduce an independent freshness doctrine.
+
+If verification satisfaction depends on artifact `R` derived from subject generation `G`, and a later admitted mutation advances the relevant subject generation to `G+1`, evidence tied to `R/G` is stale under the same Phase 1.0 verification-generation/invalidation rules used for other evidence.
+
+Likewise, re-rendering without re-inspection cannot satisfy an obligation whose predicate requires visual inspection, and inspection of an old representation cannot satisfy a newer source generation merely because the old bytes still resolve in `HostArtifactStore`.
+
+The content address proves artifact identity. It does not prove current verification relevance.
+
+### Existing contracts affected by a future implementation
+
+If this seam is later implemented, the change crosses several owned boundaries and must be treated as one durable compatibility change rather than a local tool enhancement:
+
+```text
+@alcode/agent-core
+  tool-result/message content contract
+
+@alcode/transcript
+  tool-result schemas + canonical events
+
+@alcode/agent-protocol
+  capability negotiation + delivery encoding
+
+Host capability broker
+  typed artifact-bearing results + operation/evidence correlation
+
+HostArtifactStore
+  retained content identity and bounded materialization
+
+storage transcript projection/rebuild
+  human-readable projection without losing canonical artifact references
+
+context compiler/reconstruction
+  replay and budgeting of artifact-bearing results across Agent replacement
+```
+
+The existing human-readable transcript projection may continue to summarize artifact-bearing tool results as text, but exact context reconstruction must continue to come from canonical events rather than that projection.
+
+### Phase placement decision for the working design
+
+For planning purposes, the recommended boundary is now:
+
+```text
+Phase 1.0 must accommodate:
+- ArtifactRef-capable verification/evidence semantics
+- ProgramAttempt correlation for artifact-producing operations
+- freshness/invalidation of artifact-backed evidence
+- an Agent Protocol evolution path that does not assume tool results are permanently text-only
+
+Phase 1.0 does not yet require implementing:
+- diagram.validate / diagram.render / artifact.inspect
+- a Mermaid compatibility profile
+- an ALCODE diagram parser, layout engine, renderer, or rasterizer
+- a general renderer catalog
+- browser-based rendering
+- arbitrary multimodal artifact classes
+```
+
+This keeps the ProgramState contract from hardening around a text-only assumption while preventing artifact rendering from expanding the already broad Phase 1.0 implementation scope.
+
+No Phase 1.0 acceptance criterion is changed by this note. Promotion into the working plan remains a separate planning decision, and implementation remains unauthorized until the Phase 1.0 plan is explicitly approved.
+
+### Additional planning questions
+
+8. Should the first durable artifact-bearing tool-result shape carry only a `HostArtifactReference`, or also a bounded semantic role such as `output`, `preview`, or `evidence`?
+9. Which provenance fields belong in ProgramState verification evidence versus operation/evidence events versus an artifact metadata projection?
+10. What Agent Protocol capability token should advertise inspectable artifact/image delivery without coupling the Host to a specific model-provider encoding?
+11. What is the required fail-closed behavior when canonical replay resolves an ArtifactRef but the current Agent cannot consume the representation required by an unsatisfied verification obligation?
+12. Does Phase 1.0 need a normative inspection-delivery event/fact, or is correlation through an existing canonical operation/result plus Agent request/generation identity sufficient?
+
+### Updated recommendation
+
+Preserve the current authority pipeline and make artifact-backed evidence an allowed future payload, not a separate authority path:
+
+```text
+ProgramState
+→ Host-derived bounded Attempt Contract
+→ canonical ProgramAttemptId + exact ProgramState revision
+→ bounded AttemptProjection to the Agent
+→ Host-mediated capabilities under attempt authority
+→ HostArtifactStore retention where capability output is non-text/derived
+→ ArtifactRef + Host-observed provenance
+→ negotiated Agent inspection representation when required
+→ verification freshness / invalidation
+→ Host-only canonical transition/completion admission
+```
+
+The first rendering consumer can be designed later as an ALCODE-owned capability. External implementations may inform parser/IR/layout/render patterns, but they do not become runtime authority, compatibility authority, or required dependencies.
