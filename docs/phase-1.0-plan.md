@@ -6,6 +6,8 @@
 
 > This document is a working Phase 1.0 design/acceptance proposal. It does not become frozen and does not authorize implementation until explicit approval is given. Planning changes may continue until that approval.
 
+**Active planning amendment:** `docs/phase-1.0-artifact-evidence-amendment.md` currently controls the artifact-evidence, verification-freshness, `artifact_present`, AC-10-06, and AC-10-07 clarifications until those changes are consolidated into this document. That amendment is itself draft, not approved, not frozen, and does not authorize implementation.
+
 ## 1. Objective
 
 Phase 1.0 is intended to give ALCODE a Host-owned durable unit of work that can outlive any one chat/session, Agent process, Host process, or execution episode.
