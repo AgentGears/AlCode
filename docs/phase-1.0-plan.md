@@ -136,7 +136,7 @@ All later operation lifecycle/evidence/reconciliation events inherit Program own
 
 The exact current P/A/revision/Agent-generation validity check and root `operation.requested` admission share one canonical serialization point. Any pre-admission asynchronous checks are revalidated at that cut.
 
-Provider/binding/containment identity is persisted operation-locally only where the selected capability/recovery contract needs that exact historical incarnation to prove containment/quiescence. Phase 1.0 does not bind a whole ProgramAttempt to one provider snapshot and does not interrupt attempts merely because an unrelated provider generation changes.
+Every root `may_write` operation also persists an immutable **operation-local execution/quiescence contract** sufficient to reconstruct its historical writer/descendant containment and decide quiescence after restart without consulting the current capability/provider registry. When that historical contract's semantics depend on an exact provider, binding, provider generation, process-containment identity, or equivalent incarnation-specific fact, that identity is persisted with the operation as well. This is operation-local provenance: Phase 1.0 does not bind a whole ProgramAttempt to one provider snapshot and does not interrupt attempts merely because an unrelated provider generation changes.
 
 ## 5. Program creation and immutable contract authorship
 
@@ -363,7 +363,7 @@ Code must not acquire them in the opposite order and then wait, because canonica
 
 A current ProgramAttempt holds the Workspace-domain Program mutation reservation required by the first-slice scheduler. Read, mutation, and reconciliation subleases may be used beneath that reservation according to implementation, but unrelated Host `may_write` operations cannot cross the protected Program mutation lifetime.
 
-A root `may_write` operation establishes a durable/rebuildable outstanding-writer barrier from canonical operation start until a Host-validated canonical quiescence proof establishes that the relevant writer/descendant set stopped. Operation effect certainty and writer quiescence are independent:
+A root `may_write` operation establishes a durable/rebuildable outstanding-writer barrier from canonical operation start until a Host-validated canonical quiescence proof under that operation's immutable historical execution/quiescence contract establishes that the relevant writer/descendant set stopped. Operation effect certainty and writer quiescence are independent:
 
 ```text
 confirmed effect + writer not proven quiescent → barrier remains
@@ -379,7 +379,7 @@ into EffectStatus = confirmed
 → advance WorkspaceEffectGeneration exactly once for O
 ```
 
-A request/start alone does not advance it. `absent` does not advance it. If an indeterminate operation is later reconciled to confirmed, that first canonical confirmed transition advances it once. Duplicate terminal/reconciliation paths cannot double-advance the same `operationId`.
+A request/start alone does not advance it. A final `absent` effect does not advance it, but a `may_write` operation may enter final `absent` only **after** writer/descendant quiescence is proven under its immutable historical operation-local contract. Any Workspace-observation-based reconciliation used to establish absence must use a complete protected observation taken after that quiescence proof. A timed-out/interrupted `may_write` operation with unknown quiescence cannot be finalized as `absent` merely because the currently observed Workspace appears unchanged. If an indeterminate operation is later reconciled to confirmed, that first canonical confirmed transition advances the generation once. Duplicate terminal/reconciliation paths cannot double-advance the same `operationId`.
 
 A confirmed effect requires a complete protected post-effect observation before the Host has a trusted new `(G,O)` base. If the post-observation is unknown, causation remains known but the current attempt cannot continue dependent execution/verification/completion claims.
 
@@ -550,7 +550,7 @@ Completion and cancellation share the same terminal admission lane. Whichever te
 - no unresolved Program/work blocker exists;
 - no active ProgramAttempt exists;
 - no current execution-base mismatch/unavailable condition blocks terminal authority;
-- no Program-linked operation remains `requested`/`started` in a way that can still affect Program truth;
+- no Program-linked operation remains `requested`/`started`;
 - no Program-linked indeterminate effect or unresolved reconciliation blocks safe completion;
 - no outstanding/rebuildable Workspace writer barrier relevant to Program completion remains unresolved;
 - no Program-linked retryable durable work remains incomplete;
@@ -572,10 +572,10 @@ Before Program scheduler admission after Host open/reopen:
 recover canonical store/log integrity
 → rebuild/catch up Program projections
 → rebuild root operation Program/Attempt ownership
-→ rebuild request-time WorkspaceAccessClass and operation-local execution provenance
+→ rebuild request-time WorkspaceAccessClass and every may_write operation-local historical execution/quiescence contract
 → rebuild WorkspaceEffectGeneration from first confirmed may_write transitions
 → rebuild outstanding durable writer barriers/quiescence state
-→ recover/reconcile interrupted/indeterminate operations
+→ recover/reconcile interrupted/indeterminate operations using their historical contracts
 → identify orphan active ProgramAttempts and durably interrupt them idempotently
 → establish any required legacy execution-protocol baseline only after legacy mutators are recovered/quiescent
 → take a fresh complete protected ExecutionObservationIdentity
@@ -750,9 +750,9 @@ Prove legitimate current-attempt mutation advances its expected base and permits
 
 ### AC-10-06 — Operation correlation, effect uncertainty, writer barriers, and artifact provenance
 
-For every ProgramAttempt-originated operation, root history durably identifies P/A/O and immutable request-time Workspace access class. Descendants resolve ownership through O. `WorkspaceEffectGeneration` advances exactly once at the first canonical confirmed transition for one `may_write` O, including a later reconciliation-to-confirmed path, and never on request/start/absent.
+For every ProgramAttempt-originated operation, root history durably identifies P/A/O and immutable request-time Workspace access class. Every `may_write` root also preserves its immutable operation-local execution/quiescence contract, plus any exact incarnation identity that contract needs, so recovery never consults a replacement provider to decide historical containment/quiescence. Descendants resolve Program ownership through O. `WorkspaceEffectGeneration` advances exactly once at the first canonical confirmed transition for one `may_write` O, including a later reconciliation-to-confirmed path, and never on request/start/absent.
 
-Effect certainty and writer quiescence are independently rebuildable. A crash cannot drop an unproven writer barrier. Indeterminate mutation interrupts trusted attempt continuation, blocks retry/completion, and remains uncertain until reconciliation.
+A final `absent` result for `may_write` is admissible only after historical-contract quiescence is proven; Workspace-observation-based absence reconciliation uses a complete protected post-quiescence observation. Effect certainty and writer quiescence are independently rebuildable. A crash cannot drop an unproven writer barrier. Indeterminate mutation interrupts trusted attempt continuation, blocks retry/completion, and remains uncertain until reconciliation.
 
 Required artifact negatives:
 
@@ -787,7 +787,7 @@ A mutating verification operation cannot satisfy a new generation from its gener
 
 Only the Host Completion Oracle admits `program.completed`, after complete revalidation on the terminal canonical cut. Prove all universal predicates, current verification generations, artifact integrity when relied upon, no active attempt, no blocking uncertainty/writer barrier/execution-base mismatch, and no unresolved relevant durable work/tool/transcript obligation.
 
-Application cancellation requires exact revision, atomically invalidates/interupts the active attempt, and records one terminal authority cutoff without claiming rollback. Race proofs:
+Application cancellation requires exact revision, atomically invalidates/interrupts the active attempt, and records one terminal authority cutoff without claiming rollback. Race proofs:
 
 - completion preliminary check then conflicting event → recheck/reject;
 - completion vs cancellation → exactly one terminal state;
@@ -796,7 +796,7 @@ Application cancellation requires exact revision, atomically invalidates/interup
 
 ### AC-10-09 — Recovery barrier and execution-state rebuild
 
-Host reopen rebuilds Program projections, operation ownership/access classification, WorkspaceEffectGeneration, durable writer barriers, uncertainty/reconciliation, and orphan attempts before scheduler admission; then it takes a fresh complete protected observation and resolves exact accepted-base currentness. Crash during any idempotent recovery transition cannot authorize a replacement attempt early.
+Host reopen rebuilds Program projections, operation ownership/access classification, every historical `may_write` execution/quiescence contract, WorkspaceEffectGeneration, durable writer barriers, uncertainty/reconciliation, and orphan attempts before scheduler admission; then it takes a fresh complete protected observation and resolves exact accepted-base currentness. Crash during any idempotent recovery transition cannot authorize a replacement attempt early.
 
 Legacy pre-Phase-1 operation history is not reclassified from current providers; a new Phase 1 baseline is established only after legacy recovery/quiescence plus complete current observation.
 
@@ -884,8 +884,9 @@ Attempt A starts may_write O
 → effect indeterminate
 → writer quiescence may also be unknown
 → A cannot continue/retry/verify/complete
-→ reopen rebuilds O ownership + uncertainty + writer barrier
+→ reopen rebuilds O ownership + uncertainty + writer barrier + historical execution/quiescence contract
 → reconciliation/quiescence eventually produce canonical facts
+→ `absent` cannot be finalized until quiescence is proven; observation-based absence is post-quiescence
 → fresh complete execution base required
 → only fresh Attempt B can continue
 ```
@@ -923,8 +924,8 @@ OR completion-first makes Program completed; cancel rejects/noops
 delete derived Program/operation execution projections
 → replay canonical history including legacy events lacking Program fields
 → historical fingerprints/digests remain valid
-→ rebuild Program state, P/A operation ownership, generations, barriers,
-  verification generations/waivers, attachments, and terminal state
+→ rebuild Program state, P/A operation ownership, generations, historical may_write contracts,
+  barriers, verification generations/waivers, attachments, and terminal state
 → semantic parity with pre-delete current state
 → duplicate creation/rebase/completion/cancellation recovery does not create duplicate authority transitions
 ```
