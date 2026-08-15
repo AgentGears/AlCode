@@ -3,126 +3,126 @@
 **Status:** DRAFT / non-normative planning study  
 **Approval:** not approved; not frozen; implementation not authorized  
 **Planning base:** `main` at `d383dd81e254f5acd685b5fceb7fc8e9d0142270`  
-**Purpose:** determine whether Phase 1.0 correctness requires a `ProgramAttempt` to commit to an exact Host capability/provider resolution, or whether that stronger lifecycle belongs to successor Host-runtime composition work.
+**Purpose:** determine whether Phase 1.0 correctness requires a `ProgramAttempt` to commit to an exact Host capability/provider resolution, or whether that stronger lifecycle belongs to Host capability/runtime evolution outside the Phase 1.0 contract.
 
-> External design reference: *A Programming Paradigm for Spatiotemporal Composability* (Shi, Zhang, Cui). Its committed dependency view, resolution-coherence, and dependency-ordered withdrawal results are used here as architecture patterns only. ALCODE does not depend on Cordis and this study does not propose adopting its runtime or calculus.
+> External design reference: *A Programming Paradigm for Spatiotemporal Composability* (Shi, Zhang, Cui). Its committed dependency view, resolution-coherence, and dependency-ordered withdrawal results are used as architecture patterns only. ALCODE does not depend on Cordis and this study does not propose adopting its runtime or calculus.
 
-## 1. Question and decision rule
+## 1. Question and promotion rule
 
-The question is deliberately narrower than general dynamic component composition:
+The question is narrower than general dynamic component composition:
 
 > When a `ProgramAttempt` uses Host capabilities whose providers may be replaced or restarted, must the attempt bind to one exact provider resolution for its whole lifetime?
 
-The same promotion rule used by the artifact-seam validation applies:
+The same contract-proof rule used by the artifact-seam study applies:
 
-- **PROMOTE** a semantic invariant only if omitting it creates a correctness hole in a guarantee Phase 1.0 already claims;
-- **ACCOMMODATE / DEFER** stronger machinery when Phase 1.0 can remain correct without it;
-- **REJECT** a proposed coupling when it would conflate authorities or create unnecessary invalidation.
+- **PROMOTE** only if omission breaks a guarantee or acceptance predicate Phase 1.0 already claims;
+- **ACCOMMODATE / DEFER** when the property is useful or likely necessary later but current Phase 1.0 remains correct without it;
+- **REJECT** a coupling that conflates authorities or creates unnecessary invalidation.
 
-The candidate whole-attempt invariant is:
+Two candidate invariants were tested.
+
+Whole-attempt commitment:
 
 ```text
 one ProgramAttempt
 → one immutable capability/provider-resolution view
-→ any provider-generation change interrupts or supersedes the attempt
+→ provider-generation change interrupts or supersedes the attempt
 ```
 
-The competing invocation-scoped invariant is:
+Invocation-scoped exact binding:
 
 ```text
 ProgramAttempt authorizes bounded capability use
-→ each operation resolves an exact Host capability binding
-→ that exact binding is durably correlated before execution
-→ result/evidence/reconciliation remain bound to that execution binding forever
-→ a later invocation may resolve a newer binding if the ProgramAttempt is still otherwise current
+→ an operation resolves one Host capability binding
+→ result/evidence/reconciliation remain associated with that operation
+→ a later invocation may resolve a newer binding if the ProgramAttempt is still current
 ```
 
 ## 2. Result
 
-**Decision: SPLIT.**
+**Decision: do not promote a provider-resolution invariant into Phase 1.0 from the current evidence.**
 
-### 2.1 PROMOTE — exact execution binding is required at the operation boundary
+### 2.1 DEFER — whole-ProgramAttempt provider snapshot
 
-Phase 1.0 correctness requires every attempt-originated operation whose provider identity can change to be durably attributable to the **exact Host execution binding actually admitted for that operation**.
+Phase 1.0 does **not** require one immutable provider-resolution snapshot for an entire `ProgramAttempt`.
 
-The semantic requirement is:
-
-```text
-ProgramAttempt A authorizes capability C
-→ Host resolves C to binding B
-→ Host canonically admits operation O with A + B
-→ O executes only while B is still the admitted binding for O
-→ O result/evidence/reconciliation remain correlated to A + B
-```
-
-A provider replacement from `B` to `B'` must never cause an already-admitted or late operation result to be reinterpreted as having run under `B'`.
-
-This is required by existing Phase 1.0 claims about:
-
-- durable `ProgramStateId` / `ProgramAttemptId` operation correlation;
-- stale-attempt rejection;
-- uncertainty and reconciliation;
-- rebuildability from canonical facts;
-- Host-only evidence admission.
-
-An exact binding is execution provenance. It is not ProgramState authority and does not itself satisfy work or verification.
-
-### 2.2 ACCOMMODATE / DEFER — whole-ProgramAttempt provider snapshot
-
-Phase 1.0 does **not** need to require one immutable provider-resolution snapshot for the entire `ProgramAttempt`.
-
-A `ProgramAttempt` is bounded work authority. A capability invocation is an execution event under that authority. If the Host's current capability binding changes between two invocations, the later invocation may use the newer binding **without minting a new ProgramAttempt**, provided:
-
-- the ProgramAttempt remains current;
-- `expectedProgramRevision` still matches exactly where required;
-- Host policy still authorizes the capability;
-- the new invocation is admitted against its own exact current execution binding;
-- no long-lived provider-backed resource contract says otherwise.
+A `ProgramAttempt` is bounded work authority. Current ALCODE dynamic capabilities are invocation-scoped Host services. If a provider changes between two invocations, a later invocation can use the current binding without violating the existing ProgramState/Attempt contract, provided the ProgramAttempt is otherwise still current and the Host authorizes the invocation.
 
 Therefore Phase 1.0 should not automatically interrupt work because an unrelated provider, tool catalog, or provider generation changed.
 
-### 2.3 DEFER — general dependency-ordered provider withdrawal
+### 2.2 ACCOMMODATE / DEFER — canonical provider-generation provenance per operation
+
+Persisting the exact provider generation used by an operation is a strong Host-capability provenance improvement, but the current Phase 1.0 plan does not yet contain an acceptance predicate that consumes provider-generation identity.
+
+Current Phase 1.0 correctness already has stable `operationId` correlation. A late or recovered operation remains that same operation even if the live provider has since changed. The existing plan does not reinterpret an old operation as belonging to the replacement provider merely because the provider identity is absent from the operation record.
+
+Accordingly, this study does **not** claim that AC-10-06, replay, or uncertainty semantics are presently incomplete without provider-generation attribution.
+
+Instead, exact operation execution-binding provenance is classified as:
+
+```text
+Host capability substrate hardening / successor design constraint
+```
+
+It should become a Phase 1.0 requirement only if planning adds a predicate or recovery rule whose correctness depends on provider incarnation—for example provider-specific reconciliation, provider-profile verification, or a long-lived provider-backed resource.
+
+### 2.3 CURRENT-SUBSTRATE HARDENING IDEA — tighten dynamic-binding linearization
+
+The source inspection did uncover a narrower implementation-level concern in the existing dynamic capability substrate: the broker checks the expected dynamic revision before asynchronous policy/approval/cognition work and does not visibly revalidate that revision at canonical operation admission.
+
+That is a potential stale-binding TOCTOU surface. It is important, but this planning study does not reopen an earlier frozen phase or silently make it Phase 1 scope.
+
+Classify it separately:
+
+```text
+current Host capability hardening idea
+not a ProgramState design requirement by itself
+```
+
+If it is pursued, it needs its own explicit objective and tests against the existing dynamic-capability contract.
+
+### 2.4 DEFER — general dependency-ordered provider withdrawal
 
 The following remain successor Host-runtime composition concerns:
 
 - a ProgramAttempt-wide committed dependency view;
 - dependency graphs between live Host components;
-- two-phase provider withdrawal that drains all dependent components;
+- two-phase provider withdrawal that drains arbitrary dependents;
 - general HMR / live component replacement;
 - reversible-effect tracking for arbitrary Host components;
 - confluence of dynamic component assembly.
 
-Those become relevant if ALCODE later treats long-lived Host services or provider-backed handles as runtime dependencies that must remain stable through a component/attempt episode.
+Those become relevant if ALCODE later treats long-lived Host services or provider-backed handles as dependencies that must remain stable through an episode.
 
-## 3. Why Cordis does not map one-to-one onto an ALCODE ProgramAttempt
+## 3. Why Cordis does not map one-to-one onto ProgramAttempt
 
-Cordis's committed view binds a running component episode to the specific providers of the values/services that component declared as dependencies. That binding remains usable through dependent teardown, and provider withdrawal is ordered after dependent withdrawal.
+Cordis's committed view binds a running component episode to the specific providers of values/services that the component declared as dependencies. The binding remains usable through dependent teardown, and provider withdrawal is ordered after dependent withdrawal.
 
-ALCODE's current dynamic tool seam is different in an important way:
+ALCODE's current dynamic capability seam has a different grain:
 
 ```text
 Cordis dependency
-  long-lived resolved value/service used throughout an episode
+  long-lived resolved value/service used throughout a component episode
 
 ALCODE dynamic capability
-  Host-authorized invocation resolved at a tool-call boundary
+  Host-authorized invocation resolved at a tool-call/inference boundary
 ```
 
-Treating every ALCODE capability provider as if it were a long-lived coeffect would over-bind `ProgramAttempt` authority to runtime implementation topology.
+Treating every ALCODE capability provider as a long-lived coeffect would over-bind `ProgramAttempt` authority to runtime implementation topology.
 
-The useful Cordis transfer is therefore narrower:
+The transferable rule is narrower:
 
-> A computation must not silently cross from one dependency identity to another *inside the unit whose correctness assumes that identity*.
+> A computation should not silently switch dependency identity inside a unit whose correctness actually assumes stable dependency identity.
 
-For current ALCODE capabilities, that unit is normally the durable operation, not the entire ProgramAttempt.
+For current Phase 1.0 ProgramState semantics, no acceptance criterion establishes that the whole ProgramAttempt is such a unit for capability providers.
 
-If a future capability returns a provider-backed lease, transaction, stream, process handle, browser page, remote workspace, or other long-lived resource, the unit may become larger. That future contract may require a committed binding spanning the resource lifetime.
+A future provider-backed lease, transaction, stream, process handle, browser page, remote workspace, or similar resource may create exactly that requirement. The binding lifetime should then follow the resource/episode that depends on it, rather than being imposed globally on every ProgramAttempt.
 
 ## 4. Current ALCODE source model
 
-This study inspected the exact planning base above rather than reasoning from a hypothetical provider system.
+This study inspected the exact planning base above.
 
-### 4.1 Agent Protocol already models per-inference binding freshness
+### 4.1 Agent Protocol already scopes dynamic binding to provider inference/tool use
 
 `@alcode/agent-protocol` defines:
 
@@ -143,22 +143,20 @@ interface CapabilityRequest {
 }
 ```
 
-The protocol calls the tool set an `InferenceToolCatalog` and documents it as the Host-authorized tool catalog for **exactly one provider inference**.
+The protocol calls the tool set an `InferenceToolCatalog` and documents it as Host-authorized for **exactly one provider inference**.
 
-That is already a smaller committed-view boundary:
+The intended boundary is therefore already smaller than a ProgramAttempt:
 
 ```text
 Host prepares inference
-→ tool descriptor carries dynamic revision G0
-→ Agent emits tool request expected G0
-→ Host rejects if the current binding is no longer G0
+→ tool C is described with dynamic revision G0
+→ Agent emits request expected G0
+→ Host rejects if C is no longer bound to G0
 ```
-
-This is intentionally not a ProgramAttempt-wide catalog snapshot.
 
 ### 4.2 CapabilityBroker has explicit dynamic provider generations
 
-`CapabilityBroker` stores a dynamic registration as:
+`CapabilityBroker` stores dynamic registrations with:
 
 ```text
 providerId + revision + capability names
@@ -166,50 +164,55 @@ providerId + revision + capability names
 
 `registerDynamicProvider(providerId, revision, capabilities)`:
 
-- requires a non-empty provider identity and revision;
-- forbids reusing a retired `providerId@revision` binding;
-- atomically stages a replacement generation;
+- requires provider identity and revision;
+- forbids reuse of a retired `providerId@revision` pair;
+- stages a replacement before publishing it;
 - retires the previous generation;
-- rejects conflicts without partially replacing the catalog.
+- rejects conflicting registrations without partial replacement.
 
-For a dynamic tool invocation, `execute()` requires:
+For dynamic invocation, `execute()` requires:
 
 ```text
 request.expectedCapabilityRevision === registration.binding.revision
 ```
 
-before policy/capability execution proceeds. The existing test suite proves stale-ABA rejection and non-reuse of a retired generation.
+The existing dynamic-capabilities tests cover stale ABA rejection, missing revisions for dynamic tools, conflict rejection, and retired-generation non-reuse.
 
-This establishes an important current distinction:
+This gives distinct identity dimensions:
 
 ```text
 ProgramState revision
   durable semantic state generation
 
-Agent generation
-  replaceable Agent-process generation
+ProgramAttemptId
+  one current dispatch/claim
+
+AgentGenerationId
+  replaceable Agent-process identity
 
 Dynamic capability revision
-  provider/tool binding generation
+  one provider/tool binding generation
 ```
 
-None substitutes for another.
+One should not be encoded as another.
 
-### 4.3 MCP already creates provider-scoped runtime generations
+### 4.3 MCP and plugin layers already carry narrower generation identities
 
-`HostMcpManager` gives one server a stable provider identity:
+`HostMcpManager` gives each MCP server a stable provider identity:
 
 ```text
 mcp:<plugin-registration-id>:<server-name>
 ```
 
-and mints a fresh random revision whenever its exported tool catalog is replaced.
+and mints a new random capability revision when it replaces that server's exported tool catalog.
 
-A capability closure also captures the MCP runtime instance and checks that the runtime is still current before executing. Unexpected stdio process exit withdraws the capabilities before bounded restart. Restart revalidates exact plugin-generation trust before starting a process.
+A generated MCP capability closure captures the runtime instance and refuses execution when that runtime is no longer current. Unexpected stdio exit withdraws the current capabilities before bounded restart.
 
-The plugin layer separately uses a content digest as the trusted plugin generation and withdraws an active digest before clearing its trusted binding.
+The plugin layer separately uses a content digest as the trusted plugin generation. Plugin replacement/disable/refresh withdrawal removes the active generation before the service clears its trusted binding.
 
-Thus ALCODE already has at least three relevant identities:
+The restart path **can** revalidate exact plugin-generation process-start trust through `authorizeProcessStart`, and the Host/plugin service exposes that revalidation operation. However `HostMcpManagerOptions.authorizeProcessStart` is optional; when it is absent, the manager falls back to the cached activation. This study therefore does not treat exact restart revalidation as an unconditional property of every possible `HostMcpManager` construction.
+
+Relevant identities remain separate:
 
 ```text
 plugin generation digest
@@ -217,13 +220,9 @@ MCP providerId
 MCP dynamic capability revision
 ```
 
-A Phase 1 design should not collapse these into `ProgramAttemptId` or `ProgramState.revision`.
+### 4.4 Durable operations do not currently persist dynamic provider generation
 
-### 4.4 Durable operation state currently loses the dynamic binding
-
-This is the important correctness gap exposed by the study.
-
-The broker validates the dynamic revision in memory, but the canonical `operation.requested` payload currently records only:
+The broker's canonical `operation.requested` payload records:
 
 ```ts
 {
@@ -234,311 +233,260 @@ The broker validates the dynamic revision in memory, but the canonical `operatio
 }
 ```
 
-The durable `OperationRecord` likewise contains tool name, args, lifecycle/outcome/effect/reconciliation state, but no dynamic provider identity or provider revision.
+The durable `OperationRecord` likewise stores the operation identity, tool, arguments, lifecycle/outcome/effect/reconciliation state, but no provider ID or dynamic capability revision.
 
-Therefore, after the invocation leaves the in-memory broker path, the canonical record cannot answer:
-
-```text
-Which provider incarnation was operation O admitted against?
-```
-
-That matters when Phase 1.0 wants a durable chain:
+Therefore canonical replay cannot answer this audit/provenance question from the operation record alone:
 
 ```text
-ProgramState P
-→ ProgramAttempt A
-→ operation O
-→ exact execution binding B
-→ result / evidence / reconciliation
+Which dynamic provider generation was selected when O was invoked?
 ```
 
-Without `B`, replay can preserve `O` and `A` yet still lose part of the execution provenance needed to distinguish a replaced provider from the one that actually ran.
+That is a real provenance limitation. It is **not**, under the current Phase 1 plan, proof of a ProgramState correctness defect: `operationId` still preserves the identity of O, and current AC-10 predicates do not require provider incarnation to evaluate O's effect, attempt ownership, or verification freshness.
 
-### 4.5 Binding validation and operation admission are not one serialized cut today
+This distinction is the reason the study classifies provider-generation persistence as accommodate/defer rather than promote.
 
-The current broker reads the capability registration and checks `expectedCapabilityRevision` before policy hooks, approval, cognition matching, and canonical `operation.requested` admission.
+### 4.5 Dynamic revision check precedes asynchronous admission work
 
-Those steps can be asynchronous. The binding is not revalidated inside the canonical admission operation immediately before `operation.requested` is appended.
+The broker reads the registration and checks `expectedCapabilityRevision` before policy authorization, hooks/approval, cognition matching, and canonical `operation.requested` append.
 
-This creates a general TOCTOU shape:
+Those steps can be asynchronous. The same revision is not visibly re-read inside the canonical admission callback immediately before operation creation.
+
+Potential history:
 
 ```text
-read current binding B
-→ validate expected B
-→ asynchronous policy / approval / cognition work
-→ provider changes B → B'
-→ operation O is admitted using the earlier captured capability
+read C@G0
+→ expected G0 passes
+→ await policy / approval / cognition
+→ provider changes to G1
+→ continue toward operation admission with captured registration
 ```
 
-MCP narrows some consequences by having the captured capability closure reject when its captured runtime instance is no longer current. That is useful but not a complete canonical proof:
+MCP narrows some consequences because a captured capability checks the captured runtime against the current runtime before calling it. But this does not establish a general canonical linearization theorem for dynamic binding, and a catalog revision may change while the same runtime object remains.
 
-- the durable operation still does not record `B`;
-- a catalog revision can change without necessarily changing the runtime object;
-- the Host cannot reconstruct from canonical events whether operation admission and binding validity linearized on one state cut.
-
-The Phase 1 requirement should therefore be expressed as an **admission invariant**, not merely as an Agent-supplied revision check.
+This is a useful hardening finding for the Host capability substrate. It should not be smuggled into Phase 1 implementation scope by a planning study.
 
 ## 5. Canonical ownership model
 
-The minimal ownership split is:
+The current safe ownership split is:
 
 ```text
 ProgramState
-  owns durable work/verification/completion truth
+  owns durable work / verification / completion truth
 
 ProgramAttempt
   owns bounded current work authority
 
 CapabilityBroker / Host capability layer
-  owns current binding resolution
+  owns current capability binding resolution
 
 Operation
-  owns the exact execution binding chosen for that invocation
+  owns durable identity of one admitted execution attempt
 
 Provider runtime
-  executes under that binding
+  performs the provider-specific execution
 ```
 
-Other domains may reference these identities but should not duplicate their authority.
+Provider-generation provenance, if later made canonical, belongs with operation/execution provenance—not inside ProgramState revision identity.
 
-A conceptual operation-correlation shape is:
+A future shape could resemble:
 
 ```text
 OperationExecutionBinding {
   capabilityName
   bindingKind
-  providerId?       // Host-only provider identity where dynamic
-  providerRevision? // exact dynamic generation
+  providerId?
+  providerRevision?
 }
 ```
 
-Names and schema placement are deliberately unresolved. The requirement is semantic: exact, mechanically lossless execution provenance must be canonical before a provider-dependent external effect is trusted.
+but this is illustrative only. No schema is approved by this study.
 
-For static capabilities, a stable static binding marker may be sufficient. For dynamic capabilities, revision alone may be sufficient for Agent-side ABA rejection, but Host recovery/provenance may additionally require the Host-internal provider identity.
+## 6. Why expectedProgramRevision is not a provider-generation check
 
-## 6. Why `expectedProgramRevision` is insufficient
-
-A provider can restart or publish a new capability generation without any ProgramState mutation.
-
-Example:
+A provider can restart or publish a new capability generation without any ProgramState mutation:
 
 ```text
-ProgramState revision = R17
-Attempt A current at R17
-MCP provider generation = G0
-→ provider restarts
-MCP provider generation = G1
-ProgramState revision still = R17
+ProgramState revision R17
+Attempt A current
+provider G0
+→ provider changes to G1
+ProgramState still R17
 ```
 
-Both of the following can be true:
+Thus:
 
 ```text
 expectedProgramRevision == currentProgramRevision
-expectedCapabilityRevision != currentCapabilityRevision
 ```
 
-ProgramState validity and capability-binding validity are orthogonal dimensions.
+says nothing about whether an old dynamic capability descriptor is current.
 
-Likewise, replacing the Agent changes `AgentGenerationId` without necessarily changing either ProgramState or the capability provider.
+The reverse is also true: capability revision equality says nothing about whether the ProgramAttempt remains current.
 
-Phase 1 should retain all three checks at their proper boundaries rather than encoding one generation into another.
+Agent generation is a third orthogonal identity.
+
+This supports keeping the checks separate, but it does not prove they all need to be copied into ProgramState.
 
 ## 7. Event-history probes
 
-The following histories test the candidate designs.
-
-### H1 — provider changes before the first capability invocation
+### H1 — provider changes before the first invocation
 
 ```text
 Attempt A admitted at ProgramState R17
-→ no capability has yet been invoked
+→ no capability invoked yet
 → provider P changes G0 → G1
-→ A requests capability C under the current Host catalog
+→ A receives current tool binding and requests C@G1
 ```
 
-Whole-attempt snapshot result:
-
-```text
-A must interrupt solely because P changed
-```
-
-Invocation-scoped result:
-
-```text
-if A remains current and policy authorizes C
-→ Host may resolve C to G1
-→ operation O records G1
-```
-
-**Finding:** no existing Phase 1 guarantee is violated by the invocation-scoped result. Whole-attempt interruption is unnecessary here.
+**Result:** current Phase 1 semantics can remain correct with the same ProgramAttempt. Whole-attempt interruption is unnecessary.
 
 ### H2 — unrelated provider changes
 
 ```text
-Attempt A uses provider P
-→ unrelated provider Q changes Q0 → Q1
+Attempt A may use P
+→ unrelated Q changes Q0 → Q1
 ```
 
-**Required result:** A does not become stale merely because unrelated runtime topology changed.
+**Result:** no current Phase 1 predicate requires A to become stale. A global capability snapshot would introduce unrelated invalidation.
 
-A global provider/catalog snapshot attached to the ProgramAttempt would create unnecessary invalidation.
-
-### H3 — stale Agent inference requests old dynamic generation
+### H3 — stale inference requests old generation
 
 ```text
-Host supplies capability C@G0 for inference I
+Host supplies C@G0 for inference I
 → provider changes G0 → G1
-→ Agent emits tool request expected G0
+→ Agent emits request expected G0
 ```
 
-**Required result:** reject before execution as stale.
+**Result:** existing dynamic capability semantics intend rejection as stale before capability execution.
 
-Current dynamic capability semantics already intend this result.
-
-### H4 — provider changes after revision check but before canonical operation admission
+### H4 — binding changes after initial check
 
 ```text
 Host reads C@G0
-→ request expected G0 passes
-→ policy/approval/cognition await
+→ expected G0 passes
+→ asynchronous policy/approval/cognition work
 → provider changes G0 → G1
-→ Host reaches operation admission
+→ broker reaches operation admission
 ```
 
-**Required result:** O cannot be admitted as though binding freshness were still proven at the operation boundary.
+**Result:** this is a Host capability TOCTOU hardening case. It does not require ProgramAttempt-wide provider commitment. A capability-layer fix, if authorized separately, should define the desired linearization behavior.
 
-The Host must either revalidate G0 at the linearization point or admit an exact G0 execution binding under a mechanism that proves G0 remains executable for O.
-
-This is the strongest current counterexample.
-
-### H5 — operation admitted against G0, provider changes before result
+### H5 — operation starts before provider changes
 
 ```text
-Attempt A current
-→ O canonically admitted against G0
-→ O starts
-→ provider catalog becomes G1
-→ O returns
+Attempt A
+→ O starts through G0
+→ live provider becomes G1
+→ O completes
 ```
 
-**Required result:** O's result remains a result of G0. It is not converted to G1 provenance.
+**Result:** durable `operationId` keeps the result attached to O. The current Phase 1 contract does not require provider revision to decide that O remains O.
 
-Whether O is allowed to finish is provider-specific; the durable identity is not.
+Persisting G0 would improve auditability and could support future provider-specific reconciliation, but no current acceptance predicate consumes it.
 
 ### H6 — late result from superseded ProgramAttempt
 
 ```text
-A → O@G0 starts
+A → O starts
 → A interrupted
-→ B becomes current
-→ provider becomes G1
-→ O@G0 returns late
+→ B current
+→ provider changes
+→ O returns late
 ```
 
-**Required result:** canonical history may record O's terminal state under A/G0, but it cannot become current ProgramState evidence merely because B or G1 is now current.
+**Result:** Phase 1 rejects reassignment through ProgramAttempt ownership/correlation. Provider-generation identity is not needed to establish that A is stale.
 
-This composes stale-attempt admission with exact operation binding.
-
-### H7 — Host crashes with O@G0 requested/started
+### H7 — Host crash with a nonterminal operation
 
 ```text
-A → O@G0 requested/started
+A → O requested/started
 → Host crashes
-→ provider process disappears
-→ Host reopens and provider is now G1
+→ provider process disappears/restarts
+→ Host reopens
 ```
 
-**Required result:** recovery preserves O as interrupted/indeterminate according to operation semantics and retains that O targeted G0. Reconciliation must not silently reinterpret O as a G1 operation.
+**Result:** existing operation recovery marks the surviving nonterminal operation indeterminate/pending and does not auto-retry it. The immutable `operationId` is enough for this current rule.
 
-This is where canonical provider binding materially supports Phase 1 uncertainty correctness.
+If reconciliation later needs to address a particular provider incarnation, provider-generation provenance becomes necessary for that *new* reconciliation contract.
 
 ### H8 — identical provider behavior, different generation
 
 ```text
-G0 and G1 expose byte-identical schemas and produce equivalent results
+G0 and G1 expose equivalent schemas/results
 ```
 
-**Required result:** they remain distinct execution bindings for authority/provenance purposes.
+**Result:** dynamic binding still treats them as distinct generations for stale-request control. Observational equivalence should not collapse runtime authority identity, but Phase 1 does not need to elevate that identity into ProgramState.
 
-Observational equivalence can justify behavior-level reasoning; it must not erase exact Host execution identity.
-
-### H9 — same ProgramAttempt invokes old then new generation in separate operations
+### H9 — same ProgramAttempt uses old then new generations
 
 ```text
 A current at R17
-→ O1 admitted/executed under G0
-→ G0 replaced by G1
-→ A remains semantically current at R17
-→ new inference/catalog exposes G1
-→ O2 admitted/executed under G1
+→ O1 executes through G0
+→ provider becomes G1
+→ A remains current at R17
+→ later inference exposes G1
+→ O2 executes through G1
 ```
 
-**Finding:** this can be correct when A's authority is capability-level rather than provider-instance-level. Canonical history remains unambiguous because O1 binds G0 and O2 binds G1.
+**Result:** no current Phase 1 invariant is broken merely because O1 and O2 used different provider generations. This is the decisive counterexample to whole-attempt commitment.
 
-Therefore `G0 → G1` does not inherently require a new ProgramAttempt.
-
-### H10 — long-lived provider-backed resource
+### H10 — provider-backed long-lived resource
 
 ```text
-A invokes capability under G0
-→ receives handle H whose validity depends on G0
-→ provider changes to G1
-→ A uses H again
+A invokes under G0
+→ receives handle H whose validity/teardown depends on G0
+→ provider becomes G1
+→ A uses or releases H
 ```
 
-**Required future result:** invocation-scoped rebinding alone is insufficient. H requires an explicit resource/binding lifetime whose provider cannot be silently changed.
+**Result:** invocation-scoped freshness is no longer enough. H needs an explicit binding lifetime and possibly provider-quiescence semantics.
 
-**Finding:** this justifies accommodating a future committed-dependency mechanism without imposing one on all Phase 1 capability calls.
+This is the case for accommodating Cordis-like committed dependency resolution later.
 
-### H11 — replacement Agent with same current ProgramAttempt
+### H11 — replacement Agent
 
 ```text
 Attempt A current
-→ Agent generation X dies before invoking capability
-→ Agent generation Y resumes current Host state
-→ provider changed meanwhile G0 → G1
+→ Agent X dies
+→ Agent Y resumes Host-owned state
+→ provider changed G0 → G1 meanwhile
 ```
 
-**Required result:** Y cannot reuse X's stale inference/tool binding. It receives current Host-authorized structured context/catalog and any new invocation is admitted against its exact current binding.
-
-Whether A itself remains current depends on Phase 1 Agent-generation ownership rules; provider identity does not substitute for that check.
+**Result:** Y must not reuse X's stale inference binding. Agent-generation/Attempt validity and current capability binding are separate checks. Provider change alone does not decide whether A remains a valid ProgramAttempt.
 
 ### H12 — verification pending across provider replacement
 
 ```text
-verification operation O@G0 is admitted
-→ G0 replaced by G1
-→ O@G0 evidence arrives
+verification-related O starts
+→ provider changes
+→ O evidence arrives
 ```
 
-**Required result:** evidence provenance remains O@G0. Verification freshness remains governed by ProgramState's verification subject generation, not by an automatic rule that every provider replacement invalidates every verification.
+**Result:** current verification freshness is indexed by the ProgramState verification subject generation. Provider replacement does not automatically create a second freshness system.
 
-A verification predicate may explicitly require a provider/profile identity in the future; absent such a predicate, provider replacement alone is not a ProgramState subject mutation.
+If a future verification criterion explicitly requires a named provider/profile generation, that future criterion must carry and evaluate it explicitly.
 
-### H13 — unexpected MCP process exit and restart
+### H13 — unexpected MCP exit and restart
 
 ```text
-MCP G0 process exits
+MCP process exits
 → current capabilities withdrawn
 → bounded restart
-→ new runtime/catalog generation G1
+→ new capability revision
 ```
 
-**Required result:** calls expecting G0 reject as stale; new calls may use G1 after Host admission. Any operation already durably associated with G0 stays G0-associated through recovery/evidence handling.
+**Result:** old inference bindings become stale for new calls. Existing operations keep their own operation identity. Exact restart trust revalidation is conditional on the configured `authorizeProcessStart` path and should not be assumed universally.
 
-### H14 — same canonical log, same rebuild
+### H14 — rebuild
 
 ```text
-canonical events contain:
-Attempt A
-O1@G0 requested/started/completed
-O2@G1 requested/started/completed
+canonical log contains Attempt A + O1 + O2
+live provider has moved through G0 → G1
 ```
 
-**Required result:** deleting/rebuilding projections reproduces the distinction between O1/G0 and O2/G1 without consulting current live provider state.
+**Result:** current Phase 1 rebuild can reproduce ProgramAttempt/operation/evidence state without reconstructing provider generations because no current ProgramState reducer predicate consumes them.
 
-That is not possible if provider binding exists only in the in-memory broker.
+A future provider-aware audit/reconciliation projection would require additional canonical provenance.
 
 ## 8. Competing designs
 
@@ -546,232 +494,192 @@ That is not possible if provider binding exists only in the in-memory broker.
 
 ```text
 program.attempt.started
-→ snapshot every usable capability/provider binding
-→ any relevant or unrelated catalog change invalidates snapshot
+→ snapshot provider bindings
+→ provider change invalidates attempt
 ```
 
-Advantages:
+Benefits:
 
 - close to Cordis committed-view semantics;
-- strong resolution coherence;
-- simple statement: one attempt, one execution world.
+- simple resolution-coherence statement.
 
-Costs/problems:
+Costs:
 
-- over-binds ProgramAttempt authority to implementation topology;
-- unrelated provider changes can interrupt useful work;
-- does not match the existing per-inference/per-tool Agent Protocol boundary;
-- turns dynamic capability refresh into ProgramState attempt churn;
-- creates a much larger durable snapshot and invalidation problem;
-- moves toward general runtime-component composition, which Phase 1 does not otherwise require.
+- over-binds ProgramAttempt authority to runtime topology;
+- unrelated provider changes can interrupt work;
+- conflicts with the current per-inference/per-tool dynamic binding grain;
+- creates broad durable snapshot/invalidation machinery;
+- moves toward a general runtime component system.
 
 **Decision:** defer.
 
-### Design B — current per-request revision check only
+### Design B — current per-request dynamic revision check
 
 ```text
-Agent request carries expected dynamic revision
-→ in-memory broker compares before execution
+Agent request carries expected revision
+→ broker checks current registration
 ```
 
-Advantages:
+Benefits:
 
-- already implemented;
-- lightweight ABA rejection;
-- supports dynamic provider refresh.
+- implemented now;
+- rejects stale dynamic generations at request entry;
+- supports provider refresh without ProgramAttempt churn.
 
-Problems:
+Limitations:
 
-- exact binding is lost from durable operation provenance;
-- binding check can precede asynchronous work and canonical operation admission;
-- replay cannot reconstruct exact provider incarnation from canonical state;
-- uncertainty/reconciliation cannot mechanically distinguish old/new provider generations from the operation record alone.
+- provider generation is not retained as durable operation provenance;
+- revision validation is not visibly linearized with later canonical operation admission;
+- cannot support provider-incarnation-specific replay/reconciliation without further metadata.
 
-**Decision:** insufficient for Phase 1 ProgramAttempt-linked durable operations.
+**Decision:** sufficient for the current Phase 1 ProgramState contract as currently written; record the limitations as capability-substrate hardening/successor concerns rather than silently expanding Phase 1.
 
-### Design C — invocation-scoped canonical execution binding
+### Design C — canonical invocation-scoped execution binding
 
 ```text
 A current
 → Host resolves C to B
-→ binding validity and operation admission linearize together
-→ operation O durably records B + A correlation
-→ execution/result/reconciliation remain tied to O/B
-→ later call may resolve B' if A remains current
+→ operation O durably records B
+→ O/result/reconciliation keep B
+→ later O2 may record B' while A remains current
 ```
 
-Advantages:
+Benefits:
 
-- closes the durable provenance and replay hole;
-- composes with current Agent Protocol dynamic binding;
-- preserves dynamic provider refresh;
-- avoids unrelated ProgramAttempt invalidation;
-- aligns exact identity with the operation that actually executes;
-- naturally composes with existing uncertainty/reconciliation semantics.
+- stronger audit and execution provenance;
+- enables provider-specific reconciliation;
+- composes naturally with dynamic refresh;
+- avoids whole-attempt invalidation.
 
-**Decision:** promote as the minimum semantic requirement.
+Cost:
+
+- adds a new canonical fact not consumed by current Phase 1 acceptance predicates.
+
+**Decision:** accommodate/defer. Promote only when an approved contract actually relies on provider incarnation.
 
 ## 9. Resolution coherence in ALCODE-native terms
 
-The Cordis-inspired property should be stated at the right ALCODE boundary:
+The Cordis-inspired property should be attached to the smallest authority boundary whose correctness needs it.
 
-> An admitted capability operation must not straddle two execution bindings.
-
-Not:
-
-> A ProgramAttempt may never observe two provider generations.
-
-For one operation:
+Today the strongest justified statements are:
 
 ```text
-operation O admitted under B
-→ B is immutable provenance of O
-→ no Host path rebinds O to B'
+Agent inference/tool descriptor
+→ old dynamic revision must not authorize a new call after replacement
+
+ProgramAttempt
+→ stale Attempt must not admit current ProgramState mutations/evidence
+
+Operation
+→ immutable operationId keeps terminal/recovery facts attached to the operation that was admitted
 ```
 
-For one ProgramAttempt:
+The study does **not** establish:
 
 ```text
-Attempt A
-  ├─ O1 under B0
-  └─ O2 under B1
+ProgramAttempt
+→ every operation must use one immutable provider generation
 ```
 
-may be valid when both operations were independently admitted while A remained current.
-
-The durable chain is then exact without forcing an artificial single-provider world:
-
-```text
-ProgramState P / revision R
-→ ProgramAttempt A
-→ operation O1 / binding B0
-→ canonical evidence E1
-
-ProgramState P / revision R
-→ ProgramAttempt A
-→ operation O2 / binding B1
-→ canonical evidence E2
-```
+A future long-lived provider-backed resource can introduce a larger committed-resolution boundary when there is an actual semantic dependency to protect.
 
 ## 10. Provider withdrawal
 
-Current plugin/MCP code already contains useful narrow lifecycle discipline:
+Current plugin/MCP code already contains narrower lifecycle mechanisms:
 
 ```text
-plugin generation withdrawn
-→ dynamic capabilities disposed
-→ runtime closed
+plugin withdrawal
+→ dispose current dynamic capabilities
+→ close runtime
 ```
 
-and unexpected MCP exit:
+and unexpected stdio exit:
 
 ```text
 process exits
 → capabilities disposed
 → runtime cleared
 → bounded restart
-→ process-start trust revalidated
-→ new dynamic capability revision minted
+→ new dynamic capability generation
 ```
 
-This is sufficient as a provider-local implementation pattern for the current study.
+These are provider-local mechanisms, not a general Host dependency calculus.
 
-Phase 1 does not need to generalize it into a Cordis-style dependency graph across all Host components.
-
-One future exception is active provider-backed resources. If ALCODE later exposes handles whose teardown/use requires the old provider, provider withdrawal must gain a quiescence protocol resembling:
+A future resource/Host-component design may need Cordis-like two-phase withdrawal:
 
 ```text
 withdraw new admission
-→ retain old binding for admitted dependents
-→ dependent teardown/quiescence
-→ dispose provider generation
+→ retain old generation for already-bound dependents
+→ dependent quiescence/teardown
+→ dispose old generation
 ```
 
-That is explicitly outside this Phase 1 validation decision.
+Nothing in the current Phase 1 contract requires that generalization.
 
-## 11. Interaction with Phase 1.0 acceptance areas
+## 11. Relationship to Phase 1.0 acceptance areas
 
-This study changes no acceptance criteria by itself. If the governing plan is later amended, the minimum semantic change belongs primarily under the existing **AC-10-06 — Effect uncertainty and durable attempt correlation**, not in a new capability-resolution AC family.
+**No existing AC-10 criterion should be amended solely from this study.**
 
-The required negative proofs would be variations of:
+- AC-10-04 continues to own ProgramState revision, ProgramAttempt, work-item, and Agent-generation freshness.
+- AC-10-06 continues to own durable ProgramState/ProgramAttempt correlation and external-effect uncertainty through immutable operation identity.
+- AC-10-07 continues to own verification subject freshness.
 
-```text
-Attempt A → O@G0
-→ provider becomes G1
-→ A superseded or Host crashes
-→ late/recovered O remains correlated to A/G0
-→ no reassignment to current Attempt/Provider
-```
+Provider-generation provenance remains separate unless a later approved predicate explicitly needs it.
 
-and:
+If that happens, the likely place is operation/evidence provenance adjacent to AC-10-06, but that is a future planning decision rather than a conclusion of this study.
 
-```text
-G0 validated
-→ asynchronous admission work
-→ provider becomes G1 before operation admission
-→ O cannot cross the binding change without revalidation / exact preserved binding authority
-```
+## 12. Source-observed hardening candidates outside this decision
 
-AC-10-04 continues to own ProgramAttempt/ProgramState/Agent-generation freshness. AC-10-07 continues to own verification subject freshness. The capability execution binding is a third identity dimension feeding those domains as provenance.
+The source inspection produced two bounded follow-up ideas that should not be confused with Phase 1 requirements:
 
-## 12. What should not be promoted from this study
+1. **Dynamic-binding TOCTOU proof.** Define/test whether a dynamic provider can change after the initial revision check but before operation admission/execution, and whether the broker must revalidate or retain the old binding under explicit authority.
+2. **Restart trust construction proof.** Determine whether every production `HostMcpManager` construction supplies `authorizeProcessStart`. The option is currently optional, so exact digest revalidation must be treated as conditional until the composition root proves otherwise.
 
-Do not add the following to Phase 1 solely because of this analysis:
+These are current-substrate questions. They require distinct authorization before code or earlier-phase contract changes.
 
-- `capabilityBindings[]` snapshot on every `ProgramAttempt`;
-- automatic ProgramAttempt interruption on every provider/catalog change;
-- global Host component dependency DAG;
-- generic component fibers or Cordis contexts;
-- arbitrary reversible-effect accumulation;
-- HMR transaction machinery;
-- provider quiescence across arbitrary Host services;
-- observational equivalence as ProgramState identity;
-- a second ProgramState freshness mechanism based on provider generations.
+## 13. Terminology to preserve
 
-## 13. Provisional terminology
+Keep these identities distinct in later planning:
 
-To avoid conflating existing generations, use distinct terms in subsequent planning:
-
-- **ProgramState revision** — exact current durable ProgramState generation;
-- **ProgramAttemptId** — current dispatch/claim generation for one work item;
-- **AgentGenerationId** — replaceable Agent process identity;
-- **capability binding revision** — exact dynamic capability/provider generation presented for invocation;
+- **ProgramState revision** — current durable ProgramState generation;
+- **ProgramAttemptId** — current dispatch/claim identity;
+- **AgentGenerationId** — replaceable Agent-process identity;
+- **capability binding revision** — exact dynamic capability generation used for stale-call control;
 - **plugin generation digest** — content-addressed trusted plugin package generation;
-- **operation execution binding** — canonical provenance naming the exact capability binding admitted for one operation.
+- **operationId** — durable identity for one capability operation;
+- **operation execution binding** — possible future provenance identifying the exact provider binding used by one operation.
 
-The final type names and schema remain open.
-
-## 14. Promotion decision
-
-The validation result is:
+## 14. Final classification
 
 ```text
-PROMOTE
-  exact invocation-scoped execution binding for ProgramAttempt-linked operations
-  + immutable operation→binding provenance
-  + binding validity at the operation admission/linearization boundary
+DO NOT PROMOTE TO PHASE 1.0
+  ProgramAttempt-wide provider snapshot
+  provider-generation change ⇒ ProgramAttempt interruption
+  general dependency-ordered provider withdrawal
 
-ACCOMMODATE
-  future longer-lived committed binding for provider-backed resources
+ACCOMMODATE / DEFER
+  canonical operation execution-binding provenance
+  provider-incarnation-specific reconciliation
+  committed binding for long-lived provider-backed resources
 
-DEFER
-  whole-ProgramAttempt provider snapshot
-  + dependency-ordered general provider withdrawal
-  + dynamic Host-component composition/HMR
+CURRENT-SUBSTRATE HARDENING IDEA
+  prove/close dynamic-binding check-to-admission TOCTOU
+  prove mandatory restart trust revalidation at the production composition root
 ```
 
-The reason is structural:
+The governing reason is the contract-proof rule:
 
-> Phase 1.0 already promises durable attempt correlation and correct uncertainty/reconciliation. Those promises are incomplete if a provider-dependent operation cannot be replayed as targeting the exact provider generation that the Host admitted. They do not, however, require every capability invocation in one ProgramAttempt to use the same provider generation.
+> The current Phase 1.0 acceptance model can reconstruct and evaluate ProgramState/Attempt/operation uncertainty using immutable operation identity without consuming provider-generation identity. Therefore provider-generation attribution is not yet a Phase 1 correctness prerequisite.
 
-## 15. Consequence for later planning
+Cordis remains useful as a design constraint for a future runtime in which dependencies are long-lived and provider identity is semantically observable. That future need should not be projected backward onto every Phase 1 capability invocation.
 
-A later explicit planning amendment should consider only the promoted minimum:
+## 15. Consequence
 
-1. require exact execution-binding provenance for provider-dependent ProgramAttempt operations;
-2. make binding validity and operation admission one revalidated/serialized semantic cut;
-3. preserve binding identity through result, evidence, crash recovery, and reconciliation;
-4. add stale/replacement negative proofs to AC-10-06;
-5. leave ProgramAttempt-wide committed provider views and general runtime composition outside the Phase 1 implementation slice.
+This study produces **no Phase 1.0 governing-plan amendment**.
 
-This document does **not** make that governing-plan amendment, does not approve Phase 1.0, and does not authorize implementation.
+The next action, if explicitly authorized, should be one of two separate objectives rather than a ProgramState change:
+
+1. a focused Host-capability hardening study/test of dynamic-binding linearization; or
+2. later runtime-composition design for long-lived provider-backed resources and dependency-ordered withdrawal.
+
+This document does not approve Phase 1.0, does not freeze it, and does not authorize implementation.
