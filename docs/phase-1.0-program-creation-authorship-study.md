@@ -3,11 +3,11 @@
 **Status:** DRAFT / non-normative planning study  
 **Approval:** not approved; not frozen; implementation not authorized  
 **Repository base studied:** `main` at `ff211b5c0c7d9f93946ab6a2ad42e45a58ca693c`  
-**Relationship to Phase 1.0:** studies one additional contract question exposed by the interaction between Program creation, immutable completion requirements, and the first-slice topology decision. It does not amend `docs/phase-1.0-plan.md`, change AC-10 acceptance criteria, approve/freeze Phase 1.0, or authorize implementation.
+**Relationship to Phase 1.0:** studies one additional contract question exposed by Program creation, immutable completion requirements, and the first-slice topology decision. It does not amend `docs/phase-1.0-plan.md`, change AC-10 acceptance criteria, approve/freeze Phase 1.0, or authorize implementation.
 
 ## 1. Question
 
-The Phase 1.0 draft says the Host owns ProgramState and Program creation. The current alternatives study recommends an immutable first-slice completion contract built from universal Completion Oracle invariants plus mandatory verification requirements, and recommends no automatic Agent-originated canonical topology mutation after creation.
+The current Phase 1.0 draft says the Host owns ProgramState and Program creation. The existing alternatives study recommends an immutable first-slice completion contract built from universal Completion Oracle invariants plus mandatory verification requirements, and recommends no automatic Agent-originated canonical topology mutation after creation.
 
 That leaves one material question:
 
@@ -15,41 +15,52 @@ That leaves one material question:
 
 “Host owns ProgramState” answers canonical ownership. It does **not** answer semantic authorship or semantic acceptance.
 
-This study also pressure-tests two consequences of creation-time immutability:
+The study also checks the consequences of making that initial contract immutable:
 
-1. the accepted draft must still match the Workspace/repository state it was planned against; and
-2. acceptance must map to exactly one ProgramState even across crash/retry.
+- the accepted draft must be tied to the Workspace/repository observation it was planned against;
+- one accepted creation command must map to exactly one ProgramState across crash/retry;
+- already-running Host-mediated mutations cannot be treated as if canonical admission ordering froze the environment;
+- the study must distinguish **creation freshness** from the separate problem of **attempt-time out-of-band workspace mutation**.
 
-## 2. Scope
+## 2. Scope and guarantee boundary
 
-The study covers the boundary before the first `ProgramAttempt`:
+This study covers the boundary from caller intent through canonical Program creation and the first ProgramAttempt dispatch decision.
+
+It studies:
 
 - objective provenance;
 - initial DAG authorship;
 - mandatory verification authorship;
 - Host policy additions;
-- semantic acceptance authority;
+- exact semantic acceptance;
 - draft freshness against Workspace/repository observations;
-- Host-mediated mutation races;
+- Host-mediated mutation races at creation/dispatch;
 - exact-draft stale protection;
-- canonical creation atomicity/idempotence;
+- creation atomicity/idempotence;
 - crash/replacement/reconnect behavior.
 
-It does not decide the final verification predicate taxonomy, exact structural-limit numbers, general Program contract amendment/versioning, subagents, remote workers, or a general workflow language.
+It does **not** claim snapshot isolation for an entire ProgramAttempt or entire Program lifetime.
+
+In particular:
+
+> **“Creation freshness” in this document means that the accepted contract was planned against an identified Workspace/repository observation and that the Host revalidated that observation at the protected creation/dispatch boundary. It does not mean arbitrary external processes are prevented from changing the repository after dispatch.**
+
+A human editor or non-ALCODE process can still mutate the worktree after dispatch. That is a separate runtime correctness question. This study therefore makes its preferred creation model **conditional**: it is suitable for promotion only together with a separately resolved attempt-time out-of-band mutation detection/fail-closed contract.
+
+This study does not decide the final verification predicate taxonomy, exact structural-limit numbers, general Program contract versioning, subagents, remote workers, or a general workflow language.
 
 ## 3. Method
 
-For each alternative this study asks:
+For each alternative:
 
-1. where semantic intent originates;
-2. who proposes decomposition and verification;
-3. who may accept those semantics;
-4. what the Host can validate deterministically;
-5. what Workspace/repository observation the plan is valid for;
-6. what happens with in-flight mutation, stale drafts, crash, retry, replacement, replay, and reconnect;
-7. whether any model/Agent gains indirect completion authority.
+1. identify intent origin, semantic proposal, acceptance, and canonical authority;
+2. identify what the Host can validate deterministically;
+3. bind proposal semantics to the Workspace/repository observation used for planning;
+4. exercise stale draft, policy change, in-flight mutation, crash, retry, replacement, replay, and reconnect histories;
+5. reject unresolved duplicate authority, partial creation, duplicate creation, stale creation, or model/Agent indirect completion authority;
+6. separate what this creation decision proves from runtime concurrency questions it does not prove.
 
-Correctness is a gate. A convenience advantage does not compensate for duplicate authority, stale contract admission, partial creation, duplicate creation after crash, or an unsafe environmental race.
+Correctness is a gate. Where another unresolved subsystem is required for correctness, the recommendation is explicitly conditional rather than silently assuming that subsystem exists.
 
 ---
 
@@ -57,15 +68,15 @@ Correctness is a gate. A convenience advantage does not compensate for duplicate
 
 ## 4. Current facts
 
-### 4.1 Host canonical authority is already clear
+### 4.1 Host canonical ownership is already established
 
-`docs/phase-1.0-plan.md` assigns Program creation/attachment, canonical event admission, scheduling, verification admission, and terminal authority to `@alcode/host-runtime`. Program creation occurs under a Host session and records the initial attachment.
+`docs/phase-1.0-plan.md` assigns Program creation/attachment, canonical admission, scheduling, verification admission, and terminal authority to `@alcode/host-runtime`. Program creation occurs under a Host session and records initial attachment.
 
-That establishes **canonical ownership**, not who authors the semantic plan.
+That establishes canonical ownership, not semantic authorship.
 
-### 4.2 The initial semantic contract is intended to be durable and immutable
+### 4.2 Creation-time semantics are load-bearing
 
-The current plan makes the objective/completion contract immutable after creation. The existing open-decisions study recommends the first-slice completion contract become:
+The current plan makes objective/completion semantics immutable after creation. The open-decisions study recommends a first-slice completion contract of:
 
 ```text
 immutable objective
@@ -73,122 +84,109 @@ immutable objective
 + universal Host Completion Oracle invariants
 ```
 
-If promoted, creation-time verification authorship becomes load-bearing.
+The same study recommends no automatic Agent-originated required-work addition after creation.
 
-### 4.3 Static first-slice topology makes initial decomposition load-bearing
+Therefore both mandatory verification authorship and initial DAG authorship become part of the initial completion burden.
 
-The existing open-decisions study recommends no automatic Agent-originated canonical work addition after creation.
+### 4.3 No Program creation protocol exists yet
 
-Therefore:
+Current Application Protocol commands cover input, execution cancellation, queue promotion, and permission response. Current Agent Protocol has no Program creation vocabulary.
 
-```text
-initial required DAG
-→ scheduler's required work universe
-```
+So the creation authority boundary remains a planning decision.
 
-Initial decomposition is not just explanatory prose.
+### 4.4 Application Protocol provides useful precedent
 
-### 4.4 No Program creation protocol exists yet
-
-The current plan names Agent proposal classes, but current `@alcode/application-protocol` has no Program creation/draft/accept command and current `@alcode/agent-protocol` has no Program creation vocabulary.
-
-The creation boundary is therefore still a planning decision rather than an implemented contract.
-
-### 4.5 Application Protocol already provides useful precedent
-
-Current Application semantics establish:
+Existing behavior already uses:
 
 - stable `commandId`;
 - accepted/rejected/stale/duplicate/noop/failed decisions;
 - Host-owned structured pending interactions;
 - reconnect from Host snapshot/replay;
-- disposable Experience Plane state;
-- explicit target-sensitive stale protection.
+- disposable renderer state.
 
-Those patterns can be reused without moving authority into React.
+These patterns can support exact Program-draft acceptance without moving authority into the Experience Plane.
 
-### 4.6 The source objective can already have durable Host provenance
+### 4.5 Caller intent already has durable Host provenance
 
-`HostApplicationService` durably admits accepted user input before delivering START_NOW work to the Agent. A Program objective can therefore mechanically refer back to a Host-owned creation command/input event rather than an Agent paraphrase.
+`HostApplicationService` durably admits accepted user input before Agent execution. A Program objective can preserve and reference this Host-owned source rather than an Agent paraphrase.
 
-### 4.7 Canonical event batches are atomic
+### 4.6 Canonical batch append is atomic
 
-`CanonicalAdmissionQueue` serializes Host state-changing append work around one Workspace event store. `WorkspaceEventStore.append()` validates the complete draft batch and writes it in one SQLite transaction.
+`CanonicalAdmissionQueue` serializes Host event-store append work. `WorkspaceEventStore.append()` validates and commits the batch in one SQLite transaction.
 
-That permits a creation cut in which the complete Program contract becomes visible atomically.
+That supports atomic creation of the complete initial Program contract.
 
-### 4.8 Application duplicate handling makes command-to-Program atomicity load-bearing
+### 4.7 Exactly-one creation requires command mapping inside the same cut
 
-Current Application duplicate handling depends on durable command identity/effects. If Program events were committed and the accept-command decision were persisted later, this history would be possible:
+If Program events commit but the accept command is recorded handled in a later transaction, a crash can produce:
 
 ```text
 accept A
 → Program P commits
-→ Host crashes before A is recorded handled
+→ crash before A recorded handled
 → retry A
-→ Host sees no prior semantic result
-→ fresh ProgramStateId P2 minted
+→ new ProgramStateId P2
 ```
 
 Therefore:
 
-> **The accepted creation command must be durably mapped to the created ProgramStateId in the same atomic creation transaction, or Program identity must be deterministically derived from stable creation identity.**
+> **The accepted creation command must be durably mapped to the created ProgramStateId in the same atomic creation transaction, or an equivalently strong deterministic Program identity rule must be used.**
 
-This study prefers the atomic command→Program mapping because it composes directly with current Application idempotence.
+The preferred design uses the atomic command→Program mapping.
 
-### 4.9 Canonical admission does not serialize environmental execution lifetime
+### 4.8 Canonical admission does not exclude environmental execution
 
-This is a critical distinction.
+Current `CapabilityBroker` behavior admits operation requested/started state, then runs `capability.execute()` outside `CanonicalAdmissionQueue`, then later appends terminal/evidence state.
 
-The current `CapabilityBroker` durably admits operation requested/started state, then runs `capability.execute()` **outside** `CanonicalAdmissionQueue`, and later admits terminal/evidence events.
-
-So:
+Therefore:
 
 ```text
-canonical admission order
+canonical event ordering
 !=
 environmental mutation lifetime exclusion
 ```
 
-A long-running mutating operation can already be executing while another Host admission occurs. Program creation freshness cannot rely only on canonical event ordering.
+A long-running mutating capability can execute across another canonical admission.
 
-### 4.10 Workspace/repository state is observation, not SQLite state
+### 4.9 Workspace/repository state is an observation substrate
 
-ALCODE already distinguishes canonical Host events from mutable worktree/Git/CodeIntelligence observations. There is no transaction spanning SQLite and the external repository.
+The worktree/Git/CodeIntelligence state is not a participant in the SQLite transaction. A creation plan derived from repository state must therefore carry an observation identity; the Host cannot claim a transactionally frozen repository.
 
-A creation draft that was derived from repository state is therefore valid only relative to the bounded observation it planned against.
+### 4.10 Reasoning/model output is not ProgramState authority
 
-### 4.11 Reasoning is not ProgramState authority
-
-Reasoning objectives, hypotheses, verification plans, model output, and CodeIntelligence observations may inform a draft, but Phase 1 explicitly keeps ProgramState and reasoning as independent reducers. None silently becomes Program truth.
+Reasoning state, CodeIntelligence observations, tool results, and model output can inform a draft but do not silently become Program truth.
 
 ---
 
-# Part II — Role separation
+# Part II — Authority model
 
-## 5. Five distinct roles
+## 5. Distinct roles
 
 ### Intent originator
 
-The caller/Application/user supplies the Program's objective.
+Application/user supplies the objective.
 
 ### Semantic planner
 
-The replaceable Agent/model is the natural component to propose repository-specific work decomposition and task-specific verification requirements.
+Replaceable Agent/model proposes repository-specific decomposition and task-specific verification requirements.
 
 ### Policy contributor
 
-Host policy may add deterministic, non-removable requirements independent of Agent preference.
+Host policy may add deterministic non-removable requirements.
 
 ### Semantic acceptance authority
 
-The Application caller may authorize one **exact** proposed contract.
+Application caller accepts one exact proposed contract.
 
 ### Canonical authority
 
-Only the Host may admit the accepted semantics as canonical ProgramState.
+Host alone admits ProgramState.
 
-The core distinction is:
+### Environmental mutation coordinator
+
+Host coordinates Host-mediated mutating capability execution so already-running mutations cannot cross freshness-critical creation/dispatch checks.
+
+The central distinction is:
 
 ```text
 Host canonical ownership
@@ -198,441 +196,345 @@ Agent semantic authorship
 Application semantic acceptance
 ```
 
-A sixth responsibility is orthogonal:
-
-### Environmental mutation authority
-
-The Host must coordinate Host-mediated mutating capability execution so creation freshness is not invalidated by already-running environmental work.
-
 ---
 
-# Part III — Non-negotiable requirements
+# Part III — Requirements
 
-## 6. Creation invariants
+## 6. Non-negotiable creation invariants
 
 ### 6.1 Exact objective provenance
 
-The canonical objective preserves caller-supplied objective text after ordinary pre-persistence safety/redaction admission. Agent titles/summaries remain advisory.
+Canonical objective preserves caller-supplied intent after ordinary persistence safety/redaction. Agent titles/summaries remain advisory.
 
 ### 6.2 No Agent indirect completion authority
 
-A replaceable Agent cannot automatically choose a weak or over-broad immutable completion burden merely because its proposal passes schema/DAG/bounds validation.
+A replaceable Agent cannot automatically select a weak or over-broad immutable completion burden merely because the proposal is structurally valid.
 
-### 6.3 No hidden model-as-truth authority
+### 6.3 No hidden Host-model authority
 
-Moving a model call into Host code does not make semantic adequacy deterministic. A Host-invoked model is still a proposal source.
+Putting a model call inside Host code does not make semantic adequacy deterministic.
 
-### 6.4 Immutable active contract
+### 6.4 Complete immutable initial contract
 
-Once active, first-slice objective and mandatory verification requirements cannot be silently rewritten by runtime evidence. If static topology is selected, required work topology is likewise fixed except for a separately authorized mechanism.
+An active Program cannot be canonically visible without its entire accepted initial objective, required topology, and mandatory verification contract.
 
-### 6.5 Complete atomic initial Program
+### 6.5 Crash-safe exactly-one mapping
 
-Replay must never observe `program.created` without the complete accepted initial contract.
+One accepted creation command maps to exactly one ProgramStateId across response loss, duplicate delivery, crash, and retry.
 
-### 6.6 Crash-safe exactly-one creation
+### 6.6 Exact-draft stale protection
 
-One accepted creation command maps to exactly one ProgramStateId across duplicate delivery, response loss, Host crash, and retry.
+Changed draft, policy identity, source objective, or stopped/superseded source session invalidates old acceptance.
 
-### 6.7 Exact-draft stale protection
+### 6.7 Planning-observation stale protection
 
-A changed/superseded draft, policy identity, source session, or source objective invalidates old acceptance.
+Each draft is bound to a bounded `PlanningObservationIdentity`. Changed or unprovably equivalent planning base makes acceptance stale/fail-closed.
 
-### 6.8 Planning-observation stale protection
+### 6.8 Host-mediated mutation exclusion at freshness-critical boundaries
 
-A draft is bound to the bounded Workspace/repository observation used to produce it. If the base has changed or equivalence cannot be established, acceptance fails stale/fail-closed.
+Observation checks are not sufficient while a Host-mediated mutating capability is already executing.
 
-### 6.9 No Host-mediated mutation crossing creation finalization
+Final creation acceptance must acquire Host-owned Workspace mutating-operation exclusion such that:
 
-Observation checks alone are insufficient because environmental mutation runs outside canonical admission.
+- no Host-mediated mutator is executing when final planning-base observation is taken;
+- unresolved/indeterminate mutation fails closed for quiescence;
+- no unrelated Host-mediated mutator can begin environmental execution before the accepted-creation transaction completes.
 
-For the preferred first-slice design:
+Before ProgramAttempt dispatch, Host reacquires the same class of exclusion, checks quiescence/reconciliation, and rechecks the accepted creation base.
 
-> **Final creation acceptance may proceed only while the Host holds an exclusive Workspace mutation barrier covering Host-mediated mutating operations.**
+### 6.9 Host-mediated mutation exclusion during ProgramAttempt execution
 
-The barrier must ensure:
+If the Host claims an unrelated Host-mediated mutation cannot race an active ProgramAttempt, the environmental exclusion must span execution lifetime, not just `program.attempt.started` admission.
 
-- no Host-mediated mutating operation is still executing when the final planning-base observation is taken;
-- no new unrelated Host-mediated mutating operation may start between that observation and the accepted-creation transaction;
-- an indeterminate/unreconciled mutation fails closed rather than being treated as harmless quiescence.
+The preferred first-slice direction is therefore that the dispatch barrier transfers/retains Host-mediated mutation authority for the active ProgramAttempt, while read-only work may remain concurrent where safe.
 
-### 6.10 Dispatch must reacquire environmental mutation authority
+The exact barrier lifecycle is a remaining freeze-readiness dependency.
 
-A Program may remain active for some time before dispatch. The Host therefore cannot hold the creation barrier indefinitely.
+### 6.10 Creation freshness is not full runtime freshness
 
-Before issuing a ProgramAttempt, the scheduler must:
+The above barrier cannot control arbitrary external editors/processes.
 
-1. acquire the Workspace mutation barrier;
-2. ensure no other Host-mediated mutating operation is active/unreconciled;
-3. recheck the accepted creation observation/base;
-4. admit `program.attempt.started` only if current;
-5. transfer/retain mutation authority for the ProgramAttempt so an unrelated Host-mediated mutating operation cannot begin and cross the attempt's execution lifetime.
+This study guarantees only:
 
-Read-only work may remain concurrent where safe.
+```text
+creation acceptance is current at protected creation cut
++
+first ProgramAttempt dispatch begins from a revalidated accepted base
++
+Host-mediated unrelated mutators cannot cross the protected execution authority
+```
 
-This is stronger than “one ProgramAttempt per Workspace”: it coordinates **all Host-mediated mutating operation lifetimes** that can affect Program correctness.
+It does **not** guarantee:
 
-### 6.11 No false claim about external editors/processes
+```text
+external worktree remains unchanged for entire ProgramAttempt
+```
 
-The Host mutation barrier controls Host-mediated capability execution, not arbitrary external repository edits.
+A separate runtime out-of-band mutation detection/fail-closed contract is required before Phase 1 can make a stronger end-to-end freshness claim.
 
-ALCODE must not claim transactional isolation over the worktree. Planning-observation rechecks remain required, and out-of-band changes remain Workspace observations that must fail closed when they invalidate the accepted base or later verification freshness.
+### 6.11 Read-only pre-Program planning
 
-### 6.12 Read-only pre-Program planning
+Before Program creation there is no ProgramAttempt. Creation planning may inspect bounded Workspace state but mutating capability requests fail closed.
 
-Before Program creation there is no ProgramAttempt. Creation planning may inspect bounded Workspace state, but mutating capability requests fail closed.
+### 6.12 Bounded contract
 
-### 6.13 Bounded contract
+Draft topology, paths, requirements, text, and public representation are bounded before presentation/admission.
 
-Draft work, dependencies, paths, verification requirements, text, and public representation are bounded before presentation/admission.
+### 6.13 No future concrete evidence IDs in immutable requirements
 
-### 6.14 No future concrete evidence identities in immutable requirements
+Future ArtifactRefs/evidenceRefs may satisfy requirements later but cannot be creation-time requirement identities.
 
-Future ArtifactRefs or canonical evidenceRefs may later satisfy a requirement but cannot themselves be creation-time requirement identities.
+### 6.14 Host-owned pending draft
 
-### 6.15 Replacement/reconnect honesty
-
-Pending exact drafts are Host-owned durable state, not Agent/renderer-local memory.
+A pending acceptable draft must survive reconnect/restart as Host-owned structured state rather than Agent/renderer memory.
 
 ---
 
 # Part IV — Alternatives
 
-## 7. Alternative A — Application supplies the full structured contract
+## 7. Alternative A — Application supplies full structured contract
 
 ```text
-Application supplies objective + DAG + mandatory verification
+Application objective + DAG + mandatory verification
 → Host validates
-→ Host atomically creates
+→ Host creates
 ```
 
-**Pros:** explicit authority, simple replay, no model contract auto-admission.  
-**Cons:** turns the public caller into a workflow author, weak default natural-language UX, duplicates coding-plan logic outside the Agent.
+**Strengths:** explicit semantic authority, clean replay/idempotence.  
+**Weaknesses:** caller becomes workflow author; poor default natural-language coding UX.
 
-**Classification:** correct; accommodate as an advanced API, not the sole/default first-slice path.
+**Result:** correct; accommodate as an advanced path, not preferred default.
 
-## 8. Alternative B — Host deterministically synthesizes contract from objective text
+## 8. Alternative B — Host deterministically synthesizes from objective
 
-**Pros:** simple external API, no approval interaction.  
-**Cons:** arbitrary coding decomposition and task-specific verification are not deterministically derivable by the current Host; using a model internally merely relabels model authorship.
+**Strengths:** simple external API.  
+**Weaknesses:** arbitrary coding decomposition/verification is not deterministically derivable by current Host; Host-internal model use merely relabels model authorship.
 
-**Classification:** reject as a general solution.
+**Result:** reject as a general solution.
 
 ## 9. Alternative C — Agent proposes and Host auto-admits
 
 ```text
 objective
-→ Agent plan
-→ Host schema/bounds/DAG/policy validation
-→ automatic Program creation
+→ Agent DAG/verification
+→ Host structural validation
+→ automatic creation
 ```
 
-**Pros:** excellent autonomous UX, small interaction surface.  
-**Cons:** deterministic structural checks cannot prove semantic adequacy; Agent can omit necessary verification or expand scope and thereby indirectly control the Host's future completion burden.
+**Strengths:** excellent autonomous UX.  
+**Weaknesses:** Host cannot deterministically prove semantic adequacy; Agent can omit necessary work/verification or over-expand scope and thereby indirectly define the future completion burden.
 
-Failure history:
-
-```text
-objective: fix bug and preserve compatibility
-→ Agent proposes edit-only work + no compatibility verification
-→ structurally legal
-→ Host auto-admits
-→ work/verifications eventually satisfy admitted contract
-```
-
-The Host has not proven the caller's semantic requirement was represented.
-
-**Classification:** reject as normative first-slice authority model.
+**Result:** reject as normative first-slice authority model.
 
 ## 10. Alternative D — Agent proposes; Application accepts exact fresh draft; Host atomically creates
 
 ```text
-Application objective
+caller objective
 → Host creation request
-→ Host captures planning observation B0
-→ read-only Agent planning
-→ Agent proposes bounded draft D for B0
-→ Host validates structure/policy and adds mandatory Host requirements
-→ Host persists exact pending draft H(D,B0,P0)
-→ Application accepts H
-→ Host acquires exclusive Workspace mutation barrier
-→ waits/fails closed until Host-mediated mutation state is quiescent/reconciled
-→ Host re-observes current base
-→ base != B0 or unknown => stale, release barrier, no Program
-→ Host revalidates draft/policy/session inside canonical admission
-→ one SQLite transaction records:
-     accepted command A → ProgramStateId P
-     + complete initial Program event batch
-→ release creation barrier unless immediately transferring to dispatch
+→ capture planning observation B0
+→ read-only Agent proposal D(B0)
+→ Host structural/policy validation + mandatory policy additions
+→ Host-owned pending H(D,B0,P0)
+→ Application accepts exact H
+→ Host acquires Workspace mutating-operation exclusion
+→ waits/fails closed on active or unreconciled Host-mediated mutator
+→ reobserve base
+→ mismatch/unknown => stale, no Program
+→ one atomic transaction:
+     accept command A → ProgramStateId P
+     + complete initial Program contract
 → Program active
 ```
 
-Before first ProgramAttempt:
+At first dispatch:
 
 ```text
-acquire Workspace mutation barrier
-→ ensure no conflicting Host-mediated mutation active/unreconciled
-→ recheck accepted creation base
+acquire mutation exclusion
+→ check Host-mediated mutation quiescence/reconciliation
+→ recheck accepted base
 → stale => no dispatch
 → current => admit ProgramAttempt
-→ retain/transfer Host-mediated mutation exclusivity for attempt lifetime
+→ retain/transfer Host-mediated mutation authority for attempt lifetime
 ```
 
-**Pros:** natural Agent planning; Agent remains proposal source; caller accepts exact immutable burden; stale Workspace plans reject; Host-policy minima are non-removable; crash/retry maps to one Program; Host-mediated mutation cannot cross final freshness checks.  
-**Cons:** one approval round trip; new Application draft/accept interaction; durable pending draft; planning-observation identity; Workspace mutation coordination; user acceptance authorizes but does not prove plan quality.
+**Strengths:** natural Agent planning; exact semantic acceptance; current planning base; Host policy minima; exactly-one crash/retry mapping; no false reliance on canonical ordering for Host-mediated mutation isolation.  
+**Weaknesses:** extra interaction; new pending-draft surface; observation identity; environmental mutation coordination; does not by itself solve out-of-band external edits after dispatch.
 
-**Classification:** **preferred**.
+**Result:** **preferred, conditional on separate attempt-time out-of-band mutation semantics before Phase 1 freeze.**
 
-## 11. Alternative E — canonical `planning` ProgramState then finalize
+## 11. Alternative E — canonical `planning` lifecycle then finalize
 
-```text
-program.created(lifecycle=planning)
-→ iterative Agent planning
-→ later program.contract.finalized
-→ active execution
-```
+Coherent and durable for iterative planning, but adds a new lifecycle, mutable pre-active contract, recovery/cancellation rules, and still needs semantic acceptance/freshness.
 
-**Pros:** durable iterative planning under one ProgramStateId.  
-**Cons:** adds lifecycle, revision, recovery, cancellation, interaction, and finalization semantics before current signature objective needs them; still needs semantic acceptance and mutation/freshness rules.
-
-**Classification:** correct but defer.
+**Result:** defer unless durable multi-turn planning becomes a concrete requirement.
 
 ## 12. Alternative F — explicit delegated auto-accept
 
-Caller explicitly authorizes Host to accept whatever bounded Agent plan passes Host validation/policy.
+Caller explicitly delegates acceptance of any bounded Agent plan passing Host validation.
 
-**Pros:** autonomous UX, explicit delegation rather than hidden authority.  
-**Cons:** caller never accepts the exact immutable burden; a poor Agent can still select a degenerate contract inside bounds.
+Better than silent auto-admit, but caller never accepts the exact immutable burden.
 
-**Classification:** accommodate/defer as later convenience mode.
+**Result:** accommodate/defer as later convenience mode.
 
-## 13. Alternative G — objective-only active Program, Agent populates contract later
+## 13. Alternative G — objective-only active Program, Agent fills contract later
 
-**Pros:** adaptive, simple initial creation.  
-**Cons:** mutable completion contract, active Program without final burden, reopens post-creation Agent scope-expansion problem, requires a finalization lifecycle to become safe.
+Makes required contract mutable after creation and reopens post-creation Agent scope-expansion problem.
 
-**Classification:** reject in this form.
+**Result:** reject.
 
-## 14. Alternative H — second model/judge authorizes plan
+## 14. Alternative H — second model/judge accepts plan
 
-**Pros:** may improve quality.  
-**Cons:** another model is not deterministic semantic authority; agreement does not create an authorization principal.
+Potential quality signal, not a deterministic authorization principal.
 
-**Classification:** advisory quality layer only; reject as acceptance authority.
+**Result:** advisory only.
 
 ---
 
-# Part V — Adversarial histories
+# Part V — Canonical/adversarial histories
 
 ## 15. Normal preferred creation
 
 ```text
-C requests Program creation with objective O
-→ source intent durable
+C supplies O
 → capture B0
 → Agent proposes D(B0)
-→ Host validates + adds policy requirements
+→ Host validates + policy-adds
 → pending H(D,B0,P0) durable
-→ Application accepts H via command A
-→ Host acquires mutation barrier
-→ no active/unreconciled Host-mediated mutation
-→ reobserve == B0
-→ atomic transaction: A→P + complete Program contract
-→ Program P active
-→ barrier released
+→ A accepts H
+→ acquire Host mutation exclusion
+→ no active/unreconciled Host mutator
+→ current base == B0
+→ atomic A→P + complete Program batch
+→ P active
 ```
 
-## 16. Agent weakens the contract
+## 16. Weak Agent draft
 
-```text
-objective requires compatibility
-→ Agent omits compatibility verification
-→ Host structural checks pass
-→ Application does not accept exact draft
-```
+Agent omits a semantic requirement but draft is structurally legal.
 
-Result: no canonical Program.
+Without exact Application acceptance: no Program. The Agent is proposer, not semantic acceptance authority.
 
-This protects authority, not plan quality: if the caller knowingly accepts the draft, the acceptance is authoritative but not proof that the plan is objectively good.
+User acceptance is authority, not proof that the plan is objectively good.
 
-## 17. Agent over-expands scope
+## 17. Over-broad Agent draft
 
-```text
-objective: narrow parser fix
-→ Agent adds broad unrelated cleanup
-```
-
-Bounds/DAG validation cannot prove semantic necessity. Exact scope is visible to the accepting caller rather than automatically becoming required work.
+Agent adds unrelated cleanup to a narrow objective. DAG validity cannot prove necessity. Exact proposed scope must be accepted rather than auto-admitted.
 
 ## 18. Draft superseded
 
 ```text
-D1/H1 presented
+D1/H1
 → D2/H2 replaces it
 → accept H1
+→ stale
 ```
 
-Result: `stale`; no Program creation.
-
-## 19. Policy changes
+## 19. Policy changed
 
 ```text
 D under P0
-→ Host policy becomes P1 and adds required verification
-→ accept old H(D,B0,P0)
+→ policy P1 adds required verification
+→ accept old H
+→ stale; re-present
 ```
 
-Result: stale; re-present exact new contract.
-
-## 20. Workspace changes while pending
+## 20. Workspace changed while draft pending
 
 ```text
-D planned against B0
-→ another Program / foreground action / external edit / Git change produces B1
+D planned at B0
+→ Workspace becomes B1
 → accept D
-→ Host acquires mutation barrier and re-observes
+→ protected final reobserve B1
+→ B1 != B0
+→ stale; no Program
 ```
 
-If `B1 != B0` or equivalence cannot be proven: stale; no Program.
+## 21. Long-running Host-mediated mutation predates acceptance
 
-## 21. Long-running foreground mutation already started
-
-Current execution shape permits:
+Current CapabilityBroker shape permits:
 
 ```text
-foreground mutating operation O
-→ operation.started canonical
+operation.started
 → capability.execute() running outside admission queue
-→ creation accept arrives
+→ creation acceptance arrives
 ```
 
-Unsafe design:
+Unsafe: reobserve while mutation is still running, create, then mutation writes.
+
+Preferred: creation cannot cross that mutating execution lifetime; barrier acquisition waits/fails closed until terminal/reconciled quiescence, then reobserves.
+
+## 22. New Host-mediated mutation arrives during final creation
+
+While creation owns environmental mutation exclusion, unrelated mutating capability execution cannot start. Final policy may reject, queue, or delay it, but it cannot cross the protected boundary.
+
+## 23. Mutation occurs while Program is parked before dispatch
+
+Creation barrier is not held indefinitely. A foreground mutation may legitimately occur while Program is active but undispatched. Later dispatch reacquires exclusion and rechecks accepted base. Changed base => no ProgramAttempt.
+
+## 24. Host-mediated mutator tries to cross attempt start
+
+Scheduler acquires exclusion before final base check and does not release a gap before ProgramAttempt environmental authority begins. Unrelated Host-mediated mutator cannot cross the active attempt's protected execution authority.
+
+## 25. External edit after dispatch
 
 ```text
-creation merely re-observes current files
-→ Program commits
-→ O writes after observation
+ProgramAttempt begins from validated B0
+→ human editor/non-ALCODE process changes repository
 ```
 
-Preferred result:
+This is **outside the creation-freshness guarantee**. The Host mutation barrier cannot prevent it.
+
+The study therefore does not claim that the attempt remains continuously based on B0.
+
+Before Phase 1 freeze, a separate runtime rule must decide how ALCODE detects and fails closed on out-of-band changes during attempts. Credible directions include observation checks at mutating capability admission, evidence admission, verification satisfaction, and/or Completion Oracle cuts, but this study does not select that runtime policy.
+
+## 26. Duplicate acceptance / response loss
 
 ```text
-creation cannot acquire mutation barrier while O owns mutating execution
-→ wait/reject until O is terminal and required reconciliation resolved
-→ only then capture final current base and create
+A accepted
+→ atomic A→P + Program P commits
+→ response lost / crash
+→ A retried
+→ duplicate maps to P
 ```
 
-Canonical event order alone is not treated as environmental isolation.
+No second ProgramStateId.
 
-## 22. New Host-mediated mutation tries to start during final creation
+## 27. Crash during atomic creation
 
-```text
-creation holds Workspace mutation barrier
-→ unrelated mutating capability request arrives
-```
+Replay sees either none of the accepted-creation transaction or the complete command mapping plus complete Program contract. Never partial Program.
 
-Result: it cannot begin environmental execution until the creation barrier is released. It may be rejected, queued, or delayed according to the final Host policy, but it cannot cross the protected freshness/admission window.
+## 28. Crash/replacement during planning
 
-## 23. Mutation starts after creation but before later dispatch
-
-```text
-Program P active but not dispatching
-→ foreground mutation M runs and settles
-→ later scheduler considers P
-```
-
-At dispatch the Host reacquires mutation barrier and rechecks P's accepted creation base. Changed base => no ProgramAttempt dispatch. Static first-slice contract is not silently rewritten.
-
-## 24. Long-running mutation tries to cross ProgramAttempt start
-
-Unsafe:
-
-```text
-pre-dispatch base recheck
-→ unrelated mutating O starts
-→ ProgramAttempt starts
-→ O writes underneath attempt
-```
-
-Preferred:
-
-```text
-scheduler acquires Workspace mutation barrier first
-→ rechecks base
-→ starts ProgramAttempt while retaining/transferring mutation authority
-→ unrelated Host-mediated mutator cannot start until attempt relinquishes authority
-```
-
-This is the minimum Host-controlled environmental exclusion needed for the creation/dispatch freshness claim.
-
-## 25. Out-of-band external edit
-
-The Host barrier cannot prevent a human editor or non-ALCODE process from changing the repository.
-
-Therefore the study makes no “transactional worktree” claim. External changes remain observations; accepted-base and verification-freshness checks fail closed when detected. A later execution contract may require additional observation checks at mutating-operation boundaries, but that is not silently assumed here.
-
-## 26. Duplicate acceptance
-
-```text
-accept A
-→ atomic transaction records A→P + Program P
-→ response lost
-→ retry A
-```
-
-Result: duplicate maps to existing P. No second ProgramStateId.
-
-## 27. Crash during creation transaction
-
-Recovery sees either:
-
-```text
-no A→P mapping and no Program batch
-```
-
-or:
-
-```text
-A→P mapping + complete Program batch
-```
-
-Never a half-created Program and never a committed Program whose accept command is forgotten.
-
-## 28. Crash during planning
-
-No Program exists. Replacement planning may restart from durable caller intent and a fresh planning observation. Agent-local partial plan is disposable.
+No Program exists. Agent-local partial plan is disposable. Replacement planning restarts from durable caller intent and fresh observation.
 
 ## 29. Crash after pending draft presentation
 
-Host-owned pending state must recover the exact draft/lossless reference, digest, source request, planning observation, policy identity, and source session. A regenerated different draft cannot inherit old acceptance identity.
+Host-owned pending state recovers exact draft/lossless reference, digest, source request, planning observation, policy identity, and source session. A regenerated different draft cannot inherit old acceptance.
 
-## 30. Agent replacement
+## 30. UI disconnect
 
-Before Host-owned draft presentation, partial Agent-local planning is discarded. After presentation, replacement Agent cannot substitute a different draft under the existing digest.
+Disconnect does not cancel pending draft. Reconnect uses Host state.
 
-## 31. UI disconnect
+## 31. Source session stops before acceptance
 
-Disconnect does not cancel or erase a pending draft. Reconnect uses Host snapshot/replay.
+First-slice rule: pending draft becomes stale/non-acceptable; later session starts a fresh creation flow.
 
-## 32. Source session stops before acceptance
+## 32. Pre-Program planner requests mutation
 
-First-slice rule: the pending draft becomes stale/non-acceptable. A later session requests a fresh creation flow.
+Fail closed. Planning is read-only.
 
-## 33. Planner requests mutation before Program exists
+## 33. Future ArtifactRef/evidenceRef used as immutable requirement ID
 
-Fail closed. Creation planning is read-only.
-
-## 34. Future ArtifactRef/evidenceRef proposed as immutable requirement identity
-
-Reject. Stable logical requirement semantics must exist at creation; runtime evidence later satisfies them.
+Reject. Requirement must have stable logical identity/semantics at creation.
 
 ---
 
-# Part VI — Preferred contract details
+# Part VI — Preferred semantic shapes
 
-## 35. ProgramCreationDraft
+## 34. ProgramCreationDraft
 
-Illustrative semantic shape:
+Illustrative shape:
 
 ```ts
 interface ProgramCreationDraft {
@@ -645,72 +547,65 @@ interface ProgramCreationDraft {
 }
 ```
 
-Draft-local keys can wire dependencies/verification before canonical IDs exist. Canonical ProgramState/WorkItem/VerificationObligation IDs are Host-minted during accepted creation.
+Draft-local keys wire work/verification before canonical IDs exist. Host mints canonical Program/WorkItem/VerificationObligation IDs during accepted creation.
 
-The exact draft digest covers all semantics whose change would alter acceptance.
+Exact draft digest covers all semantics whose change would alter acceptance.
 
-## 36. PlanningObservationIdentity
+## 35. PlanningObservationIdentity
 
-This is a bounded identity for the Workspace/repository facts materially used by planning. Depending on the final implementation it may include/digest:
+A bounded identity for repository/Workspace facts materially used in planning. Depending on final design it may include/digest:
 
 - Git HEAD;
-- dirty-worktree or bounded workspace fingerprint;
+- dirty-worktree/bounded workspace fingerprint;
 - repository configuration identity;
-- bounded relevant path observations;
+- relevant-path observations;
 - CodeIntelligence revision/provider observation when relied upon;
-- Host canonical source-event cut supplied to planning.
+- Host canonical event cut supplied to planning.
 
 Required properties:
 
-1. Host can determine whether the accepted planning base remains current/equivalent;
-2. unknown/unavailable equivalence fails closed;
+1. Host can decide whether accepted planning base remains equivalent at creation/dispatch;
+2. unknown equivalence fails closed;
 3. it remains an observation identity, not a second canonical Workspace truth system.
 
-## 37. Mandatory verification authorship
+## 36. Verification authorship
 
-Agent may propose task-specific deterministic requirements. Host policy may add non-removable requirements.
+Agent may propose task-specific deterministic verification requirements. Host policy may add non-removable requirements.
 
-Host can mechanically validate:
+Host can mechanically validate schema, bounds, predicate kind, freshness-scope shape, policy minima, draft references, and ban future concrete evidence identities.
 
-- predicate kind/schema;
-- bounds;
-- freshness scope shape;
-- policy minima;
-- forbidden future concrete evidence identities;
-- draft-key/reference integrity.
+Host cannot generally prove semantic sufficiency of an arbitrary finite verification set for natural-language intent. That is why semantic acceptance is distinct.
 
-Host cannot generally prove that a finite Agent-proposed verification set is semantically sufficient for arbitrary natural-language intent. That is why semantic acceptance is a separate role.
+## 37. Topology authorship
 
-## 38. Initial topology authorship
+Agent proposes repository-specific DAG; Host validates bounds/DAG/policy; Application accepts exact topology as part of draft.
 
-Agent proposes repository-specific decomposition. Host validates DAG integrity, bounds, field shapes, and policy. Application accepts the exact topology as part of the draft.
+This does not grant post-creation automatic Agent work-add authority.
 
-This does not give Agent a post-creation automatic `program.work.added` authority path.
+## 38. Pending draft durability
 
-## 39. Pending draft durability
-
-An acceptable draft cannot live only in Agent/React memory. Host-owned pending state must preserve:
+Host-owned pending state preserves:
 
 ```text
 draft or lossless bounded reference
 + digest
 + source creation request
-+ planning observation identity
++ planning observation
 + policy identity
 + source session
 ```
 
-It is provenance/interaction state, not ProgramState truth before acceptance.
+Before acceptance it is interaction/provenance state, not ProgramState truth.
 
-## 40. Atomic accepted-creation cut
+## 39. Accepted-creation transaction
 
-One event-store transaction must durably bind:
+One event-store transaction binds:
 
 ```text
 accept command A → ProgramStateId P
 ```
 
-with the complete initial Program facts, conceptually:
+with complete initial Program facts, conceptually:
 
 ```text
 program.created
@@ -719,144 +614,105 @@ program.work.added × N
 program.verification.required × M
 ```
 
-Exact event spelling may differ; the semantic guarantees may not.
+Exact event spelling may differ; atomic semantics may not.
 
-## 41. Workspace mutation barrier
+## 40. Host-mediated mutation exclusion
 
-The study does not prescribe a class name or lock implementation. It requires a Host-owned coordination mechanism with these semantics:
+The study does not prescribe a class name or lock implementation. It requires a Host-owned mechanism whose protected interval spans environmental execution, not just event append.
 
-```text
-all Host-mediated mutating capability execution participates
-```
-
-and:
+At creation:
 
 ```text
-creation-finalization owner
-or
-active ProgramAttempt owner
+acquire exclusion
+→ wait/fail closed on active/unreconciled Host mutator
+→ final observation recheck
+→ accepted-creation transaction
+→ release
 ```
 
-can exclude unrelated Host-mediated mutating operation lifetimes while freshness-critical decisions are made/executed.
-
-The barrier spans environmental execution lifetime, not just event append. A mutating operation does not release environmental authority merely because `operation.started` was durably appended.
-
-Read-only capabilities may remain concurrent when they cannot mutate the Workspace.
-
-Indeterminate/unreconciled mutating operation state fails closed for creation/dispatch quiescence.
-
-## 42. Creation/dispatch split
-
-The barrier is not held for the entire time an inactive Program waits for a session. Instead:
+At dispatch:
 
 ```text
-creation acceptance:
-  acquire barrier
-  → final freshness check
-  → atomic Program creation
-  → release
+acquire exclusion
+→ quiescence/reconciliation check
+→ accepted-base recheck
+→ admit ProgramAttempt
+→ retain/transfer Host-mediated mutation authority for attempt lifetime
 ```
 
-and later:
-
-```text
-ProgramAttempt dispatch:
-  acquire barrier
-  → quiescence/reconciliation check
-  → accepted-base recheck
-  → admit attempt
-  → transfer/retain mutation ownership for attempt
-```
-
-This avoids blocking unrelated Workspace work merely because an active Program is parked, while preventing a mutator from crossing either protected boundary.
+Read-only operations may remain concurrent where safe.
 
 ---
 
 # Part VII — Cross-decision consequences
 
-## 43. Completion contract
+## 41. Completion contract
 
-If the verification-centered completion model is promoted, this study supplies the missing creation authorship/acceptance boundary for mandatory verification requirements.
+If verification-centered completion is promoted, this study supplies creation authorship/acceptance for mandatory verification requirements.
 
-## 44. Verification freshness
+## 42. Verification freshness
 
-Three identities remain distinct:
+Keep separate:
 
 ```text
 PlanningObservationIdentity
-  → was the initial semantic plan based on the current Workspace?
+  creation/dispatch plan base
 
-ProgramState revision / ProgramAttemptId
-  → is this execution claim current?
+ProgramState revision + ProgramAttemptId
+  execution claim currency
 
 verification subjectGeneration
-  → is this verification satisfaction current for its obligation?
+  verification satisfaction currency
 ```
 
-Do not collapse them.
+Attempt-time out-of-band mutation detection may consume the same observation substrate but must not collapse these identities.
 
-## 45. Agent work addition
+## 43. Agent work addition
 
-Accepted initial Agent planning does not reopen automatic post-creation topology mutation.
+Accepted initial Agent planning is not post-creation Agent topology authority.
 
-## 46. Structural bounds
+## 44. Structural bounds
 
-Creation drafts and pending public representation use final local/aggregate bounds plus their own explicit bounded projection/draft size.
+Creation drafts and pending public representation require final local/aggregate limits plus their own explicit bounded serialized size.
 
-## 47. Operation correlation
+## 45. Operation correlation/uncertainty
 
-Pre-Program planning operations are not ProgramAttempt operations. They remain read-only. Once a ProgramAttempt starts, normal ProgramAttempt→operation correlation applies.
+Creation/dispatch must fail closed while a Host-mediated mutating operation is still executing or its effect remains unresolved/indeterminate for mutation safety.
 
-## 48. Cancellation
+## 46. Scheduler concurrency
 
-Pre-creation draft withdrawal/expiry is Application interaction lifecycle, not `program.cancelled`. Program cancellation applies after creation.
+“One active ProgramAttempt per Workspace” does not alone exclude foreground/non-Program mutating capabilities.
 
-## 49. Scheduler concurrency
+If this study is promoted, consolidation must represent Host-mediated environmental mutation exclusion as a separate invariant or scheduler/capability integration refinement.
 
-The existing recommendation of one active ProgramAttempt per Workspace is **not by itself sufficient** to prevent a foreground/non-Program mutating capability from crossing Program execution.
+## 47. Out-of-band runtime mutation
 
-If this creation recommendation is promoted, consolidation must also express the Workspace mutation-exclusion invariant for Host-mediated mutations. That is a refinement of environmental execution authority, not a license for multi-Program scheduling.
+This is now an explicit **separate freeze-readiness decision**, not an assumed property of Program creation.
+
+The eventual Phase 1 contract must decide how an active ProgramAttempt detects/fails closed when external, non-Host-mediated changes invalidate the workspace observation it is operating against.
 
 ---
 
 # Part VIII — Acceptance-proof consequences
 
-## 50. AC refinements if later promoted
+## 48. Existing ACs can absorb creation semantics
 
-No new AC family is required; existing AC-10 criteria can absorb the behavior.
+No new AC family is required for the creation-authorship decision itself.
 
-### AC-10-02 — deterministic model/rebuild
+- **AC-10-02:** complete accepted objective/topology/mandatory verification at one rebuildable creation cut.
+- **AC-10-03:** current source-session creation; stale stopped-session draft rejects.
+- **AC-10-05:** initial DAG bounds; no dispatch on stale accepted base; Host-mediated mutation exclusion at dispatch.
+- **AC-10-06:** active/unreconciled mutating operation blocks freshness-critical creation/dispatch.
+- **AC-10-08:** runtime evidence cannot rewrite creation-time mandatory requirements.
+- **AC-10-09:** replacement cannot promote Agent-local partial plan; creation recovery preserves exactly-one mapping.
+- **AC-10-10:** creation request/draft/accept, duplicate/stale, pending reconnect, command→Program mapping, UI/Agent no direct create.
 
-Prove the complete accepted objective/topology/mandatory verification contract is established at one creation cut and rebuilds without Agent/draft service state.
+Attempt-time out-of-band mutation detection may require refinement of AC-10-04/05/06/07 once its policy is selected; this study does not pretend that proof already exists.
 
-### AC-10-03 — session attachment
-
-Prove initial creation attaches the current source session; stopped-session draft acceptance rejects stale.
-
-### AC-10-05 — DAG/scheduler
-
-Apply bounds/DAG validation to initial draft. Add proof that ProgramAttempt dispatch requires current accepted creation base and Workspace mutating-operation exclusion/quiescence.
-
-### AC-10-08 — Completion Oracle
-
-Runtime evidence cannot rewrite creation-time mandatory requirements.
-
-### AC-10-09 — recovery/Agent integration
-
-Replacement during planning cannot turn Agent-local partial state into Program truth. Pending exact drafts are Host-owned. Creation recovery preserves exactly-one mapping.
-
-### AC-10-10 — Application projection/ownership
-
-Add creation request/draft/accept interaction, stale/duplicate behavior, pending draft reconnect, exact command→Program mapping, and proof that UI/Agent cannot create ProgramState directly.
-
-### AC-10-06 / operation uncertainty interaction
-
-Creation and dispatch must fail closed while a Host-mediated mutating operation is still executing or has unresolved/indeterminate effect state relevant to Workspace mutation safety.
-
-## 51. Required negative proofs if promoted
+## 49. Required negative proofs if promoted
 
 ```text
-Agent draft exists + no exact Application acceptance
+Agent draft exists + no exact acceptance
 → no Program
 ```
 
@@ -868,85 +724,79 @@ D1 superseded by D2
 
 ```text
 D planned at B0
-→ Workspace changes to B1
-→ accept D
+→ Workspace B1 before creation
+→ accept
 → stale; no Program
 ```
 
 ```text
-foreground mutating O already executing
-→ creation acceptance tries to finalize
-→ cannot cross O's mutation lifetime
+Host mutating O still executing
+→ creation tries finalization
+→ cannot cross O lifetime
 ```
 
 ```text
-creation holds mutation barrier
-→ unrelated mutating operation requests start
-→ it does not begin environmental execution before barrier release
+creation exclusion held
+→ unrelated Host mutator requests start
+→ no environmental execution until exclusion released
 ```
 
 ```text
-Program active/parked
-→ mutation changes accepted base
-→ later dispatch rechecks
-→ no ProgramAttempt
+Program parked
+→ Workspace changes
+→ later dispatch
+→ stale base; no ProgramAttempt
 ```
 
 ```text
-scheduler holds mutation barrier and starts Attempt A
-→ unrelated Host-mediated mutator tries to start
-→ cannot cross A's mutation authority lifetime
+ProgramAttempt has Host mutation authority
+→ unrelated Host mutator tries to start
+→ cannot cross protected attempt lifetime
 ```
 
 ```text
-accepted creation transaction commits
-→ response lost / Host crashes
-→ accept command retries
-→ same ProgramStateId returned
-→ no duplicate Program
+atomic accepted creation commits
+→ response lost / crash
+→ retry same accept command
+→ same ProgramStateId
 ```
 
 ```text
-crash during accepted-creation transaction
+crash inside accepted-creation transaction
 → replay sees none or complete mapping+Program batch
-→ never partial Program
 ```
 
 ```text
-Agent proposes future ArtifactRef/evidenceRef as immutable requirement identity
+pre-Program planner requests mutation
 → reject
 ```
 
 ```text
-pre-Program planner requests mutating capability
-→ reject/fail closed
+pending draft survives Host/UI reconnect exactly
 ```
 
-```text
-Host/UI restart after draft presentation
-→ same exact pending draft/digest/base recoverable
-```
+No test in this section claims that an arbitrary external editor cannot change the worktree after dispatch.
 
 ---
 
 # Part IX — Comparison and recommendation
 
-## 52. Comparison
+## 50. Comparison
 
-| Alternative | Semantic authority | Natural-language UX | Freshness | Crash/idempotence | First-slice scope | Result |
+| Alternative | Semantic authority | Natural-language UX | Creation freshness | Crash/idempotence | Scope | Result |
 |---|---|---|---|---|---|---|
-| A. Application full contract | strong | weak default | can be strong | strong | moderate | accommodate |
-| B. Host deterministic synthesis | unsupported for general tasks | good | possible | possible | misleading | reject |
+| A. Application full contract | strong | weak default | strong possible | strong | moderate | accommodate |
+| B. Host deterministic synthesis | unsupported general semantics | good | possible | possible | misleading | reject |
 | C. Agent auto-admit | weak | excellent | possible | possible | small | reject |
-| D. Exact fresh Application acceptance + atomic Host create | strong | good | **strong** | **strong** | moderate | **prefer** |
+| D. Exact fresh Application acceptance + atomic Host create | strong | good | **strong at creation/dispatch** | **strong** | moderate | **prefer conditionally** |
 | E. Canonical planning lifecycle | strong | good | strong | strong | large | defer |
 | F. Delegated auto-accept | intentionally weaker | excellent | strong | strong | moderate | defer |
-| G. Objective-only then mutable contract | weak | good | complex | complex | large | reject |
+| G. Objective-only mutable contract | weak | good | complex | complex | large | reject |
 | H. Model/judge acceptance | no deterministic principal | good | possible | possible | moderate | advisory only |
 
-## 53. Recommendation
+## 51. Recommendation
 
-**Recommend Alternative D for the first executable Phase 1.0 slice, conditional on Workspace mutating-operation exclusion at creation finalization and ProgramAttempt dispatch/execution.**
+**Recommend Alternative D for the first executable Phase 1.0 creation model, conditional on resolving the separately identified attempt-time out-of-band mutation policy before Phase 1 freeze.**
 
 Preferred chain:
 
@@ -955,93 +805,78 @@ caller objective
         ↓
 Host-owned creation request
         ↓
-planning observation B0
+PlanningObservationIdentity B0
         ↓
 read-only Agent semantic proposal
         ↓
-Host deterministic validation
-+ non-removable policy requirements
+Host deterministic validation + policy additions
         ↓
-Host-owned exact pending draft H(D,B0,P0)
+Host-owned exact pending H(D,B0,P0)
         ↓
 Application accepts exact H
         ↓
-Host acquires Workspace mutation barrier
+Host mutating-operation exclusion
++ current B0 revalidation
         ↓
-no active/unreconciled Host mutator
-+ current base == B0
-        ↓
-serialized atomic transaction:
-  accept command → ProgramStateId
-  + complete initial Program contract
+atomic accept-command→Program mapping
++ complete initial Program contract
         ↓
 Program active
         ↓
-when dispatching:
-  reacquire mutation barrier
-  + recheck accepted base
-  + admit ProgramAttempt
-  + retain/transfer Host-mediated mutation authority
+when first dispatch is considered:
+Host mutating-operation exclusion
++ accepted-base recheck
++ ProgramAttempt admission
++ Host-mediated mutation authority transfer/retention
 ```
 
-Concise authority rule:
+Concise rule:
 
-> **The caller authors intent; the Agent proposes semantics; Host policy may add mandatory constraints; the Application accepts the exact fresh contract; the Host alone makes acceptance and complete Program creation atomic and canonical; Host-mediated mutating execution cannot cross the freshness-critical creation/dispatch boundary.**
-
-This is the smallest design found that preserves natural Agent planning without allowing a replaceable Agent/model to silently choose the immutable completion burden, admitting a stale repository plan, duplicating Programs after crash/retry, or relying on canonical event ordering as if it were environmental mutation isolation.
+> **The caller authors intent; the Agent proposes semantics; Host policy may add mandatory constraints; the Application accepts the exact current contract; the Host alone makes acceptance and complete Program creation atomic and canonical. Creation/dispatch freshness is protected from Host-mediated mutating execution, but it is not a claim of full worktree snapshot isolation after dispatch.**
 
 ---
 
-# Part X — Remaining dependencies
+# Part X — Remaining freeze-readiness dependencies
 
-## 54. Verification requirement predicate taxonomy
+## 52. Closed verification-requirement predicate taxonomy
 
-Freeze-readiness still requires a closed deterministic verification-requirement predicate taxonomy that can be authored at creation without future concrete evidence identifiers or free-text truth evaluation.
+Must be defined well enough to author immutable creation-time requirements without future concrete evidence IDs or free-text truth evaluation.
 
-## 55. Planning observation identity
+## 53. PlanningObservationIdentity
 
-The final contract must define the minimum bounded observation identity/digest sufficient to reject stale creation drafts. It should reuse existing Git/Workspace/CodeIntelligence observation substrate where sufficient rather than inventing another Workspace truth authority.
+Must define the minimum bounded Workspace/repository observation sufficient to reject stale draft acceptance/dispatch while reusing existing observation substrate where possible.
 
-## 56. Workspace mutation barrier semantics
+## 54. Host-mediated Workspace mutation barrier
 
-The review of current `CapabilityBroker` execution exposes a cross-cutting dependency that must be resolved before freeze if this recommendation is promoted:
+Must define:
 
-- which Host subsystem owns the Workspace environmental mutation barrier;
-- exactly when mutating operations acquire/release it;
-- whether a ProgramAttempt holds it for the whole attempt or through a narrower provably safe interval;
-- how cancellation, timeout, Host crash, and indeterminate/reconciliation state release or preserve exclusion;
-- how foreground/Application work is rejected, queued, or delayed while Program mutation authority is held;
-- how read-only operations remain concurrent.
+- owner;
+- acquisition/release around mutating capability execution;
+- interaction with ProgramAttempt lifetime;
+- cancellation/timeout/crash behavior;
+- indeterminate/reconciliation behavior;
+- foreground work rejection/queueing/delay;
+- read-only concurrency.
 
-This is not implementation authorization. It is a correctness dependency revealed by the creation study.
+## 55. Attempt-time out-of-band mutation detection
 
-## 57. Out-of-band workspace edits
+This is a **newly exposed, separate correctness dependency**.
 
-No Host-only barrier can prevent arbitrary external edits. The frozen contract must remain honest about that limitation and define where observation revalidation detects/fails closed on such changes without claiming a transaction across SQLite and the worktree.
+The frozen Phase 1 contract must decide what happens if a human editor or non-ALCODE process changes the repository after ProgramAttempt dispatch.
 
-## 58. Implementation details that can remain open
+Possible solution families to study separately include:
 
-- exact Application command/event names;
-- exact pending-draft storage/reference shape;
-- draft digest canonicalization;
-- command→Program mapping event spelling;
-- random+atomic versus deterministic ProgramStateId as secondary defense;
-- exact `PlanningObservationIdentity` fields;
-- UI presentation;
-- exact read-only planning allowlist.
+- fail-closed Workspace observation checks before every mutating Program capability admission plus verification/completion cuts;
+- attempt-scoped expected observation generations advanced only by Host-correlated Program effects;
+- filesystem/repository snapshot or stronger isolation where available;
+- a hybrid observation-generation + correlation model.
 
-None may weaken authority, freshness, idempotency, or environmental mutation exclusion.
+This study deliberately does not pick among them because that is an execution-freshness decision, not a semantic-authorship decision.
 
-## 59. Planning status
+Until it is resolved, no consolidated Phase 1 contract should claim continuous attempt/worktree freshness.
 
-This document remains a recommendation only.
+## 56. Planning status
 
-It does not:
+This remains a recommendation only.
 
-- amend `docs/phase-1.0-plan.md`;
-- supersede `docs/phase-1.0-open-decisions-study.md`;
-- consolidate the artifact-evidence amendment;
-- approve or freeze Phase 1.0;
-- authorize implementation.
-
-If accepted, its conclusions belong in a later explicitly authorized Phase 1.0 consolidation decision.
+It does not amend the governing plan, supersede the existing seven-decision study, consolidate amendments, approve/freeze Phase 1.0, or authorize implementation.
