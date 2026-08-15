@@ -48,7 +48,7 @@ The precise observation guarantee is deliberately narrow:
 
 > **The final draft is bound either to a Host-sealed identity of the bounded repository/Workspace observations actually made available to planning, or to the identity of an equivalent bounded immutable planning snapshot whose contents were fixed before the planner's first semantic read. Before canonical creation, while conflicting Host-mediated mutating execution is excluded, the Host rechecks that exact accepted observation base. A matching check proves what the Host last observed; it does not prove that an external editor/process could not modify the live worktree after that check and before the SQLite creation transaction commits.**
 
-The same qualification applies to a pre-dispatch observation check. It proves the last Host observation matched the accepted planning base; it does not prove an external writer cannot change the worktree in the check-to-execution gap.
+The same qualification applies to the pre-first-dispatch observation check. It proves the last Host observation matched the accepted planning base; it does not prove an external writer cannot change the worktree in the check-to-execution gap.
 
 Therefore canonical Program creation is **semantic authorization**, not a filesystem-consistency certificate. Alternative D below is suitable for promotion only together with a separately resolved attempt-time out-of-band mutation detection/fail-closed policy before Phase 1 freeze.
 
@@ -448,7 +448,9 @@ A Host-owned Workspace mutation barrier (name/implementation open) must ensure:
 - unresolved/indeterminate Host-mediated mutation fails closed for quiescence;
 - no unrelated Host-mediated mutator starts before the creation admission completes.
 
-Before ProgramAttempt dispatch, the Host reacquires the same class of exclusion and performs another observation check.
+Before the **first ProgramAttempt dispatch**, the Host reacquires the same class of exclusion and performs another observation check against the accepted creation-time planning base.
+
+That creation-time `Bplan` recheck is a bridge from accepted planning to **first execution only**. Once a ProgramAttempt has legitimately mutated the Workspace, later dispatch freshness must be indexed by the current execution-aware Program/Workspace state or generation; later dispatches must not compare the live Workspace back to immutable creation-time `Bplan` as if no authorized Program mutation had occurred.
 
 ### 6.14 Host-mediated exclusion may need to span ProgramAttempt execution
 
@@ -579,11 +581,11 @@ Before first ProgramAttempt dispatch:
 acquire Host-mediated mutation exclusion
 → ensure Host-mediated quiescence/reconciliation
 → recheck the accepted Bplan
-→ mismatch/unknown => no dispatch
-→ match => ProgramAttempt may be canonically admitted
+→ mismatch/unknown => no first dispatch
+→ match => first ProgramAttempt may be canonically admitted
 ```
 
-Again, the check proves the last Host observation, not external filesystem isolation through the following execution interval.
+Again, the check proves the last Host observation, not external filesystem isolation through the following execution interval. It is not a rule that every successor dispatch rechecks immutable creation-time `Bplan`; successor dispatch freshness must use execution-aware state that can advance with legitimate Program-correlated mutations.
 
 **Advantages**
 
@@ -891,25 +893,27 @@ What is **not** established is:
 worktree equalled Bplan at Program transaction commit
 ```
 
-The Program may therefore exist canonically even though an external change crossed the observation-to-commit window. Program creation is not a claim that execution is safe against that change. Before execution, the Host observes again, and the final frozen runtime contract must separately define attempt-time out-of-band mutation detection/fail-closed behavior.
+The Program may therefore exist canonically even though an external change crossed the observation-to-commit window. Program creation is not a claim that execution is safe against that change. Before first execution, the Host observes again, and the final frozen runtime contract must separately define attempt-time out-of-band mutation detection/fail-closed behavior.
 
-## 29. Program parked, Workspace later changes
+## 29. Program parked before first execution, Workspace later changes
 
-The creation barrier is not held while an active Program waits for a session/dispatch. A later dispatch rechecks the accepted planning base under Host-mediated mutation exclusion.
+The creation barrier is not held while an active Program waits for its **first** ProgramAttempt dispatch. A delayed first dispatch rechecks the accepted creation-time planning base under Host-mediated mutation exclusion.
 
-A mismatch prevents dispatch. A match means only that the Host's last check matched; it is not filesystem snapshot isolation.
+A mismatch prevents that first dispatch. A match means only that the Host's last check matched; it is not filesystem snapshot isolation.
 
-## 30. External write after dispatch observation
+Once any ProgramAttempt has run, the immutable creation-time planning base is no longer the generic dispatch-freshness base: legitimate Program-correlated mutation may have advanced Workspace state. A later work-item/attempt dispatch must use the current execution-aware Program/Workspace generation/freshness contract rather than requiring equality with original `Bplan`.
+
+## 30. External write after first-dispatch observation
 
 ```text
-Host last pre-dispatch recheck matches accepted planning base
+Host last pre-first-dispatch recheck matches accepted planning base
 → external writer changes repository
-→ ProgramAttempt starts
+→ first ProgramAttempt starts
 ```
 
 This is possible without a stronger runtime mechanism.
 
-Therefore the study does **not** describe pre-dispatch observation as proof that the worktree is unchanged at attempt start or during attempt execution. The attempt-time out-of-band mutation policy is a separate freeze dependency.
+Therefore the study does **not** describe the pre-first-dispatch observation as proof that the worktree is unchanged at first-attempt start or during ProgramAttempt execution. The attempt-time out-of-band mutation policy is a separate freeze dependency.
 
 ## 31. Host-mediated mutator tries to cross attempt start
 
@@ -991,7 +995,9 @@ The final implementation may choose one of two families, provided it proves comp
 
 Before the first semantic planning read, the Host creates one bounded immutable snapshot S. Every permitted Workspace/repository semantic planning read is served exclusively from S for that episode. The snapshot identity is fixed before the first read and cannot be replaced by a digest of later live state. After the Agent submits D, the Host binds D to S's exact identity.
 
-The live Workspace may change while planning runs; that does not change what the Agent reads from S. Later creation/dispatch rechecks compare current live state to the accepted snapshot identity/equivalence model and fail closed on mismatch/unknown. This is planning-input immutability, not a claim that the live worktree itself was frozen.
+The live Workspace may change while planning runs; that does not change what the Agent reads from S. Later creation and **first-dispatch** rechecks compare current live state to the accepted snapshot identity/equivalence model and fail closed on mismatch/unknown. This is planning-input immutability, not a claim that the live worktree itself was frozen.
+
+After a ProgramAttempt legitimately changes the Workspace, successor dispatch freshness is not established by comparing live state back to S; it must use the execution-aware current state/generation selected by the runtime contract.
 
 ### 39.2 Host-tracked observation dependency set
 
@@ -1007,7 +1013,7 @@ Whichever family is selected:
 2. the Host, not the Agent, establishes the identity/provenance;
 3. snapshot mode fixes identity before the first semantic planning read and binds D to it after proposal generation; tracked mode captures observation identities as delivered and seals the accumulator after the relevant planning reads/proposal;
 4. the representation is bounded;
-5. the Host can later re-evaluate/equivalence-check it against live state;
+5. the Host can later re-evaluate/equivalence-check it against live state for creation and the first-dispatch bridge;
 6. unknown/incomplete equivalence fails closed;
 7. matching is evidence of the Host observation only, not transactional external-write exclusion.
 
@@ -1100,16 +1106,18 @@ accept received
 → release
 ```
 
-Dispatch sequence:
+**First-dispatch sequence:**
 
 ```text
 acquire Host-mediated mutation exclusion
 → quiescence/reconciliation check
 → recheck accepted Bplan
-→ mismatch/unknown => no dispatch
-→ admit ProgramAttempt
+→ mismatch/unknown => no first dispatch
+→ admit first ProgramAttempt
 → retain/transfer Host-mediated mutation authority if final execution model requires it
 ```
+
+This `Bplan` recheck is a creation-to-first-execution bridge only. After a ProgramAttempt legitimately changes the Workspace, a successor dispatch uses the execution-aware current Program/Workspace generation/freshness state; it does not compare the live Workspace back to immutable creation-time `Bplan`.
 
 These sequences exclude Host-mediated races. They do not exclude external processes.
 
@@ -1127,7 +1135,7 @@ Keep distinct:
 
 ```text
 PlanningObservationIdentity
-  → accepted observation base for initial semantic plan
+  → accepted observation base for initial semantic plan and first-execution bridge
 
 ProgramCreationRequestId / ProgramCreationDraftId
   → exact semantic authorization + single consumption
@@ -1153,7 +1161,7 @@ Creation draft, pending Application projection, and planning-observation depende
 
 ## 49. Operation correlation and uncertainty
 
-Creation/dispatch must fail closed on relevant Host-mediated mutating operations that are still executing or unresolved/indeterminate. This composes with, rather than replaces, operation uncertainty semantics.
+Creation and the **first-dispatch bridge** must fail closed on relevant Host-mediated mutating operations that are still executing or unresolved/indeterminate. This composes with, rather than replaces, operation uncertainty semantics. Successor dispatch uses the execution-aware runtime freshness model rather than reusing creation-time `Bplan` as a perpetual baseline.
 
 ## 50. Scheduler/environmental concurrency
 
@@ -1185,8 +1193,8 @@ No new AC family appears necessary for authorship itself.
 
 - **AC-10-02:** complete accepted objective/topology/mandatory verification established at one rebuildable creation cut.
 - **AC-10-03:** source-session creation/attachment; pending creation blocks idle completion at terminal admission; explicit stop versus acceptance linearizes deterministically.
-- **AC-10-05:** initial DAG/bounds; planning-observation completeness/bounds; last pre-dispatch recheck mismatch blocks dispatch; Host-mediated mutation coordination at dispatch.
-- **AC-10-06:** active/unreconciled Host-mediated mutating operation blocks protected creation/dispatch; uncertainty remains uncertainty.
+- **AC-10-05:** initial DAG/bounds; planning-observation completeness/bounds; last pre-first-dispatch `Bplan` recheck mismatch blocks the first dispatch; Host-mediated mutation coordination at that creation-to-first-execution bridge; successor dispatch freshness is execution-state indexed rather than equality-to-creation-`Bplan`.
+- **AC-10-06:** active/unreconciled Host-mediated mutating operation blocks protected creation/first-dispatch bridging; uncertainty remains uncertainty. Successor runtime mutation/freshness behavior remains governed by the execution-aware contract.
 - **AC-10-08:** runtime evidence cannot rewrite creation-time mandatory requirements.
 - **AC-10-09:** replacement/idle cannot promote, discard, or invalidate pending creation state through stale snapshots; creation recovery preserves single consumption/exactly-one Program mapping.
 - **AC-10-10:** creation request/draft/accept projection; stale/duplicate; reconnect; pending lifecycle; atomic request/draft/command→Program semantics; UI/Agent cannot create ProgramState directly.
@@ -1288,10 +1296,16 @@ last Host recheck matches Bplan
 ```
 
 ```text
-last Host pre-dispatch recheck matches Bplan
-→ external process writes before attempt execution
-→ this study does NOT claim the attempt remained current
+last Host pre-first-dispatch recheck matches Bplan
+→ external process writes before first ProgramAttempt execution
+→ this study does NOT claim the first attempt remained current
 → separately selected runtime out-of-band policy must govern
+```
+
+```text
+first ProgramAttempt legitimately mutates a dependency represented in creation Bplan
+→ successor dispatch does NOT require live Workspace == creation Bplan
+→ successor dispatch uses execution-aware current state/generation
 ```
 
 ```text
@@ -1366,13 +1380,19 @@ atomic transaction:
   + complete initial Program contract/attachment
         ↓
 Program active
+        ↓
+first-dispatch bridge only:
+  Host-mediated exclusion + one final accepted-Bplan recheck
+        ↓
+after first ProgramAttempt:
+  successor freshness advances with execution-aware Program/Workspace state
 ```
 
 The concise authority rule is:
 
-> **The caller authors intent; the Agent proposes semantics only from bounded Host-controlled planning inputs; the Host owns complete planning provenance either by fixing one immutable snapshot before the first semantic read or by capturing each delivered observation and sealing the dependency set after the proposal; the Application accepts one exact Host-owned pending contract bound to that provenance; the Host alone revalidates and single-consumes that authorization while making complete Program creation atomic and canonical. The accepted planning base records what planning depended on, but neither it nor SQLite admission certifies external worktree state at commit time.**
+> **The caller authors intent; the Agent proposes semantics only from bounded Host-controlled planning inputs; the Host owns complete planning provenance either by fixing one immutable snapshot before the first semantic read or by capturing each delivered observation and sealing the dependency set after the proposal; the Application accepts one exact Host-owned pending contract bound to that provenance; the Host alone revalidates and single-consumes that authorization while making complete Program creation atomic and canonical. The accepted planning base records what planning depended on and bridges that authorization to the first ProgramAttempt, but it is not a perpetual execution baseline and neither it nor SQLite admission certifies external worktree state at commit time.**
 
-This is the smallest model found that preserves natural Agent planning without silently granting the Agent immutable completion-burden authority, accepting a plan whose actual planning dependencies are untracked, or creating duplicate Programs under retry/race.
+This is the smallest model found that preserves natural Agent planning without silently granting the Agent immutable completion-burden authority, accepting a plan whose actual planning dependencies are untracked, creating duplicate Programs under retry/race, or pinning successor dispatches to stale creation-time Workspace state.
 
 ---
 
@@ -1422,11 +1442,13 @@ Both draft presentation and session terminal transitions must revalidate on the 
 
 This does not require a canonical `planning` ProgramState lifecycle.
 
-## 61. Attempt-time out-of-band mutation detection
+## 61. Attempt-time out-of-band mutation detection and successor dispatch base
 
 This is a **separate correctness dependency**.
 
 The frozen Phase 1 contract must decide what happens when a human editor or non-ALCODE process changes the repository during the observation-to-execution window or after ProgramAttempt execution starts.
+
+It must also define the execution-aware current state/generation used for **successor ProgramAttempt dispatches after legitimate Program-correlated mutations**. Immutable creation-time `Bplan` is not that successor baseline.
 
 Credible solution families to study separately include:
 
@@ -1435,7 +1457,7 @@ Credible solution families to study separately include:
 - filesystem/repository snapshot or stronger isolation where actually available;
 - a hybrid observation-generation + operation-correlation model.
 
-Until this is resolved, no consolidated Phase 1 contract should claim continuous ProgramAttempt/worktree freshness.
+Until this is resolved, no consolidated Phase 1 contract should claim continuous ProgramAttempt/worktree freshness or define successor dispatch freshness by equality to creation-time `Bplan`.
 
 ## 62. Planning status
 
