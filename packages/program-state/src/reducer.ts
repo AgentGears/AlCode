@@ -268,10 +268,15 @@ export function applyProgramTransition(
 
     case "execution_base.adopt": {
       requireActive(state);
+      if (state.executionBaseMismatch !== null) {
+        throw new ProgramTransitionError("A current execution-base mismatch requires explicit rebase acceptance");
+      }
+      if (state.activeAttempt !== null) {
+        throw new ProgramTransitionError("Generic execution-base adoption cannot rewrite an active ProgramAttempt base");
+      }
       return finalize(state, {
         ...state,
         acceptedExecutionBase: transition.executionBase,
-        executionBaseMismatch: null,
         executionBaseUnavailable: false,
       });
     }
