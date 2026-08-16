@@ -48,16 +48,16 @@ Phase 1.0 does not reopen Phases 0.0–0.9. Existing operation/reconciliation, t
 9. **One active ProgramAttempt per Workspace runtime/admission domain.** Programs sharing one Workspace serialize execution attempts. Independent Workspace runtimes may execute independently. Phase 1.0 has no same-Workspace parallel ProgramAttempts.
 10. **No implicit background execution.** Dispatch requires an active attached session/execution episode. Host startup, eligibility, or an Agent idle signal does not itself authorize dispatch.
 11. **Execution freshness has two axes.** `WorkspaceEffectGeneration` records replayable Host-known confirmed Workspace-effect lineage; `ExecutionObservationIdentity` records a complete bounded Host observation. A trusted `ProgramAttemptExecutionBase` requires both.
-12. **Boundary-checked freshness, not filesystem isolation.** The Host coordinates Host-mediated Workspace mutators and checks observations at defined cuts. Arbitrary external writers may still race between cuts or perform undetectable ABA. Phase 1.0 makes no stronger shared-worktree claim.
-13. **Effect certainty and mutator quiescence are distinct.** A terminal or confirmed operation effect does not prove its writer/descendants stopped. Unknown quiescence remains a durable/rebuildable Workspace writer barrier.
+12. **Boundary-checked freshness, not filesystem isolation.** The Host coordinates Host-mediated Workspace mutators and checks observations at the closed first-slice freshness cuts defined in §10. Arbitrary external writers may still race between cuts or perform undetectable ABA. Phase 1.0 makes no stronger shared-worktree claim.
+13. **Effect certainty and mutator quiescence are distinct.** A terminal or confirmed operation effect does not prove its writer/descendants stopped. Unknown quiescence remains a durable/rebuildable Workspace writer barrier that blocks ordinary Host Workspace mutation and correctness-sensitive Program admission until canonical quiescence proof.
 14. **Indeterminate mutation remains uncertainty.** It blocks trusted continuation/retry/completion until reconciliation; it never becomes `absent` or `confirmed` by inference from later bytes.
 15. **Attempt-originated operations are durably correlated once.** Program ownership is declared at the root operation and inherited through `operationId`; no second link authority is introduced.
 16. **Verification is per-obligation and generation-indexed.** Each mandatory obligation owns a monotonic `subjectGeneration`; only evidence or a waiver for the exact current generation is current.
-17. **Unknown verification impact fails closed.** Known overlap invalidates; provably disjoint impact may retain currentness; unknown impact advances/invalidates the affected obligation rather than optimistically reusing proof.
+17. **Unknown verification impact fails closed.** Known overlap invalidates; provably disjoint impact may retain currentness; unknown impact advances/invalidates the affected obligation rather than optimistically reusing proof. Execution-base mismatch recognition and the required verification-impact transition are crash-safe as specified in §10.
 18. **Artifact identity is not evidence admission.** Retained bytes/ArtifactRef presence never by themselves become current Program evidence. Artifact-backed evidence uses the same attempt/provenance and `subjectGeneration` rules as every other evidence source.
 19. **Completion contract is immutable.** The accepted objective, required DAG, mandatory verification definitions, output slots/production steps, and creation-time policy additions are not rewritten by runtime evidence.
-20. **Completion is Host-only and serialized.** `program.completed` is admitted only by the Completion Oracle on one exact canonical cut; `program.completed` and `program.cancelled` are mutually exclusive.
-21. **Cancellation is authority cutoff, not rollback.** Exact-revision Application cancellation atomically invalidates the active ProgramAttempt and makes the Program terminal, while outstanding operation effect/reconciliation facts remain independently true.
+20. **Completion is Host-only and serialized.** `program.completed` is admitted only by the Completion Oracle after the protected direct terminal observation and on one exact canonical cut; `program.completed` and `program.cancelled` are mutually exclusive.
+21. **Cancellation is authority cutoff, not rollback.** Exact-revision Application cancellation atomically invalidates the active ProgramAttempt and makes the Program terminal, while outstanding operation effect/reconciliation facts and writer barriers remain independently true.
 22. **Projections are rebuildable.** Removing/rebuilding Program projections from canonical history reproduces the same semantic current state without process memory, current plugin registries, mutable current policy, or current model output.
 23. **Observation never becomes canonical semantic authority.** Git, files, CodeIntelligence, watchers, model reasoning, tool output, and artifact contents are observations/evidence/provenance inputs only.
 24. **Reasoning and ProgramState remain independent reducers.** Reasoning may support evidence but does not directly satisfy Program verification or mutate ProgramState.
@@ -134,7 +134,7 @@ operation.requested root
 
 All later operation lifecycle/evidence/reconciliation events inherit Program ownership through `operationId = O`; they do not repeat `ProgramAttemptId` as a competing authority. Efficient projections may denormalize P/A.
 
-The exact current P/A/revision/Agent-generation validity check and root `operation.requested` admission share one canonical serialization point. Any pre-admission asynchronous checks are revalidated at that cut.
+The exact current P/A/revision/Agent-generation validity check and root `operation.requested` admission share one canonical serialization point. Any pre-admission asynchronous checks are revalidated at that cut. The direct execution-base observation required by §10 is obtained under Workspace coordination before that canonical admission and is also revalidated there.
 
 Every root `may_write` operation also persists an immutable **operation-local execution/quiescence contract** sufficient to reconstruct its historical writer/descendant containment and decide quiescence after restart without consulting the current capability/provider registry. When that historical contract's semantics depend on an exact provider, binding, provider generation, process-containment identity, or equivalent incarnation-specific fact, that identity is persisted with the operation as well. This is operation-local provenance: Phase 1.0 does not bind a whole ProgramAttempt to one provider snapshot and does not interrupt attempts merely because an unrelated provider generation changes.
 
@@ -233,7 +233,7 @@ Before creation the Host excludes conflicting Host-mediated Workspace mutators a
 
 ### 5.6 Bridge to first execution
 
-Before the **first** ProgramAttempt dispatch, the Host reacquires the Workspace mutation coordinator, establishes required mutator quiescence, and performs one final accepted planning-base recheck. If it matches, the Host establishes the first `ProgramAttemptExecutionBase` from the current execution protocol and admits the attempt.
+Before the **first** ProgramAttempt dispatch, the Host reacquires the Workspace mutation coordinator, establishes required mutator quiescence, and performs one final accepted planning-base recheck. If it matches, the Host obtains a complete protected current execution observation, establishes the first `ProgramAttemptExecutionBase`, and admits the attempt under the first-dispatch freshness cut in §10.
 
 Creation-time `Bplan`/planning identity ends its runtime role at this bridge. After any legitimate Program-correlated mutation, successor attempts use current execution-aware `(WorkspaceEffectGeneration, ExecutionObservationIdentity)` and never compare the Workspace back to immutable creation-time `Bplan`.
 
@@ -282,7 +282,7 @@ The scheduler is event-driven and scoped to one Workspace runtime/admission doma
 - deterministic eligible-work selection;
 - attempt admission occurs canonically before Agent execution;
 - a retry always uses a fresh attempt identity;
-- no retry or successor dispatch while required recovery, writer-quiescence, execution-base, blocker, or verification conditions are unresolved.
+- no retry or successor dispatch while required recovery, outstanding writer-quiescence, execution-base mismatch/unavailability, blocker, or transition-specific verification conditions are unresolved.
 
 Independent Workspace runtimes are not serialized by a process-global Program lock.
 
@@ -371,6 +371,16 @@ terminal failed effect + writer not proven quiescent → barrier remains
 indeterminate effect + quiescence proven → uncertainty remains even though writer stopped
 ```
 
+Every post-baseline started `may_write` operation that lacks canonical proven quiescence is an outstanding Workspace writer barrier regardless of Program lifecycle, Attempt lifecycle, execution outcome, or effect certainty. While any such barrier exists in the Workspace domain, the Host must not grant:
+
+- a new ordinary ProgramAttempt mutation reservation/dispatch;
+- an ordinary Program or non-Program Host `may_write` admission;
+- Workspace-based stable reconciliation that assumes the old writer can no longer act;
+- Program verification satisfaction that assumes a stable trusted Workspace base;
+- Completion Oracle terminal admission.
+
+Only bounded diagnostic access and quiescence/recovery work authorized under the operation's persisted historical execution/quiescence contract may cross the barrier. Cancellation, Program terminalization, timeout, terminal operation outcome, or `EffectStatus=confirmed|indeterminate` does not clear it. Only the canonical quiescence proof for that `operationId` clears the writer barrier.
+
 `WorkspaceEffectGeneration` is a replayable Workspace-domain ordinal derived from existing operation effect authority:
 
 ```text
@@ -381,15 +391,36 @@ into EffectStatus = confirmed
 
 A request/start alone does not advance it. A final `absent` effect does not advance it, but a `may_write` operation may enter final `absent` only **after** writer/descendant quiescence is proven under its immutable historical operation-local contract. Any Workspace-observation-based reconciliation used to establish absence must use a complete protected observation taken after that quiescence proof. A timed-out/interrupted `may_write` operation with unknown quiescence cannot be finalized as `absent` merely because the currently observed Workspace appears unchanged. If an indeterminate operation is later reconciled to confirmed, that first canonical confirmed transition advances the generation once. Duplicate terminal/reconciliation paths cannot double-advance the same `operationId`.
 
-A confirmed effect requires a complete protected post-effect observation before the Host has a trusted new `(G,O)` base. If the post-observation is unknown, causation remains known but the current attempt cannot continue dependent execution/verification/completion claims.
+A confirmed effect requires a complete protected post-effect observation after writer quiescence before the Host has a trusted new `(G,O)` base. If the post-observation is unknown, causation remains known but the current attempt cannot continue dependent execution/verification/completion claims.
 
 A Host-known operation does not prove exclusive causation of every observed byte. Arbitrary external writers remain outside Host exclusion. The guarantee is the checked post-state and canonical Host effect lineage, not a claim that no concurrent external write occurred.
 
-## 10. Execution-base mismatch and explicit rebase
+## 10. Freshness-sensitive cuts, execution-base mismatch, and explicit rebase
 
-At any freshness-sensitive cut, the Host compares the Program's accepted/current expected base with a complete protected current base.
+### 10.1 Closed first-slice freshness-cut taxonomy
 
-If either dimension differs outside the legitimate current-attempt post-effect advance path, the Host records a durable `ExecutionBaseMismatchReceipt` equivalent to:
+For Phase 1.0, the correctness-sensitive Workspace freshness cuts are closed rather than implementation-selected. The Host directly checks a complete protected current execution base at these boundaries:
+
+1. **first ProgramAttempt dispatch**, after the accepted planning-base bridge and before canonical attempt admission;
+2. **every Program-linked root operation request**, before canonical `operation.requested` admission;
+3. **Workspace-dependent read-only execution**, with a protected complete pre-observation matching the Attempt expected base and a protected complete post-observation before current Program evidence is admitted;
+4. **Workspace-mutating execution**, with the protected pre-observation before root operation admission and a complete protected post-quiescence/post-effect observation before trusted Program base adoption/current evidence;
+5. **current work-completion and current evidence admission** when the claim depends on Workspace state;
+6. **verification satisfaction**;
+7. **successor ProgramAttempt dispatch and the final bridge after accepted rebase**;
+8. **Completion Oracle terminal admission**.
+
+At each applicable cut the Host compares the Program's accepted/current expected `(WorkspaceEffectGeneration, ExecutionObservationIdentity)` with the complete protected current base and revalidates exact Program/Attempt/revision/control authority in canonical admission. `unknown` fails closed.
+
+For a Workspace-dependent read, if the post-observation is unknown or differs from the required pre/current base, the generic operation result may remain historical evidence but is not current Program evidence and cannot satisfy current verification/work completion from that read. The Host does not automatically retry the read.
+
+For verification satisfaction and Completion Oracle admission, the Host obtains the Workspace observation/read coordination **before** entering canonical admission, takes the direct complete observation, then inside canonical admission revalidates exact Program state, current G/O, verification generations, writer/effect barriers, and any winning terminal conflict before append. The coordinator excludes competing Host-mediated mutators across the checked cut; arbitrary external writers remain outside it.
+
+The shared-worktree limitation remains explicit: an external process may still race after a checked observation, and equal checked observations do not prove that no external ABA occurred between them. A stronger guarantee requires an isolated/transactional Workspace provider.
+
+### 10.2 Mismatch receipt, verification impact, and active-attempt handling
+
+If either execution-base dimension differs outside the legitimate current-attempt post-effect advance path, the Host records a durable `ExecutionBaseMismatchReceipt` equivalent to:
 
 ```ts
 type ExecutionBaseMismatchKind =
@@ -408,11 +439,31 @@ interface ExecutionBaseMismatchReceipt {
 }
 ```
 
-If a mismatch is detected while an attempt is active, the Host interrupts/invalidates that attempt before accepting further current operation/evidence/verification/completion claims from it.
+The receipt's `expectedProgramRevision` records the Program revision whose accepted execution base was checked when the mismatch basis was created. It is historical mismatch provenance; it is **not** the separate exact-current Program revision supplied by a later rebase command.
+
+When a complete mismatch is first recognized for a Program, the Host also performs the required verification-impact analysis before the candidate can become rebase-current. The mismatch receipt, active-Attempt interruption if any, and every required overlapping/unknown `subjectGeneration` advance/invalidation are admitted in one serialized Program semantic transition. If bounded changed-path/effect impact cannot prove an obligation disjoint, impact is `unknown` and that obligation invalidates fail closed; Phase 1.0 does not defer the invalidation behind an already-accepted rebase.
+
+If a causal-generation mismatch is recognized after one or more Host effects whose prior Program-specific impact processing is unavailable/incomplete, mismatch handling conservatively catches the affected Program's obligations up before rebase: known-disjoint obligations may remain current only with complete trusted impact evidence; all others invalidate.
+
+If a mismatch is detected while an attempt is active, this same transition interrupts/invalidates that attempt before accepting further current operation/evidence/verification/completion claims from it. An already-running operation remains independent durable effect history and must finish/reconcile under ordinary operation semantics.
 
 `unknown` current observation does not produce an acceptable candidate base. It exposes an execution-base-unavailable/blocking condition until a later complete protected observation exists.
 
-A parked Program resumes only when its accepted base exactly matches the protected current base. Otherwise no dispatch occurs until the Application explicitly accepts the exact current candidate through a stale-safe, exact-revision, exact-receipt command equivalent to `program.execution.rebase.accept`. The receipt/acceptance is single-consumption/idempotent, does not amend objective/topology/verification definitions, and is rechecked immediately before a fresh attempt is admitted. Any later change makes the accepted candidate stale again.
+### 10.3 Exact rebase
+
+A parked Program resumes only when its accepted base exactly matches the protected current base. Otherwise no dispatch occurs until the Application explicitly accepts the exact current candidate through a stale-safe command equivalent to:
+
+```text
+program.execution.rebase.accept(
+  programStateId,
+  expectedProgramRevision,
+  executionBaseMismatchReceiptId,
+  acceptedWorkspaceEffectGeneration,
+  acceptedObservationIdentity
+)
+```
+
+Rebase acceptance may consume only a mismatch receipt whose required verification-impact invalidation/catch-up transition is already complete. The command's `expectedProgramRevision` independently requires the exact **current** Program revision at acceptance; it need not equal the receipt's historical `expectedProgramRevision` if mismatch/interruption processing changed Program control state after the checked revision. The accepted G/O must exactly equal the receipt's complete current candidate. The receipt/acceptance is single-consumption/idempotent, does not amend objective/topology/verification definitions, and is rechecked immediately before a fresh attempt is admitted. Any later execution-base change makes the accepted candidate stale again.
 
 External ABA can remain invisible if the shared worktree changes and returns to the same observed state between checked cuts. If the product later requires proof that no intermediate external mutation occurred, it needs a stronger isolated/transactional Workspace provider; Phase 1.0 does not manufacture that guarantee from hashes/watchers.
 
@@ -447,7 +498,7 @@ artifact_present
 
 Unsupported kinds reject creation/admission. No generic Boolean DSL, arbitrary `field/operator/value` expression, plugin evaluator, free-form evidence predicate, reasoning contract, or model judgment is terminal Program authority.
 
-**`operation_result`** binds at Program creation to one exact stable **versioned Host verification-operation contract** and exact bounded canonical invocation arguments/digest. Runtime `operationId`, provider instance, ProgramAttemptId, ArtifactRef, and evidenceRef are not part of the immutable requirement. At satisfaction, the Host proves exact contract/args match, current Program/Attempt authority where applicable, required terminal success/exit semantics, safe effect/reconciliation state, required mutator quiescence, trusted current execution base, and exact current `subjectGeneration`. Current capability policy/permission still applies; a requirement never pre-authorizes execution.
+**`operation_result`** binds at Program creation to one exact stable **versioned Host verification-operation contract** and exact bounded canonical invocation arguments/digest. Runtime `operationId`, provider instance, ProgramAttemptId, ArtifactRef, and evidenceRef are not part of the immutable requirement. At satisfaction, the Host proves exact contract/args match, current Program/Attempt authority where applicable, required terminal success/exit semantics, safe effect/reconciliation state, required mutator quiescence, trusted current execution base at the §10 verification-satisfaction cut, and exact current `subjectGeneration`. Current capability policy/permission still applies; a requirement never pre-authorizes execution.
 
 A replaceable provider's raw interpretation of `succeeded` cannot redefine durable predicate semantics. The versioned Host verification-operation contract defines the stable success semantics; operation-local provider provenance is retained only where required for execution/recovery.
 
@@ -479,6 +530,8 @@ A later non-equivalent observation `coverageDigest` makes freshness continuity u
 `subjectGeneration` is the one canonical freshness ordinal for each obligation. A relevant mutation or unknown relevance advances/invalidates the obligation. The Host may retain currentness only when the mutation impact is provably disjoint from the accepted scope using Host-owned/trusted complete impact evidence.
 
 Capability/provider self-reported paths are not sufficient authority by themselves. Host-derived changed-path observation or a trusted complete effect-scope contract controls disjointness. Limit-exceeded/incomplete impact is unknown and fails closed; it is never truncated and called complete.
+
+When execution-base mismatch is the first canonical recognition that covered Workspace state changed relative to a Program's accepted base, §10.2 performs this impact analysis and every required `subjectGeneration` advance in the same serialized Program transition as the mismatch receipt/Attempt interruption. Rebase acceptance cannot overtake that invalidation. A causal-only mismatch likewise catches up any missing impact conservatively before its receipt can be consumed for rebase.
 
 A satisfaction record is current only when its verified generation equals the obligation's current generation. A waiver is an explicit durable Application/Host-authorized transition with actor/source/reason and the **exact generation being waived**. It is not a predicate result. When the generation advances, the old waiver is historical.
 
@@ -536,13 +589,15 @@ validate lifecycle active + exact revision
 → Program becomes terminal
 ```
 
-Best-effort physical Agent/process cancellation may be signaled afterward, but canonical cancellation does not wait indefinitely for environmental quiescence and does not claim rollback. Outstanding operation lifecycle/effect/reconciliation and durable writer barriers remain true and continue through ordinary recovery/reconciliation. Late results remain historical ownership facts and cannot complete work or verification for the cancelled Program.
+Best-effort physical Agent/process cancellation may be signaled afterward, but canonical cancellation does not wait indefinitely for environmental quiescence and does not claim rollback. Outstanding operation lifecycle/effect/reconciliation and durable writer barriers remain true and continue through ordinary recovery/reconciliation. A surviving writer barrier continues to block ordinary Host `may_write` admission under §9 even though the Program is terminal. Late results remain historical ownership facts and cannot complete work or verification for the cancelled Program.
 
 Completion and cancellation share the same terminal admission lane. Whichever terminal fact wins first makes the other reject/noop as already terminal. Exactly one terminal state becomes effective.
 
 ## 14. Completion Oracle
 
-`agent.idle` may trigger evaluation but is not a completion predicate. The Host Completion Oracle may admit `program.completed` only when, on the same serialized canonical state cut or after complete revalidation inside it:
+`agent.idle` may trigger evaluation but is not a completion predicate. Completion is a closed §10 freshness cut: before entering the terminal canonical admission, the Host obtains the Workspace observation/read coordination and a complete protected current execution observation. Inside terminal admission it revalidates that the Program's accepted/current expected `(G,O)` exactly equals the checked current base and revalidates all terminal predicates. A mismatch or unknown observation blocks completion and enters the execution-base mismatch/unavailable path rather than appending `program.completed`.
+
+The Host Completion Oracle may admit `program.completed` only when, on that same serialized canonical state cut after complete revalidation:
 
 - lifecycle is `active`;
 - every required work item is completed;
@@ -552,7 +607,7 @@ Completion and cancellation share the same terminal admission lane. Whichever te
 - no current execution-base mismatch/unavailable condition blocks terminal authority;
 - no Program-linked operation remains `requested`/`started`;
 - no Program-linked indeterminate effect or unresolved reconciliation blocks safe completion;
-- no outstanding/rebuildable Workspace writer barrier relevant to Program completion remains unresolved;
+- no outstanding/rebuildable Workspace writer barrier in the Workspace domain remains unresolved;
 - no Program-linked retryable durable work remains incomplete;
 - no admitted transcript/tool-call obligation relevant to the attached execution remains unresolved;
 - every artifact-backed satisfaction relied on at the terminal cut still resolves/passes integrity;
@@ -562,11 +617,13 @@ There is no second concrete-reference completion criterion list.
 
 Completion uses a stable ProgramState-derived idempotency key. Preliminary evaluation outside canonical admission is advisory only; a competing event admitted first forces complete re-evaluation. `program.completed` and `program.cancelled` are mutually exclusive.
 
+The direct terminal observation remains a boundary check, not filesystem transaction isolation. An arbitrary external writer may still race after the observation and before/after canonical append; Phase 1.0 does not claim otherwise.
+
 Session completion remains independent: a session may stop while an active Program remains durable, and a pending Program-creation interaction can block ordinary idle session completion without yet creating a ProgramState.
 
 ## 15. Recovery and replay
 
-Before Program scheduler admission after Host open/reopen:
+Before Program scheduler admission **or ordinary Host Workspace `may_write` admission** after Host open/reopen:
 
 ```text
 recover canonical store/log integrity
@@ -575,15 +632,16 @@ recover canonical store/log integrity
 → rebuild request-time WorkspaceAccessClass and every may_write operation-local historical execution/quiescence contract
 → rebuild WorkspaceEffectGeneration from first confirmed may_write transitions
 → rebuild outstanding durable writer barriers/quiescence state
-→ recover/reconcile interrupted/indeterminate operations using their historical contracts
+→ for every started post-baseline may_write lacking canonical quiescence proof: keep ordinary Host may_write / stable reconciliation / Program verification / completion fail-closed
+→ recover/reconcile interrupted/indeterminate operations using their historical contracts, proving quiescence before stable Workspace reconciliation
 → identify orphan active ProgramAttempts and durably interrupt them idempotently
 → establish any required legacy execution-protocol baseline only after legacy mutators are recovered/quiescent
 → take a fresh complete protected ExecutionObservationIdentity
-→ revalidate accepted Program execution bases / produce mismatch state where needed
-→ enable scheduler admission
+→ revalidate accepted Program execution bases / produce mismatch + verification-impact state where needed
+→ only then enable eligible scheduler and ordinary Host Workspace mutation admission
 ```
 
-A Host crash cannot erase an outstanding writer barrier merely because the operation has a terminal/effect event. A crash during attempt interruption, mismatch/rebase control, creation single-consumption, generation advancement, or terminal completion is handled idempotently from canonical history.
+A Host crash cannot erase an outstanding writer barrier merely because the operation has a terminal/effect event. A crash during attempt interruption, mismatch/verification-impact/rebase control, creation single-consumption, generation advancement, or terminal completion is handled idempotently from canonical history.
 
 Legacy operations predating Phase 1 execution-protocol fields are never retrospectively classified from mutable current providers. Phase 1 begins its execution baseline only after existing recovery/quiescence plus a complete current observation.
 
@@ -709,7 +767,7 @@ Phase 1.0 excludes:
 
 ## 21. Acceptance criteria — consolidated DRAFT candidate
 
-These ACs are not approved or frozen. They are the candidate proof contract for the next whole-contract review.
+These ACs are not approved or frozen. They are the candidate proof contract for the whole-contract review and any bounded correction retest.
 
 ### AC-10-01 — Identity, envelope, and historical compatibility
 
@@ -727,9 +785,9 @@ One Program survives session stop, Agent replacement, Host reopen, and later-ses
 
 ### AC-10-04 — Exact ProgramAttempt and execution-base validity
 
-Every dispatch mints a fresh ProgramAttemptId. Current claims require exact P/A/work/revision/Agent-generation ownership. Root operation admission revalidates those facts in its canonical cut. First dispatch bridges from accepted planning base; successors require exact current `(WorkspaceEffectGeneration, ExecutionObservationIdentity)`.
+Every dispatch mints a fresh ProgramAttemptId. Current claims require exact P/A/work/revision/Agent-generation ownership. Root operation admission revalidates those facts plus a complete protected current execution base in its canonical cut. First dispatch bridges from accepted planning base; successors require exact current `(WorkspaceEffectGeneration, ExecutionObservationIdentity)`.
 
-Required negatives:
+Prove the closed §10 cuts, including Workspace-dependent read-only pre/post observation and protected terminal completion observation. Required negatives:
 
 ```text
 expected R16, current R17 → reject
@@ -740,11 +798,17 @@ accepted (G4,O4), current (G5,O4) → rebase_required
 accepted (G4,O4), current (G4,O5) → rebase_required
 current observation unknown → no rebase target / no dispatch
 mismatch receipt accepted, then base changes again → no dispatch
+external edit before root operation request → no operation.requested from stale base
+external edit during Workspace-dependent read → result not current Program evidence
 ```
+
+A mismatch receipt's stored Program revision is historical checked-base provenance. A later `program.execution.rebase.accept` independently carries and must match the current exact Program revision while also naming the exact receipt; mismatch processing that changed Program control state does not require regenerating the historical receipt solely to copy the newer command revision into it.
 
 ### AC-10-05 — Bounded DAG and Workspace-domain scheduler
 
 Creation rejects unknown/self/cyclic/malformed/over-bound DAGs and aggregate limit breaches. Eligible selection is deterministic. At most one ProgramAttempt is active per Workspace runtime/admission domain; separate Workspace runtimes may proceed independently. No dispatch occurs without an active attached execution episode, with unresolved execution-base mismatch, or before required recovery/quiescence.
+
+Every started post-baseline `may_write` operation without canonical quiescence proof blocks new ProgramAttempt reservation/dispatch and ordinary Program/non-Program Host `may_write` admission in that Workspace domain even if its owning Attempt or Program has terminalized.
 
 Prove legitimate current-attempt mutation advances its expected base and permits same-attempt continuation only when confirmed effect, writer quiescence, and complete post-effect observation establish a trusted next base. Successor dispatch never compares back to creation-time `Bplan`.
 
@@ -752,7 +816,7 @@ Prove legitimate current-attempt mutation advances its expected base and permits
 
 For every ProgramAttempt-originated operation, root history durably identifies P/A/O and immutable request-time Workspace access class. Every `may_write` root also preserves its immutable operation-local execution/quiescence contract, plus any exact incarnation identity that contract needs, so recovery never consults a replacement provider to decide historical containment/quiescence. Descendants resolve Program ownership through O. `WorkspaceEffectGeneration` advances exactly once at the first canonical confirmed transition for one `may_write` O, including a later reconciliation-to-confirmed path, and never on request/start/absent.
 
-A final `absent` result for `may_write` is admissible only after historical-contract quiescence is proven; Workspace-observation-based absence reconciliation uses a complete protected post-quiescence observation. Effect certainty and writer quiescence are independently rebuildable. A crash cannot drop an unproven writer barrier. Indeterminate mutation interrupts trusted attempt continuation, blocks retry/completion, and remains uncertain until reconciliation.
+A final `absent` result for `may_write` is admissible only after historical-contract quiescence is proven; Workspace-observation-based absence reconciliation uses a complete protected post-quiescence observation. Effect certainty and writer quiescence are independently rebuildable. A crash cannot drop an unproven writer barrier. That barrier blocks ordinary Host `may_write`, stable Workspace reconciliation, Program verification satisfaction, and Completion Oracle admission until canonical quiescence proof. Indeterminate mutation interrupts trusted attempt continuation, blocks retry/completion, and remains uncertain until reconciliation.
 
 Required artifact negatives:
 
@@ -766,7 +830,7 @@ bytes retained as R
 → R cannot prove operation success
 ```
 
-### AC-10-07 — Closed verification, freshness, output binding, and waivers
+### AC-10-07 — Closed verification, freshness, output binding, waivers, and mismatch coupling
 
 Only `operation_result`, `workspace_path_state`, and `artifact_present` v1 predicates are accepted. Operation predicates bind exact versioned Host verification-operation contracts + canonical arguments; artifact requirements bind stable output slots through exact production-step contract/args/channel identity; repeated invocations cannot satisfy one another's slot. Path scopes are non-empty exact/subtree sets, obey segment-boundary semantics, cover any `workspace_path_state` path, and are fully covered by the selected observation profile.
 
@@ -781,22 +845,33 @@ V satisfied at subjectGeneration G1
 → fresh exact G2 evidence or explicit G2 waiver required
 ```
 
+Also prove the crash-safe external-mismatch composition:
+
+```text
+V satisfied G1 at accepted (G4,O4)
+→ external overlapping/unknown drift yields current (G4,O5)
+→ first canonical mismatch recognition admits receipt + required verification invalidation/catch-up before rebase can become current
+→ crash/replay cannot expose an accepted/current rebase candidate with old G1 verification still current
+→ rebase accept is admissible only after impact processing is complete
+```
+
 A mutating verification operation cannot satisfy a new generation from its generic success after overlapping/unknown self-mutation. Coverage-profile change fails closed and does not resurrect old proof after rebase. Artifact-backed terminal satisfaction rechecks presence/integrity; waiver never fabricates ArtifactRef/predicate success.
 
 ### AC-10-08 — Completion Oracle, cancellation, and terminal mutual exclusion
 
-Only the Host Completion Oracle admits `program.completed`, after complete revalidation on the terminal canonical cut. Prove all universal predicates, current verification generations, artifact integrity when relied upon, no active attempt, no blocking uncertainty/writer barrier/execution-base mismatch, and no unresolved relevant durable work/tool/transcript obligation.
+Only the Host Completion Oracle admits `program.completed`. Before its terminal canonical admission it obtains a protected complete current observation; inside admission it revalidates exact current `(G,O)`, all universal predicates, current verification generations, artifact integrity when relied upon, no active attempt, no blocking uncertainty/writer barrier/execution-base mismatch, and no unresolved relevant durable work/tool/transcript obligation. Unknown/mismatched terminal observation rejects/blocks rather than completing.
 
 Application cancellation requires exact revision, atomically invalidates/interrupts the active attempt, and records one terminal authority cutoff without claiming rollback. Race proofs:
 
 - completion preliminary check then conflicting event → recheck/reject;
+- external edit before completion terminal cut → protected direct observation detects mismatch/unavailable → no `program.completed`;
 - completion vs cancellation → exactly one terminal state;
 - duplicate/retry/reopen → exactly one effective terminal fact;
-- outstanding operation after cancellation remains historical/reconcilable but cannot change Program terminal truth.
+- outstanding operation after cancellation remains historical/reconcilable and an unproven writer barrier still blocks ordinary Host `may_write`, but neither can change Program terminal truth.
 
 ### AC-10-09 — Recovery barrier and execution-state rebuild
 
-Host reopen rebuilds Program projections, operation ownership/access classification, every historical `may_write` execution/quiescence contract, WorkspaceEffectGeneration, durable writer barriers, uncertainty/reconciliation, and orphan attempts before scheduler admission; then it takes a fresh complete protected observation and resolves exact accepted-base currentness. Crash during any idempotent recovery transition cannot authorize a replacement attempt early.
+Host reopen rebuilds Program projections, operation ownership/access classification, every historical `may_write` execution/quiescence contract, WorkspaceEffectGeneration, durable writer barriers, uncertainty/reconciliation, and orphan attempts before scheduler **or ordinary Host Workspace `may_write` admission**; then it takes a fresh complete protected observation and resolves exact accepted-base currentness plus required verification-impact mismatch processing. Crash during any idempotent recovery transition cannot authorize a replacement attempt or ordinary Host mutator early.
 
 Legacy pre-Phase-1 operation history is not reclassified from current providers; a new Phase 1 baseline is established only after legacy recovery/quiescence plus complete current observation.
 
@@ -825,6 +900,7 @@ objective supplied
 → D single-consumed → one Program P + source attachment
 → crash/retry accept maps to same P
 → pre-first-dispatch planning-base recheck succeeds
+→ protected complete current execution observation succeeds
 → first ProgramAttempt minted from trusted execution base
 ```
 
@@ -838,12 +914,14 @@ P: A → B → C
 → Host + Agent destroyed
 → reopen rebuilds Program/effect/writer/recovery state
 → fresh observation established
+→ no dispatch or ordinary Host may_write while an old writer barrier remains
 → no dispatch without active attached session
 → Session 2 attaches P
 → A remains complete
 → exact current base accepted/current
 → B then C execute
 → current mandatory verification satisfied/waived
+→ protected terminal observation/current-base revalidation succeeds
 → P completes once
 ```
 
@@ -859,7 +937,7 @@ B → Attempt X at revision R / Agent generation 1
 → Y remains current
 ```
 
-### Scenario D — Legitimate mutation, external divergence, and rebase
+### Scenario D — Legitimate mutation, external divergence, verification impact, and rebase
 
 ```text
 Attempt A base (G4,O4)
@@ -868,13 +946,14 @@ Attempt A base (G4,O4)
 → A expected base advances to (G5,O5)
 → A may continue if otherwise current
 → later external edit produces O6
-→ mismatch receipt; A interrupted
-→ Application accepts exact candidate (G5,O6)
-→ final recheck matches
+→ freshness cut detects mismatch
+→ one serialized Program transition records mismatch receipt + interrupts A + advances any overlapping/unknown verification subjectGenerations
+→ Application later submits rebase with the exact current Program revision + exact receipt + exact candidate (G5,O6)
+→ final protected recheck matches
 → fresh Attempt B may dispatch
 ```
 
-Also prove causal-only `(G4,O4) → (G5,O4)` mismatch and combined mismatch. Document that an unobserved external ABA between equal checked observations is outside the guarantee.
+The receipt continues to identify the revision/base that was checked; the rebase command independently supplies exact current Program revision. Also prove causal-only `(G4,O4) → (G5,O4)` mismatch and combined mismatch, including conservative verification-impact catch-up before rebase if prior impact is not complete. Document that an unobserved external ABA between equal checked observations is outside the guarantee.
 
 ### Scenario E — Indeterminate effect and durable writer barrier
 
@@ -885,18 +964,21 @@ Attempt A starts may_write O
 → writer quiescence may also be unknown
 → A cannot continue/retry/verify/complete
 → reopen rebuilds O ownership + uncertainty + writer barrier + historical execution/quiescence contract
+→ while O lacks canonical quiescence proof: no new ProgramAttempt and no ordinary Host may_write admission
 → reconciliation/quiescence eventually produce canonical facts
 → `absent` cannot be finalized until quiescence is proven; observation-based absence is post-quiescence
 → fresh complete execution base required
 → only fresh Attempt B can continue
 ```
 
+Cancellation variant: P may become terminal while O's barrier survives; terminalization does not permit an unrelated Host `may_write` to cross O's remaining writer lifetime.
+
 ### Scenario F — Verification invalidation and artifact identity
 
 ```text
 V satisfied at G1 using artifact-backed evidence R
-→ relevant mutation
-→ V advances to G2
+→ relevant mutation or execution-base mismatch with relevant/unknown impact
+→ V advances to G2 before any rebase can make the changed base current
 → R remains byte-identical/resolvable
 → Completion Oracle rejects stale V
 → fresh verification at G2 happens to reproduce same bytes / same ArtifactRef R
@@ -910,11 +992,13 @@ Include mutating-verifier overlap/unknown-impact case where generic success cann
 
 ```text
 all completion predicates appear true
+→ Completion Oracle obtains protected direct terminal observation
 ↔ exact-revision Application cancel arrives
 → one canonical terminal order wins
 → cancel-first interrupts attempt and makes Program cancelled; completion rejects
-OR completion-first makes Program completed; cancel rejects/noops
+OR completion-first revalidates exact G/O + terminal predicates and makes Program completed; cancel rejects/noops
 → outstanding operations retain ordinary lifecycle/effect/reconciliation truth
+→ an unresolved writer barrier still blocks ordinary Host may_write even after cancel
 → rebuild yields same unique terminal Program state
 ```
 
@@ -925,7 +1009,7 @@ delete derived Program/operation execution projections
 → replay canonical history including legacy events lacking Program fields
 → historical fingerprints/digests remain valid
 → rebuild Program state, P/A operation ownership, generations, historical may_write contracts,
-  barriers, verification generations/waivers, attachments, and terminal state
+  barriers, verification generations/waivers, attachments, mismatch/rebase state, and terminal state
 → semantic parity with pre-delete current state
 → duplicate creation/rebase/completion/cancellation recovery does not create duplicate authority transitions
 ```
