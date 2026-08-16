@@ -1,4 +1,4 @@
-import { assertCanonical } from "@alcode/events";
+import { assertCanonical } from "./canonical.ts";
 import { assertValidProgramState } from "./validation.ts";
 import type {
   ProgramCreationInput,
