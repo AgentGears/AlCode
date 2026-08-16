@@ -267,7 +267,11 @@ export class TrackedPlanningReads {
       }
     }
 
-    const dependencies = [...byKey.values()].sort((a, b) => dependencyKey(a).localeCompare(dependencyKey(b)));
+    const dependencies = [...byKey.values()].sort((a, b) => {
+      const left = dependencyKey(a);
+      const right = dependencyKey(b);
+      return left < right ? -1 : left > right ? 1 : 0;
+    });
     const body: Omit<PlanningObservationIdentityV1, "digest"> = {
       profileId: TRACKED_PLANNING_PROFILE_ID,
       profileVersion: TRACKED_PLANNING_PROFILE_VERSION,
