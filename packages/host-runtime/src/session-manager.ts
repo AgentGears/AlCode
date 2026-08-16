@@ -146,10 +146,6 @@ export class HostSessionManager {
     reason: "completed" | "cancelled" | "host_shutdown",
     evidence?: CompletionEvidence,
   ): Promise<void> {
-    // Source-session terminalization and pending Program-creation acceptance
-    // share this exact canonical lane. A stale pre-enqueue session snapshot can
-    // no longer stop a session while an acceptance concurrently consumes its
-    // pending creation draft.
     await this.admission.enqueue(async () => {
       const state = await this.getState(sessionId);
       if (!state.started || state.stopped) {
@@ -157,15 +153,21 @@ export class HostSessionManager {
       }
 
       const occurredAt = new Date().toISOString();
+      const invalidations = await buildPendingCreationInvalidations(this.store, sessionId, occurredAt);
+      if (reason === "completed" && invalidations.length > 0) {
+        throw new HostSessionStateError(
+          `Cannot complete session ${sessionId as string} while Program creation is pending`,
+        );
+      }
+
       const payload: Record<string, unknown> = {
         sessionId: sessionId as string,
         reason,
       };
       if (evidence) payload.completionEvidence = evidence;
 
-      const invalidations = await buildPendingCreationInvalidations(this.store, sessionId, occurredAt);
       await this.store.append([
-        ...invalidations,
+        ...(reason === "completed" ? [] : invalidations),
         {
           eventId: mkEventId(),
           idempotencyKey: `runtime.session.stopped:${sessionId as string}`,
