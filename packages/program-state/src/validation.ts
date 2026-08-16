@@ -1,8 +1,11 @@
 import { assertCanonical, canonicalStringify } from "./canonical.ts";
 import { PROGRAM_LIMITS } from "./limits.ts";
 import type {
+  ExecutionBaseMismatchReceipt,
+  ExecutionObservationIdentity,
   FreshnessPathEntry,
   ProgramArtifactProductionStep,
+  ProgramAttemptExecutionBase,
   ProgramState,
   VerificationFreshnessScopeV1,
   VerificationObligation,
@@ -63,6 +66,12 @@ function requirePositiveVersion(label: string, value: number): void {
 function requireGeneration(label: string, value: number): void {
   if (!Number.isSafeInteger(value) || value < 1) {
     fail("invalid_value", `${label} must be a positive safe integer`);
+  }
+}
+
+function requireWorkspaceEffectGeneration(label: string, value: number): void {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    fail("invalid_value", `${label} must be a non-negative safe integer`);
   }
 }
 
@@ -159,6 +168,17 @@ function assertPredicate(
       );
     case "workspace_path_state":
       assertNormalizedWorkspacePath(predicate.path);
+      if (
+        predicate.requiredState !== "file" &&
+        predicate.requiredState !== "directory" &&
+        predicate.requiredState !== "symlink" &&
+        predicate.requiredState !== "absent"
+      ) {
+        fail(
+          "invalid_value",
+          `Unsupported workspace_path_state requiredState: ${String(predicate.requiredState)}`,
+        );
+      }
       if (!freshnessScopeCoversPath(obligation.freshnessScope, predicate.path)) {
         fail(
           "scope_mismatch",
@@ -255,6 +275,78 @@ function assertProductionStep(
   );
 }
 
+function assertObservation(label: string, observation: ExecutionObservationIdentity): void {
+  if (observation.kind !== "workspace-observation-v1") {
+    fail("invalid_value", `${label}.kind must be workspace-observation-v1`);
+  }
+  requireNonEmptyString(`${label}.providerKind`, observation.providerKind);
+  requireNonEmptyString(`${label}.workspaceIdentity`, observation.workspaceIdentity);
+  requireNonEmptyString(`${label}.coverageDigest`, observation.coverageDigest);
+  requireNonEmptyString(`${label}.stateDigest`, observation.stateDigest);
+}
+
+function assertExecutionBase(label: string, base: ProgramAttemptExecutionBase): void {
+  requireWorkspaceEffectGeneration(`${label}.workspaceEffectGeneration`, base.workspaceEffectGeneration);
+  assertObservation(`${label}.observation`, base.observation);
+}
+
+function observationsEqual(a: ExecutionObservationIdentity, b: ExecutionObservationIdentity): boolean {
+  return canonicalStringify(a) === canonicalStringify(b);
+}
+
+function assertMismatchReceipt(
+  state: ProgramState,
+  receipt: ExecutionBaseMismatchReceipt,
+): void {
+  requireNonEmptyString("executionBaseMismatch.receiptId", String(receipt.receiptId));
+  if (receipt.programStateId !== state.programStateId) {
+    fail("structural_invariant", "execution-base mismatch receipt belongs to a different ProgramStateId");
+  }
+  requireGeneration("executionBaseMismatch.expectedProgramRevision", receipt.expectedProgramRevision);
+  requireWorkspaceEffectGeneration(
+    "executionBaseMismatch.acceptedWorkspaceEffectGeneration",
+    receipt.acceptedWorkspaceEffectGeneration,
+  );
+  requireWorkspaceEffectGeneration(
+    "executionBaseMismatch.currentWorkspaceEffectGeneration",
+    receipt.currentWorkspaceEffectGeneration,
+  );
+  assertObservation("executionBaseMismatch.acceptedObservationIdentity", receipt.acceptedObservationIdentity);
+  assertObservation("executionBaseMismatch.currentObservationIdentity", receipt.currentObservationIdentity);
+  if (
+    receipt.kind !== "observation_mismatch" &&
+    receipt.kind !== "causal_generation_mismatch" &&
+    receipt.kind !== "causal_and_observation_mismatch"
+  ) {
+    fail("invalid_value", `Unsupported execution-base mismatch kind: ${String(receipt.kind)}`);
+  }
+  if (typeof receipt.verificationImpactComplete !== "boolean") {
+    fail("invalid_value", "executionBaseMismatch.verificationImpactComplete must be boolean");
+  }
+
+  const generationDiffers =
+    receipt.acceptedWorkspaceEffectGeneration !== receipt.currentWorkspaceEffectGeneration;
+  const observationDiffers =
+    !observationsEqual(receipt.acceptedObservationIdentity, receipt.currentObservationIdentity);
+  if (
+    (receipt.kind === "observation_mismatch" && (generationDiffers || !observationDiffers)) ||
+    (receipt.kind === "causal_generation_mismatch" && (!generationDiffers || observationDiffers)) ||
+    (receipt.kind === "causal_and_observation_mismatch" && (!generationDiffers || !observationDiffers))
+  ) {
+    fail("structural_invariant", `execution-base mismatch kind ${receipt.kind} does not match its dimensions`);
+  }
+
+  if (state.acceptedExecutionBase === null) {
+    fail("structural_invariant", "execution-base mismatch requires an accepted execution base");
+  }
+  if (
+    state.acceptedExecutionBase.workspaceEffectGeneration !== receipt.acceptedWorkspaceEffectGeneration ||
+    !observationsEqual(state.acceptedExecutionBase.observation, receipt.acceptedObservationIdentity)
+  ) {
+    fail("structural_invariant", "execution-base mismatch accepted fields do not match Program acceptedExecutionBase");
+  }
+}
+
 /** Validate every bounded/rebuildable semantic invariant owned by the pure package. */
 export function assertValidProgramState(state: ProgramState): void {
   if (state.revision < 1 || !Number.isSafeInteger(state.revision)) {
@@ -293,6 +385,8 @@ export function assertValidProgramState(state: ProgramState): void {
   assertUniqueIds("artifact refs", state.artifacts, (ref) => ref.artifactRef);
 
   const evidenceById = new Map(state.decisiveEvidence.map((ref) => [String(ref.evidenceRefId), ref]));
+  const artifactByRef = new Map(state.artifacts.map((ref) => [ref.artifactRef, ref]));
+  const outputSlotById = new Map(state.outputSlots.map((slot) => [String(slot.outputSlotId), slot]));
   const sessions = new Set(state.attachedSessionIds.map(String));
   if (sessions.size !== state.attachedSessionIds.length) {
     fail("duplicate_id", "attachedSessionIds contains a duplicate session");
@@ -367,6 +461,35 @@ export function assertValidProgramState(state: ProgramState): void {
             `evidence ${evidenceId} is not bound to verification ${String(obligation.obligationId)}`,
           );
         }
+        if (obligation.predicate.kind === "artifact_present") {
+          if (evidence.artifactRef === null) {
+            fail(
+              "unknown_reference",
+              `artifact_present verification ${String(obligation.obligationId)} evidence ${evidenceId} has no ArtifactRef`,
+            );
+          }
+          const retained = artifactByRef.get(evidence.artifactRef);
+          if (retained === undefined) {
+            fail(
+              "unknown_reference",
+              `artifact_present verification ${String(obligation.obligationId)} references unretained artifact ${evidence.artifactRef}`,
+            );
+          }
+          const slotId = String(obligation.predicate.outputSlotId);
+          const slot = outputSlotById.get(slotId);
+          if (slot === undefined) {
+            fail("unknown_reference", `artifact_present verification references unknown output slot ${slotId}`);
+          }
+          if (
+            retained.outputSlotId !== obligation.predicate.outputSlotId ||
+            retained.productionStepId !== slot.productionStepId
+          ) {
+            fail(
+              "unknown_reference",
+              `artifact ${evidence.artifactRef} is not bound to the required output slot/production step`,
+            );
+          }
+        }
       }
     }
     if (obligation.waiver !== null) {
@@ -430,17 +553,25 @@ export function assertValidProgramState(state: ProgramState): void {
     }
   }
 
+  if (state.acceptedExecutionBase !== null) {
+    assertExecutionBase("acceptedExecutionBase", state.acceptedExecutionBase);
+  }
+
   if (state.activeAttempt !== null) {
+    requireNonEmptyString("activeAttempt.programAttemptId", String(state.activeAttempt.programAttemptId));
     if (!workIds.has(String(state.activeAttempt.workItemId))) {
       fail("unknown_reference", `active attempt references unknown work ${String(state.activeAttempt.workItemId)}`);
     }
     if (!sessions.has(String(state.activeAttempt.sessionId))) {
       fail("unknown_reference", `active attempt references unattached session ${String(state.activeAttempt.sessionId)}`);
     }
+    requireGeneration("activeAttempt.agentGeneration", state.activeAttempt.agentGeneration);
+    assertExecutionBase("activeAttempt.initialExecutionBase", state.activeAttempt.initialExecutionBase);
+    assertExecutionBase("activeAttempt.expectedExecutionBase", state.activeAttempt.expectedExecutionBase);
   }
 
-  if (state.executionBaseMismatch !== null && state.executionBaseMismatch.programStateId !== state.programStateId) {
-    fail("structural_invariant", "execution-base mismatch receipt belongs to a different ProgramStateId");
+  if (state.executionBaseMismatch !== null) {
+    assertMismatchReceipt(state, state.executionBaseMismatch);
   }
 
   for (const requirement of state.creationPolicyRequirements) assertCanonical(requirement);
