@@ -9,6 +9,10 @@
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
+    },
+    "./program-state-projection": {
+      "types": "./src/program-state-projection.ts",
+      "import": "./src/program-state-projection.ts"
     }
   },
   "scripts": {
