@@ -25,6 +25,8 @@
   },
   "devDependencies": {
     "@alcode/workspace": "workspace:*",
-    "@types/better-sqlite3": "7.6.13"
+    "@types/better-sqlite3": "7.6.13",
+    "typescript": "^5.9.0",
+    "vitest": "^3.0.0"
   }
 }
