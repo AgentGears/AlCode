@@ -40,7 +40,7 @@ Phase 1.0 does not reopen Phases 0.0–0.9. Existing operation/reconciliation, t
 1. **Host canonical authority.** Only the Host admits canonical ProgramState transitions. The Agent may propose bounded semantic data/evidence; the Experience Plane may issue authorized Application commands; neither directly appends `program.*`, mutates projections, satisfies verification by assertion, or declares completion.
 2. **Program identity is independent of session identity.** A ProgramState may span sessions; a session attaches to at most one ProgramState; stopped sessions are never revived to continue it.
 3. **No transcript reconstruction of Program truth.** Rebuild uses canonical Program/operation/control events and deterministic reducers, never conversational text parsing.
-4. **Exact currentness and deterministic revision.** Any current-state mutation requiring a Program revision requires `expectedProgramRevision === currentProgramRevision`. Missing, malformed, lower, or higher values reject before semantic admission. Program creation establishes revision `1`; afterward every effective atomic canonical semantic cut that changes ProgramState projection/control truth advances `ProgramState.revision` exactly once. Duplicate/idempotent/no-op admission and operation-only history that does not change ProgramState do not advance it.
+4. **Exact currentness.** Any current-state mutation requiring a Program revision requires `expectedProgramRevision === currentProgramRevision`. Missing, malformed, lower, or higher values reject before semantic admission.
 5. **Fresh attempt identity.** Every dispatch mints a new non-reusable `ProgramAttemptId`; stale, interrupted, superseded, replaced, or terminal attempts cannot admit current work/evidence/verification claims.
 6. **Ready work is derived.** Eligibility derives from canonical lifecycle, direct dependencies, blockers, mandatory verification/work state, attached active execution state, and scheduler/attempt state. `ready` is never Agent-authored canonical truth.
 7. **Initial required topology is immutable in the first slice.** The exact required DAG becomes canonical at creation. Agent-originated post-creation scope expansion is not a Phase 1.0 authority path; the Agent may report discovered work/blockers as advisory structured information.
@@ -227,8 +227,6 @@ accept command: accepted → P
 Program P: complete immutable initial contract + source-session attachment
 ```
 
-Program creation establishes `ProgramState.revision = 1` as part of this same atomic semantic transaction.
-
 One draft may map to at most one ProgramStateId across crash, retry, duplicate command, or two distinct accept command IDs racing the same draft. A later acceptance of a consumed draft resolves to the existing result or deterministic duplicate/stale decision; it never creates P2.
 
 Before creation the Host excludes conflicting Host-mediated Workspace mutators and rechecks the accepted planning base under the relevant planning mode. A mismatch/unknown result makes the draft stale rather than silently rebasing it.
@@ -264,8 +262,6 @@ interface ProgramState {
 ```
 
 Exact storage fields/event decomposition are implementation design. The semantic facts above must remain rebuildable.
-
-`ProgramState.revision` is the monotonic synchronization currency for effective Program semantic state. Creation starts at `1`. After creation, one atomic semantic cut that changes one or several ProgramState facts advances the revision exactly once. This includes effective attachment, work/blocker state, Attempt start/interruption, Program execution-base/mismatch/rebase state, verification generation/satisfaction/waiver state, artifact/evidence state that changes ProgramState, and Program terminal state. A duplicate/idempotent/no-op command and operation-only history with no ProgramState change do not advance the revision. Workspace counters are never copied into the Program revision.
 
 Required work is a bounded DAG. Work-item lifecycle is equivalent to `pending | in_progress | awaiting_verification | blocked | completed`; there is no first-slice work-item cancellation or replacement. Direct dependency IDs are normalized deterministically. When several items are eligible, deterministic selection uses canonical work-creation order and then stable ID if a secondary key is needed.
 
@@ -422,7 +418,7 @@ For verification satisfaction and Completion Oracle admission, the Host obtains 
 
 The shared-worktree limitation remains explicit: an external process may still race after a checked observation, and equal checked observations do not prove that no external ABA occurred between them. A stronger guarantee requires an isolated/transactional Workspace provider.
 
-### 10.2 Mismatch receipt and active-attempt transition
+### 10.2 Mismatch receipt, verification impact, and active-attempt handling
 
 If either execution-base dimension differs outside the legitimate current-attempt post-effect advance path, the Host records a durable `ExecutionBaseMismatchReceipt` equivalent to:
 
@@ -443,21 +439,31 @@ interface ExecutionBaseMismatchReceipt {
 }
 ```
 
-The receipt's `expectedProgramRevision` is the **resulting current Program revision after the mismatch transition that created the receipt**, not the pre-transition revision supplied to an earlier request.
+The receipt's `expectedProgramRevision` records the Program revision whose accepted execution base was checked when the mismatch basis was created. It is historical mismatch provenance; it is **not** the separate exact-current Program revision supplied by a later rebase command.
 
-When a complete mismatch is first recognized for a Program, the Host also performs the required verification-impact analysis before the candidate can become rebase-current. The mismatch receipt, active-Attempt interruption if any, and every required overlapping/unknown `subjectGeneration` advance/invalidation are one serialized Program semantic transition and therefore advance `ProgramState.revision` exactly once. If bounded changed-path/effect impact cannot prove an obligation disjoint, impact is `unknown` and that obligation invalidates fail closed; Phase 1.0 does not defer the invalidation behind an already-accepted rebase.
+When a complete mismatch is first recognized for a Program, the Host also performs the required verification-impact analysis before the candidate can become rebase-current. The mismatch receipt, active-Attempt interruption if any, and every required overlapping/unknown `subjectGeneration` advance/invalidation are admitted in one serialized Program semantic transition. If bounded changed-path/effect impact cannot prove an obligation disjoint, impact is `unknown` and that obligation invalidates fail closed; Phase 1.0 does not defer the invalidation behind an already-accepted rebase.
 
 If a causal-generation mismatch is recognized after one or more Host effects whose prior Program-specific impact processing is unavailable/incomplete, mismatch handling conservatively catches the affected Program's obligations up before rebase: known-disjoint obligations may remain current only with complete trusted impact evidence; all others invalidate.
 
-If a mismatch is detected while an attempt is active, this same transition interrupts/invalidates that attempt before accepting further current operation/evidence/verification/completion claims from it. A later duplicate mismatch admission that changes no ProgramState truth is idempotent/no-op and does not advance revision again.
+If a mismatch is detected while an attempt is active, this same transition interrupts/invalidates that attempt before accepting further current operation/evidence/verification/completion claims from it. An already-running operation remains independent durable effect history and must finish/reconcile under ordinary operation semantics.
 
 `unknown` current observation does not produce an acceptable candidate base. It exposes an execution-base-unavailable/blocking condition until a later complete protected observation exists.
 
 ### 10.3 Exact rebase
 
-A parked Program resumes only when its accepted base exactly matches the protected current base. Otherwise no dispatch occurs until the Application explicitly accepts the exact current candidate through a stale-safe, exact-revision, exact-receipt command equivalent to `program.execution.rebase.accept`.
+A parked Program resumes only when its accepted base exactly matches the protected current base. Otherwise no dispatch occurs until the Application explicitly accepts the exact current candidate through a stale-safe command equivalent to:
 
-Rebase acceptance may consume only a mismatch receipt whose required verification-impact invalidation/catch-up transition is already complete. The command requires the exact **current** Program revision bound by that receipt. One effective accepted rebase is a later Program semantic transition and advances `ProgramState.revision` exactly once. The receipt/acceptance is single-consumption/idempotent, does not amend objective/topology/verification definitions, and is rechecked immediately before a fresh attempt is admitted. Any later execution-base change makes the accepted candidate stale again.
+```text
+program.execution.rebase.accept(
+  programStateId,
+  expectedProgramRevision,
+  executionBaseMismatchReceiptId,
+  acceptedWorkspaceEffectGeneration,
+  acceptedObservationIdentity
+)
+```
+
+Rebase acceptance may consume only a mismatch receipt whose required verification-impact invalidation/catch-up transition is already complete. The command's `expectedProgramRevision` independently requires the exact **current** Program revision at acceptance; it need not equal the receipt's historical `expectedProgramRevision` if mismatch/interruption processing changed Program control state after the checked revision. The accepted G/O must exactly equal the receipt's complete current candidate. The receipt/acceptance is single-consumption/idempotent, does not amend objective/topology/verification definitions, and is rechecked immediately before a fresh attempt is admitted. Any later execution-base change makes the accepted candidate stale again.
 
 External ABA can remain invisible if the shared worktree changes and returns to the same observed state between checked cuts. If the product later requires proof that no intermediate external mutation occurred, it needs a stronger isolated/transactional Workspace provider; Phase 1.0 does not manufacture that guarantee from hashes/watchers.
 
@@ -581,7 +587,6 @@ validate lifecycle active + exact revision
 → interrupt/invalidate active ProgramAttempt if any
 → admit program.cancelled with stable idempotency key
 → Program becomes terminal
-→ advance ProgramState.revision exactly once for the effective atomic transition
 ```
 
 Best-effort physical Agent/process cancellation may be signaled afterward, but canonical cancellation does not wait indefinitely for environmental quiescence and does not claim rollback. Outstanding operation lifecycle/effect/reconciliation and durable writer barriers remain true and continue through ordinary recovery/reconciliation. A surviving writer barrier continues to block ordinary Host `may_write` admission under §9 even though the Program is terminal. Late results remain historical ownership facts and cannot complete work or verification for the cancelled Program.
@@ -610,7 +615,7 @@ The Host Completion Oracle may admit `program.completed` only when, on that same
 
 There is no second concrete-reference completion criterion list.
 
-Completion uses a stable ProgramState-derived idempotency key. Preliminary evaluation outside canonical admission is advisory only; a competing event admitted first forces complete re-evaluation. One effective completion transition advances `ProgramState.revision` exactly once. `program.completed` and `program.cancelled` are mutually exclusive.
+Completion uses a stable ProgramState-derived idempotency key. Preliminary evaluation outside canonical admission is advisory only; a competing event admitted first forces complete re-evaluation. `program.completed` and `program.cancelled` are mutually exclusive.
 
 The direct terminal observation remains a boundary check, not filesystem transaction isolation. An arbitrary external writer may still race after the observation and before/after canonical append; Phase 1.0 does not claim otherwise.
 
@@ -770,7 +775,7 @@ These ACs are not approved or frozen. They are the candidate proof contract for 
 
 ### AC-10-02 — Exact Program creation, immutable contract, and deterministic rebuild
 
-Prove both planning-provenance modes; no untracked semantic planning read may influence an accepted draft. Program creation validates all immutable contract definitions/bounds, exact accepted observation provenance, and scope/profile compatibility. One exact draft is single-consumed into exactly one ProgramStateId across duplicate/distinct accepts and crash/retry. The complete initial objective, DAG, verification obligations/scopes, output slots/production steps, policy additions, and source-session attachment appear on one atomic creation cut and rebuild deterministically at revision `1`.
+Prove both planning-provenance modes; no untracked semantic planning read may influence an accepted draft. Program creation validates all immutable contract definitions/bounds, exact accepted observation provenance, and scope/profile compatibility. One exact draft is single-consumed into exactly one ProgramStateId across duplicate/distinct accepts and crash/retry. The complete initial objective, DAG, verification obligations/scopes, output slots/production steps, policy additions, and source-session attachment appear on one atomic creation cut and rebuild deterministically.
 
 Negative proofs include stale planning base, unknown/incomplete planning observation, over-bound contract, unsupported predicate/scope, consumed draft, and crash after Program commit before caller response.
 
@@ -778,11 +783,11 @@ Negative proofs include stale planning base, unknown/incomplete planning observa
 
 One Program survives session stop, Agent replacement, Host reopen, and later-session attachment; stopped sessions are not revived and one session cannot attach two Programs. A pending creation interaction blocks ordinary idle session completion **inside terminal canonical admission**. Explicit stop versus creation acceptance produces one deterministic winner and leaves no usable orphan draft.
 
-### AC-10-04 — Exact ProgramAttempt, revision, and execution-base validity
+### AC-10-04 — Exact ProgramAttempt and execution-base validity
 
-Every dispatch mints a fresh ProgramAttemptId. Current claims require exact P/A/work/revision/Agent-generation ownership. `ProgramState.revision` starts at `1`, advances exactly once per effective atomic Program semantic cut, and does not advance for duplicate/no-op or operation-only history with no ProgramState change. Root operation admission revalidates exact P/A/revision plus a complete protected current execution base in its canonical cut. First dispatch bridges from accepted planning base; successors require exact current `(WorkspaceEffectGeneration, ExecutionObservationIdentity)`.
+Every dispatch mints a fresh ProgramAttemptId. Current claims require exact P/A/work/revision/Agent-generation ownership. Root operation admission revalidates those facts plus a complete protected current execution base in its canonical cut. First dispatch bridges from accepted planning base; successors require exact current `(WorkspaceEffectGeneration, ExecutionObservationIdentity)`.
 
-Prove the closed §10 cuts, including read-only pre/post observation and protected terminal completion observation. Required negatives:
+Prove the closed §10 cuts, including Workspace-dependent read-only pre/post observation and protected terminal completion observation. Required negatives:
 
 ```text
 expected R16, current R17 → reject
@@ -795,9 +800,9 @@ current observation unknown → no rebase target / no dispatch
 mismatch receipt accepted, then base changes again → no dispatch
 external edit before root operation request → no operation.requested from stale base
 external edit during Workspace-dependent read → result not current Program evidence
-active mismatch at R10 → atomic receipt/interruption/currentness transition yields R11 and receipt binds R11
-accepted rebase at exact R11 → effective rebase transition yields R12
 ```
+
+A mismatch receipt's stored Program revision is historical checked-base provenance. A later `program.execution.rebase.accept` independently carries and must match the current exact Program revision while also naming the exact receipt; mismatch processing that changed Program control state does not require regenerating the historical receipt solely to copy the newer command revision into it.
 
 ### AC-10-05 — Bounded DAG and Workspace-domain scheduler
 
@@ -845,7 +850,7 @@ Also prove the crash-safe external-mismatch composition:
 ```text
 V satisfied G1 at accepted (G4,O4)
 → external overlapping/unknown drift yields current (G4,O5)
-→ first canonical mismatch recognition atomically records receipt + required verification invalidation/catch-up
+→ first canonical mismatch recognition admits receipt + required verification invalidation/catch-up before rebase can become current
 → crash/replay cannot expose an accepted/current rebase candidate with old G1 verification still current
 → rebase accept is admissible only after impact processing is complete
 ```
@@ -856,7 +861,7 @@ A mutating verification operation cannot satisfy a new generation from its gener
 
 Only the Host Completion Oracle admits `program.completed`. Before its terminal canonical admission it obtains a protected complete current observation; inside admission it revalidates exact current `(G,O)`, all universal predicates, current verification generations, artifact integrity when relied upon, no active attempt, no blocking uncertainty/writer barrier/execution-base mismatch, and no unresolved relevant durable work/tool/transcript obligation. Unknown/mismatched terminal observation rejects/blocks rather than completing.
 
-Application cancellation requires exact revision, atomically invalidates/interrupts the active attempt, records one terminal authority cutoff, and advances Program revision once without claiming rollback. Race proofs:
+Application cancellation requires exact revision, atomically invalidates/interrupts the active attempt, and records one terminal authority cutoff without claiming rollback. Race proofs:
 
 - completion preliminary check then conflicting event → recheck/reject;
 - external edit before completion terminal cut → protected direct observation detects mismatch/unavailable → no `program.completed`;
@@ -892,7 +897,7 @@ objective supplied
 → terminal admission sees D and cannot ordinary-stop session
 → Application accepts exact D
 → Host rechecks planning base under mutation coordination
-→ D single-consumed → one Program P at revision 1 + source attachment
+→ D single-consumed → one Program P + source attachment
 → crash/retry accept maps to same P
 → pre-first-dispatch planning-base recheck succeeds
 → protected complete current execution observation succeeds
@@ -942,15 +947,13 @@ Attempt A base (G4,O4)
 → A may continue if otherwise current
 → later external edit produces O6
 → freshness cut detects mismatch
-→ one canonical Program transition records mismatch receipt + interrupts A + advances any overlapping/unknown verification subjectGenerations
-→ receipt binds the resulting Program revision
-→ Application accepts exact candidate (G5,O6) at that exact current revision
-→ accepted rebase advances Program revision once
+→ one serialized Program transition records mismatch receipt + interrupts A + advances any overlapping/unknown verification subjectGenerations
+→ Application later submits rebase with the exact current Program revision + exact receipt + exact candidate (G5,O6)
 → final protected recheck matches
 → fresh Attempt B may dispatch
 ```
 
-Also prove causal-only `(G4,O4) → (G5,O4)` mismatch and combined mismatch, including conservative verification-impact catch-up before rebase if prior impact is not complete. Document that an unobserved external ABA between equal checked observations is outside the guarantee.
+The receipt continues to identify the revision/base that was checked; the rebase command independently supplies exact current Program revision. Also prove causal-only `(G4,O4) → (G5,O4)` mismatch and combined mismatch, including conservative verification-impact catch-up before rebase if prior impact is not complete. Document that an unobserved external ABA between equal checked observations is outside the guarantee.
 
 ### Scenario E — Indeterminate effect and durable writer barrier
 
@@ -999,16 +1002,16 @@ OR completion-first revalidates exact G/O + terminal predicates and makes Progra
 → rebuild yields same unique terminal Program state
 ```
 
-### Scenario H — Rebuild, migration, revision, and idempotency
+### Scenario H — Rebuild, migration, and idempotency
 
 ```text
 delete derived Program/operation execution projections
 → replay canonical history including legacy events lacking Program fields
 → historical fingerprints/digests remain valid
-→ rebuild Program state, exact revision sequence, P/A operation ownership, generations, historical may_write contracts,
+→ rebuild Program state, P/A operation ownership, generations, historical may_write contracts,
   barriers, verification generations/waivers, attachments, mismatch/rebase state, and terminal state
 → semantic parity with pre-delete current state
-→ duplicate creation/mismatch/rebase/completion/cancellation recovery does not create duplicate authority transitions or duplicate revision increments
+→ duplicate creation/rebase/completion/cancellation recovery does not create duplicate authority transitions
 ```
 
 ## 23. Proposed gate shape — not implemented or authorized
