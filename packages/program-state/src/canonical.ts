@@ -2,8 +2,6 @@
 // package. The implementation intentionally has no dependency on storage,
 // events, filesystem, process, network, or Host runtime packages.
 
-export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
-
 export function assertCanonical(value: unknown, path = "$", seen = new Set<object>()): void {
   switch (typeof value) {
     case "undefined":
