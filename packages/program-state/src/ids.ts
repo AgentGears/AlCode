@@ -1,12 +1,15 @@
-import type { Branded } from "@alcode/events";
 import type {
+  Branded,
   ExecutionBaseMismatchReceiptId,
+  OperationId,
   ProgramArtifactProductionStepId,
   ProgramAttemptId,
   ProgramBlockerId,
   ProgramEvidenceRefId,
   ProgramOutputSlotId,
+  ProgramStateId,
   ProgramWorkItemId,
+  SessionId,
   VerificationObligationId,
 } from "./types.ts";
 
@@ -16,6 +19,21 @@ function brandNonEmpty<TBrand extends string>(value: string, name: TBrand): Bran
   }
   return value as Branded<TBrand>;
 }
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_V7_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function brandUuid<TBrand extends string>(value: string, name: TBrand): Branded<TBrand> {
+  if (!UUID_RE.test(value)) throw new TypeError(`${name} must be a UUID; got: ${value}`);
+  return value as Branded<TBrand>;
+}
+
+export function asProgramStateId(value: string): ProgramStateId {
+  if (!UUID_V7_RE.test(value)) throw new TypeError(`ProgramStateId must be a UUIDv7; got: ${value}`);
+  return value as ProgramStateId;
+}
+export const asSessionId = (value: string): SessionId => brandUuid(value, "SessionId");
+export const asOperationId = (value: string): OperationId => brandUuid(value, "OperationId");
 
 export const asProgramWorkItemId = (value: string): ProgramWorkItemId =>
   brandNonEmpty(value, "ProgramWorkItemId");
