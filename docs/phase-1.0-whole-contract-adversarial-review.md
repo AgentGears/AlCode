@@ -2,13 +2,13 @@
 
 **Status:** completed review evidence; not approval; not freeze; implementation not authorized  
 **Pinned review subject:** `docs/phase-1.0-plan.md` as merged on `main` at `9d430f55b44d04cba664645641a78ed1814f6bc2`  
-**Targeted correction commit:** `2619748df31fb0aeed750ac3d452c0fe55ffa2d1`  
-**Method:** falsification by canonical-history attack, crash/replay analysis, authority collision analysis, and rebuild equivalence  
+**Final targeted correction commit:** `523135f3b5c5fe6c128a6d786e89fc7084f8ccd2`  
+**Method:** falsification by canonical-history attack, crash/replay analysis, authority collision analysis, rebuild equivalence, and independent review of the findings themselves  
 **Scope:** the composed Phase 1.0 contract, AC-10-01 through AC-10-11, and Scenarios A through H
 
-This review asks whether the contract permits a history in which the Host can admit stale authority, lose durable safety state, accept stale verification, produce an unrebuildable result, or leave two conforming implementations with materially different safety behavior. The original review target remains pinned; correcting a finding does not rewrite the fact that the pinned candidate contained it.
+This review asks whether the contract permits a history in which the Host can admit stale authority, lose durable safety state, accept stale verification, produce an unrebuildable result, or leave two conforming implementations with materially different safety behavior. The original target remains pinned; later corrections do not rewrite the historical result.
 
-The shared-worktree external-race/ABA limitation is not treated as a defect. The Phase 1.0 candidate explicitly promises boundary-checked freshness, not continuous filesystem isolation.
+The shared-worktree external-race/ABA limitation is not treated as a defect. Phase 1.0 promises boundary-checked freshness, not continuous filesystem isolation.
 
 ---
 
@@ -20,9 +20,10 @@ A history passes only when the contract determines one safe result from canonica
 - an environmental writer outliving Host exclusion without a blocking durable fact;
 - old verification surviving a recognized relevant/unknown subject change;
 - replay depending on current provider/model/policy/process memory;
-- a command becoming stale because of the same semantic transition that created its control receipt;
 - a correctness-sensitive cut relying on an unspecified observation boundary;
 - two conforming implementations making opposite safety decisions from the same canonical history.
+
+A reviewer finding is itself subject to falsification. A proposed defect is withdrawn when the existing contract already supplies a deterministic safe history and the finding depended on conflating two distinct authorities.
 
 ---
 
@@ -39,10 +40,11 @@ A history passes only when the contract determines one safe result from canonica
 | Historical writer containment/quiescence | request-time operation-local contract + canonical quiescence proof | current provider registry |
 | Verification currency | per-obligation `subjectGeneration` | ArtifactRef identity, Workspace generation |
 | Artifact bytes | ArtifactStore / ArtifactRef | Program evidence admission |
-| Rebase authorization | exact Application acceptance of one current mismatch candidate | Agent/model assertion |
+| Mismatch provenance | `ExecutionBaseMismatchReceipt` | later command revision |
+| Rebase command currency | command `expectedProgramRevision` + exact receipt/candidate | receipt's historical checked revision alone |
 | Cancellation/completion | serialized Host terminal admission | Agent idle/completion claim |
 
-The review found no need to change this authority split. Every defect was a missing composition rule between already-selected authorities.
+The review did not change this authority split. The validated defects were missing composition rules between already-selected authorities.
 
 ---
 
@@ -70,16 +72,16 @@ The review found no need to change this authority split. Every defect was a miss
 | H18 | completion after covered drift not yet directly observed | **FAIL — F1** |
 | H19 | legacy event replay after optional Program envelope extension | PASS |
 | H20 | provider replacement after historical `may_write` operation | PASS |
-| H21 | active mismatch whose interruption changes Program revision | **FAIL / ambiguous — F4** |
-| H22 | delete projections and rebuild without current model/provider registry | PASS where transitions were fully specified |
+| H21 | mismatch receipt followed by Attempt interruption/rebase | **PASS after independent review; initial F4 hypothesis withdrawn** |
+| H22 | delete projections and rebuild without current model/provider registry | PASS where transitions are fully specified |
 
 ---
 
-# 4. Findings against the pinned candidate
+# 4. Validated findings against the pinned candidate
 
 ## F1 — P1 — Freshness-sensitive cuts were named but not closed
 
-The consolidation said “at any freshness-sensitive cut” without defining the full first-slice set. That allowed a conforming implementation to omit direct Workspace observation at load-bearing boundaries that the earlier execution studies had explicitly bracketed.
+The consolidation said “at any freshness-sensitive cut” without defining the full first-slice set. That allowed a conforming implementation to omit direct Workspace observation at load-bearing boundaries explicitly bracketed by the earlier execution studies.
 
 Minimal histories:
 
@@ -111,7 +113,7 @@ all canonical terminal predicates appear true at accepted (G4,O4)
 
 The correction closes the first-slice cuts: first dispatch; every Program-linked root operation request; Workspace-dependent read pre/post; mutating pre and post-quiescence/post-effect; Workspace-dependent current work/evidence admission; verification satisfaction; successor/rebase bridge; and Completion Oracle terminal admission. Verification/completion acquire Workspace observation/read coordination before canonical admission and revalidate exact Program state plus G/O inside it. External writers may still race after a check; no stronger isolation is claimed.
 
-**Status after `2619748...`: RESOLVED.**
+**Status after `523135f...`: RESOLVED.**
 
 ---
 
@@ -130,11 +132,11 @@ P/A owns may_write O
 → unrelated Host may_write M requests execution
 ```
 
-Without an explicit Workspace-domain barrier admission rule, M could overlap O's still-live descendant. The same gap existed after restart when replay reconstructed the barrier before any Program scheduler activity.
+Without a Workspace-domain barrier admission rule, M could overlap O's still-live descendant. The same gap existed after restart when replay reconstructed the barrier before any Program scheduler activity.
 
 The correction makes every post-baseline started `may_write` without canonical quiescence an outstanding Workspace writer barrier that blocks new ProgramAttempt reservation/dispatch, ordinary Program and non-Program Host `may_write`, Workspace-based stable reconciliation, verification satisfaction, and Completion Oracle admission. Cancellation, Program terminalization, timeout, or effect classification does not clear it; only canonical quiescence proof does. Bounded diagnostic/quiescence recovery remains allowed.
 
-**Status after `2619748...`: RESOLVED.**
+**Status after `523135f...`: RESOLVED.**
 
 ---
 
@@ -160,49 +162,56 @@ V satisfied at subjectGeneration G1 over src/a.ts
 
 Replay cannot infer the missing verification transition merely from the accepted new base because `subjectGeneration` is independent authority.
 
-The correction chooses the simpler crash-safe first-slice rule: first canonical recognition of a complete mismatch performs verification impact in the same serialized Program semantic transition. Receipt + active-Attempt interruption + all required overlapping/unknown generation invalidations are one atomic Program cut. Unknown impact invalidates fail closed. A causal-only mismatch catches up any missing Program-specific impact before rebase. Rebase may consume only a receipt whose required impact transition is complete.
+The correction chooses the simpler crash-safe first-slice rule: first canonical recognition of a complete mismatch performs verification impact in the same serialized Program semantic transition. Receipt + active-Attempt interruption + all required overlapping/unknown generation invalidations are admitted together. Unknown impact invalidates fail closed. A causal-only mismatch catches up missing Program-specific impact before rebase. Rebase may consume only a receipt whose required impact transition is complete.
 
-**Status after `2619748...`: RESOLVED.**
+**Status after `523135f...`: RESOLVED.**
 
 ---
 
-## F4 — P2 — Program revision semantics were not closed
+# 5. Withdrawn hypothesis — F4 was not a contract defect
 
-The pinned candidate required exact `ProgramState.revision` but did not define which effective Program transitions incremented it. An active mismatch could therefore create a receipt referring to R10 and then interrupt the Attempt in a transition that another reducer reasonably interpreted as R11, making the receipt self-stale.
+The first review draft classified mismatch-receipt revision behavior as P2 and argued that interruption could make the receipt “self-stale.” Independent Codex review falsified that claim.
 
-Minimal ambiguity:
+The existing rebase contract already separates two facts:
 
 ```text
-P revision R10; Attempt A active
-→ mismatch detected
-→ receipt created with expectedProgramRevision R10
-→ same mismatch handling interrupts A
+ExecutionBaseMismatchReceipt.expectedProgramRevision
+→ historical Program revision whose accepted base was checked
+
+program.execution.rebase.accept.expectedProgramRevision
+→ exact current Program revision required when the later Application command is admitted
 ```
 
-One conforming reducer could advance to R11 while another remained R10.
+The command also names the exact `executionBaseMismatchReceiptId`. Therefore this history is legal without regenerating the receipt:
 
-The correction establishes revision `1` at creation and then advances revision exactly once for each effective atomic canonical semantic cut that changes ProgramState projection/control truth. Duplicate/idempotent/no-op and operation-only history that does not change ProgramState do not advance it. Active mismatch receipt + Attempt interruption + same-cut verification invalidations are one Program transition; the receipt binds the **resulting current revision**. Accepted rebase is a later transition and advances once again.
+```text
+P R10; Attempt A active
+→ mismatch checked/receipt records historical R10 basis
+→ A interrupted; current Program control state may now have a later revision
+→ Application sends rebase command with that exact current revision + the R10 mismatch receipt id + exact candidate G/O
+→ Host revalidates current command revision and exact receipt/candidate independently
+```
 
-**Status after `2619748...`: RESOLVED.**
+The initial F4 reasoning conflated historical mismatch provenance with later command currency. The temporary revision-semantics changes made while investigating F4 were removed in `523135f...`; the corrected plan now explicitly preserves the two-field/two-authority distinction instead of adding an unnecessary revision protocol.
+
+**Final classification: WITHDRAWN, not a finding.**
 
 ---
 
-# 5. Rebuild-equivalence result
+# 6. Rebuild-equivalence result
 
 The review conceptually deleted derived Program/operation projections, watcher state, process memory, and current provider/model assumptions.
 
 - F1 could not be repaired by replay because an external change never observed at a required cut leaves no fact to replay. Closing the cuts fixes the protocol rather than the reducer.
-- F2 replay already reconstructed the writer barrier; the correction now closes how every admission path must consume that rebuilt truth.
+- F2 replay already reconstructed the writer barrier; the correction now closes how every admission path consumes that rebuilt truth.
 - F3 replay cannot invent obligation invalidation from a new accepted execution base. The same-cut mismatch/impact transition now leaves all required truth in canonical history before rebase.
-- F4 replay now has one deterministic revision rule, including one increment for multi-fact atomic Program cuts and no increment for semantic no-ops.
+- The withdrawn F4 history already rebuilds because the receipt preserves its historical checked revision while the later command carries independent exact-current revision.
 
-The surviving histories rebuild without current model output, watcher continuity, current provider registry reinterpretation, or mutable current policy as historical authority.
+The surviving histories rebuild without current model output, watcher continuity, current provider-registry reinterpretation, or mutable current policy as historical authority.
 
 ---
 
-# 6. Targeted retest against `2619748df31fb0aeed750ac3d452c0fe55ffa2d1`
-
-The correction was tested only against the findings and their neighboring invariants; it was not used to start another architecture cycle.
+# 7. Targeted retest against `523135f3b5c5fe6c128a6d786e89fc7084f8ccd2`
 
 | Retest | Required outcome | Result |
 |---|---|---|
@@ -212,40 +221,37 @@ The correction was tested only against the findings and their neighboring invari
 | R4 cancel while a `may_write` descendant may survive | Program terminalizes; barrier remains; unrelated Host `may_write` cannot cross it | **PASS** — §9, §13, AC-10-05/06 |
 | R5 restart with terminal confirmed O but no quiescence proof | rebuilt writer barrier blocks ordinary Host `may_write`, verification and completion | **PASS** — §9, §15, AC-10-09 |
 | R6 V satisfied G1 then overlapping/unknown external drift | mismatch recognition makes invalidation crash-safe before rebase; old G1 cannot complete | **PASS** — §10.2/10.3, §11.4, AC-10-07 |
-| R7 active mismatch at R10 | one atomic mismatch/interruption/impact cut → R11; receipt binds R11; accepted rebase → R12 | **PASS** — invariants 4/17, §6, §10.2/10.3, AC-10-04 |
+| R7 mismatch receipt followed by Program-control change | receipt preserves historical checked revision; rebase command independently uses exact current revision + exact receipt/candidate | **PASS** — §10.2/10.3 + AC-10-04 |
 
-Neighboring regression histories also remain valid:
+Neighboring regression histories remain valid:
 
-- **known-disjoint verification impact may retain `subjectGeneration`** because §10.2/§11.4 require invalidation only when impact overlaps or cannot be proven disjoint;
-- **causal-only `(G4,O4) → (G5,O4)` retains a legal exact rebase path** through the generic mismatch receipt and conservative impact catch-up;
-- **late stale-Attempt confirmed effect still advances `WorkspaceEffectGeneration`** because operation effect authority remains independent of stale Program authority;
-- **shared-worktree external race/ABA remains an explicit limitation**, including races after a checked observation;
-- **legacy omitted envelope fields retain historical digest/fingerprint compatibility**; none of the targeted corrections changes that migration rule.
-
-No retest requires a new authority, new predicate taxonomy, worktree isolation, topology amendment, or implementation feature outside the consolidated Phase 1.0 candidate.
+- known-disjoint verification impact may retain `subjectGeneration`;
+- causal-only `(G4,O4) → (G5,O4)` retains a legal exact rebase path;
+- late stale-Attempt confirmed effect still advances `WorkspaceEffectGeneration` because operation effect authority is independent of stale Program authority;
+- shared-worktree external race/ABA remains an explicit limitation, including races after a checked observation;
+- legacy omitted envelope fields retain historical digest/fingerprint compatibility.
 
 ---
 
-# 7. Affected acceptance/scenario proof surface
+# 8. Affected acceptance/scenario proof surface
 
-The targeted correction changes only the proof surface necessary to close F1–F4:
+The validated F1–F3 corrections affect only the proof surface needed for those defects:
 
-- **AC-10-02:** creation establishes revision 1.
-- **AC-10-04:** deterministic revision transitions; root-operation direct base check; read pre/post; active mismatch R10→R11 receipt and R11→R12 rebase proofs.
+- **AC-10-04:** root-operation direct base check; read pre/post; protected completion observation; receipt historical revision versus independent current rebase-command revision.
 - **AC-10-05/06:** outstanding writer barriers gate Program and ordinary Host mutation admission.
-- **AC-10-07:** mismatch and verification invalidation are one crash-safe transition before rebase.
+- **AC-10-07:** mismatch and verification invalidation are crash-safe before rebase.
 - **AC-10-08:** Completion Oracle requires protected direct terminal observation/current-base revalidation.
 - **AC-10-09:** restart barrier gates ordinary Host `may_write` and performs mismatch/verification-impact processing before admission.
-- **Scenarios A/B/D/E/F/G/H:** first-dispatch observation, restart writer gating, mismatch-impact-revision composition, cancellation-surviving barrier, verification invalidation before rebase, protected terminal observation, and deterministic revision rebuild.
+- **Scenarios A/B/D/E/F/G:** first-dispatch observation, restart writer gating, mismatch-impact composition, cancellation-surviving barrier, verification invalidation before rebase, and protected terminal observation.
 
-AC-10-01, AC-10-03, AC-10-10, AC-10-11 and Scenario C required no semantic correction beyond their existing interaction with exact current revision.
+AC-10-01/02/03/10/11 and Scenarios C/H required no new semantic authority from this correction.
 
 ---
 
-# 8. Final review conclusion
+# 9. Final review conclusion
 
-**Result: no known P0/P1/P2 contract correctness finding remains after the bounded F1–F4 correction and targeted retest.**
+**Result: no known P0/P1/P2 contract correctness finding remains after the validated F1–F3 corrections, F4 withdrawal, and targeted retest.**
 
-The corrected candidate preserves the selected authority model and explicit shared-worktree guarantee boundary while closing the four concrete composition defects found in the pinned consolidated plan. This conclusion is review evidence only. It does not approve Phase 1.0, freeze the contract, or authorize implementation.
+The corrected candidate preserves the selected authority model and explicit shared-worktree guarantee boundary while closing the three concrete composition defects found in the pinned consolidated plan. This conclusion is review evidence only. It does not approve Phase 1.0, freeze the contract, or authorize implementation.
 
 The next legitimate decision, after this review/correction PR is independently verified and merged, is a **separate explicit approval/freeze decision on the exact merged contract head**.
