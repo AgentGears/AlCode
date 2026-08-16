@@ -31,18 +31,10 @@ type TestProgramState = {
 };
 
 const codec: ProgramProjectionCodec<TestProgramState> = {
-  serialize(state) {
-    return JSON.stringify(state);
-  },
-  deserialize(serialized) {
-    return JSON.parse(serialized) as TestProgramState;
-  },
+  serialize(state) { return JSON.stringify(state); },
+  deserialize(serialized) { return JSON.parse(serialized) as TestProgramState; },
   inspect(state) {
-    return {
-      programStateId: state.programStateId,
-      revision: state.revision,
-      lifecycle: state.lifecycle,
-    };
+    return { programStateId: state.programStateId, revision: state.revision, lifecycle: state.lifecycle };
   },
 };
 
@@ -63,36 +55,21 @@ async function appendProgramHistory(
 ): Promise<void> {
   await store.append([
     {
-      eventId: mkEventId(),
-      workspaceId,
-      sessionId,
-      programStateId,
-      occurredAt: "2026-08-16T00:00:00.000Z",
-      type: "program.created",
-      payload: { state: state(programStateId, 1, "active", 10) },
-      payloadSchemaVersion: 1,
+      eventId: mkEventId(), workspaceId, sessionId, programStateId,
+      occurredAt: "2026-08-16T00:00:00.000Z", type: "program.created",
+      payload: { state: state(programStateId, 1, "active", 10) }, payloadSchemaVersion: 1,
       producer: { kind: "runtime", component: "program-projection-test" },
     },
     {
-      eventId: mkEventId(),
-      workspaceId,
-      sessionId,
-      programStateId,
-      occurredAt: "2026-08-16T00:00:01.000Z",
-      type: "program.transitioned",
-      payload: { state: state(programStateId, 2, "active", 15) },
-      payloadSchemaVersion: 1,
+      eventId: mkEventId(), workspaceId, sessionId, programStateId,
+      occurredAt: "2026-08-16T00:00:01.000Z", type: "program.transitioned",
+      payload: { state: state(programStateId, 2, "active", 15) }, payloadSchemaVersion: 1,
       producer: { kind: "runtime", component: "program-projection-test" },
     },
     {
-      eventId: mkEventId(),
-      workspaceId,
-      sessionId,
-      programStateId,
-      occurredAt: "2026-08-16T00:00:02.000Z",
-      type: "program.completed",
-      payload: { state: state(programStateId, 3, "completed", 15) },
-      payloadSchemaVersion: 1,
+      eventId: mkEventId(), workspaceId, sessionId, programStateId,
+      occurredAt: "2026-08-16T00:00:02.000Z", type: "program.completed",
+      payload: { state: state(programStateId, 3, "completed", 15) }, payloadSchemaVersion: 1,
       producer: { kind: "runtime", component: "program-projection-test" },
     },
   ]);
@@ -110,36 +87,29 @@ describeLocked("ProgramState projection", () => {
     const programStateId = mkProgramStateId();
 
     let runtime = await openLockedWorkspaceStore({
-      databasePath: dbPath,
-      lockPath,
-      workspaceId: String(workspaceId),
-      repositoryId: "program-projection-test",
+      databasePath: dbPath, lockPath, workspaceId: String(workspaceId), repositoryId: "program-projection-test",
     });
     await appendProgramHistory(runtime.store, workspaceId, sessionId, programStateId);
 
-    const projection = createProgramStateProjection(String(workspaceId), codec);
-    const firstCatchUp = runtime.store.getProjectionRunner().catchUp(projection);
+    const firstCatchUp = runtime.store.getProjectionRunner().catchUp(
+      createProgramStateProjection(String(workspaceId), codec),
+    );
     expect(firstCatchUp.appliedCount).toBe(3);
 
     let db = new Database(dbPath, { readonly: true, fileMustExist: true });
-    const first = readProgramState(db, codec, programStateId);
+    const first = readProgramState(db, codec, String(workspaceId), programStateId);
     expect(first).toMatchObject({
-      programStateId: String(programStateId),
-      workspaceId: String(workspaceId),
-      revision: 3,
-      lifecycle: "completed",
-      state: state(programStateId, 3, "completed", 15),
+      programStateId: String(programStateId), workspaceId: String(workspaceId), revision: 3,
+      lifecycle: "completed", state: state(programStateId, 3, "completed", 15),
     });
     expect(first!.createdSequence).toBeLessThan(first!.updatedSequence);
     expect(listProgramStates(db, codec, String(workspaceId))).toEqual([first]);
+    expect(readProgramState(db, codec, String(mkWorkspaceId()), programStateId)).toBeNull();
     db.close();
     runtime.close();
 
     runtime = await openLockedWorkspaceStore({
-      databasePath: dbPath,
-      lockPath,
-      workspaceId: String(workspaceId),
-      repositoryId: "program-projection-test",
+      databasePath: dbPath, lockPath, workspaceId: String(workspaceId), repositoryId: "program-projection-test",
     });
     const reopenedCatchUp = runtime.store.getProjectionRunner().catchUp(
       createProgramStateProjection(String(workspaceId), codec),
@@ -153,10 +123,7 @@ describeLocked("ProgramState projection", () => {
     db.close();
 
     runtime = await openLockedWorkspaceStore({
-      databasePath: dbPath,
-      lockPath,
-      workspaceId: String(workspaceId),
-      repositoryId: "program-projection-test",
+      databasePath: dbPath, lockPath, workspaceId: String(workspaceId), repositoryId: "program-projection-test",
     });
     const rebuilt = runtime.store.getProjectionRunner().catchUp(
       createProgramStateProjection(String(workspaceId), codec),
@@ -165,7 +132,7 @@ describeLocked("ProgramState projection", () => {
     runtime.close();
 
     db = new Database(dbPath, { readonly: true, fileMustExist: true });
-    const afterRebuild = readProgramState(db, codec, programStateId);
+    const afterRebuild = readProgramState(db, codec, String(workspaceId), programStateId);
     expect(afterRebuild).toEqual(first);
     db.close();
   });
@@ -179,10 +146,7 @@ describeLocked("ProgramState projection", () => {
     const programStateId = mkProgramStateId();
 
     const runtime = await openLockedWorkspaceStore({
-      databasePath: dbPath,
-      lockPath,
-      workspaceId: String(workspaceId),
-      repositoryId: "program-projection-test",
+      databasePath: dbPath, lockPath, workspaceId: String(workspaceId), repositoryId: "program-projection-test",
     });
     await runtime.store.append([
       {
@@ -202,7 +166,7 @@ describeLocked("ProgramState projection", () => {
     runtime.close();
 
     const db = new Database(dbPath, { readonly: true, fileMustExist: true });
-    expect(readProgramState(db, codec, programStateId)?.lifecycle).toBe("cancelled");
+    expect(readProgramState(db, codec, String(workspaceId), programStateId)?.lifecycle).toBe("cancelled");
     db.close();
   });
 
@@ -213,10 +177,7 @@ describeLocked("ProgramState projection", () => {
     const workspaceId = mkWorkspaceId();
 
     const runtime = await openLockedWorkspaceStore({
-      databasePath: dbPath,
-      lockPath,
-      workspaceId: String(workspaceId),
-      repositoryId: "program-projection-test",
+      databasePath: dbPath, lockPath, workspaceId: String(workspaceId), repositoryId: "program-projection-test",
     });
     const runner = runtime.store.getProjectionRunner();
     const result = runner.catchUp(createProgramStateProjection(String(workspaceId), codec));
@@ -245,19 +206,14 @@ describeLocked("ProgramState projection", () => {
     const otherProgramStateId = mkProgramStateId();
 
     const runtime = await openLockedWorkspaceStore({
-      databasePath: dbPath,
-      lockPath,
-      workspaceId: String(workspaceId),
-      repositoryId: "program-projection-test",
+      databasePath: dbPath, lockPath, workspaceId: String(workspaceId), repositoryId: "program-projection-test",
     });
-    await runtime.store.append([
-      {
-        eventId: mkEventId(), workspaceId, sessionId, programStateId,
-        occurredAt: "2026-08-16T00:00:00.000Z", type: "program.created",
-        payload: { state: state(otherProgramStateId, 1, "active", 1) }, payloadSchemaVersion: 1,
-        producer: { kind: "runtime", component: "program-projection-test" },
-      },
-    ]);
+    await runtime.store.append([{
+      eventId: mkEventId(), workspaceId, sessionId, programStateId,
+      occurredAt: "2026-08-16T00:00:00.000Z", type: "program.created",
+      payload: { state: state(otherProgramStateId, 1, "active", 1) }, payloadSchemaVersion: 1,
+      producer: { kind: "runtime", component: "program-projection-test" },
+    }]);
 
     expect(() => runtime.store.getProjectionRunner().catchUp(
       createProgramStateProjection(String(workspaceId), codec),
@@ -274,10 +230,7 @@ describeLocked("ProgramState projection", () => {
     const programStateId = mkProgramStateId();
 
     const runtime = await openLockedWorkspaceStore({
-      databasePath: dbPath,
-      lockPath,
-      workspaceId: String(workspaceId),
-      repositoryId: "program-projection-test",
+      databasePath: dbPath, lockPath, workspaceId: String(workspaceId), repositoryId: "program-projection-test",
     });
     await runtime.store.append([
       {
@@ -310,24 +263,17 @@ describeLocked("ProgramState projection", () => {
     const programStateId = mkProgramStateId();
 
     const runtime = await openLockedWorkspaceStore({
-      databasePath: dbPath,
-      lockPath,
-      workspaceId: String(workspaceId),
-      repositoryId: "program-projection-test",
+      databasePath: dbPath, lockPath, workspaceId: String(workspaceId), repositoryId: "program-projection-test",
     });
-    await runtime.store.append([
-      {
-        eventId: mkEventId(), workspaceId, sessionId, programStateId,
-        occurredAt: "2026-08-16T00:00:00.000Z", type: "program.created",
-        payload: { state: state(programStateId, 1, "active", 1) }, payloadSchemaVersion: 1,
-        producer: { kind: "runtime", component: "program-projection-test" },
-      },
-    ]);
+    await runtime.store.append([{
+      eventId: mkEventId(), workspaceId, sessionId, programStateId,
+      occurredAt: "2026-08-16T00:00:00.000Z", type: "program.created",
+      payload: { state: state(programStateId, 1, "active", 1) }, payloadSchemaVersion: 1,
+      producer: { kind: "runtime", component: "program-projection-test" },
+    }]);
 
     const runner = runtime.store.getProjectionRunner();
-    expect(() => runner.catchUp(
-      createProgramStateProjection(String(otherWorkspaceId), codec),
-    )).toThrow(/does not match event Workspace/);
+    expect(() => runner.catchUp(createProgramStateProjection(String(otherWorkspaceId), codec))).toThrow(/does not match event Workspace/);
     expect(runner.getCursor(PROGRAM_PROJECTION_NAME).lastAppliedEventSequence).toBe(0);
 
     const correct = runner.catchUp(createProgramStateProjection(String(workspaceId), codec));
