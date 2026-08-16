@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { canonicalStringify } from "@alcode/events";
 
 /** Current schema version. */
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 
 /** DDL for fresh databases (all tables at current version). */
 const WORKSPACE_SCHEMA: string[] = [
@@ -24,6 +24,7 @@ const WORKSPACE_SCHEMA: string[] = [
     workspace_id          TEXT NOT NULL,
     session_id            TEXT NOT NULL,
     operation_id          TEXT,
+    program_state_id      TEXT,
     type                  TEXT NOT NULL,
     payload               TEXT NOT NULL,
     payload_schema_version INTEGER NOT NULL DEFAULT 1,
@@ -38,6 +39,7 @@ const WORKSPACE_SCHEMA: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_events_sequence ON events(sequence)`,
   `CREATE INDEX IF NOT EXISTS idx_events_type ON events(type)`,
   `CREATE INDEX IF NOT EXISTS idx_events_correlation ON events(correlation_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_events_program_state ON events(program_state_id)`,
   `CREATE TABLE IF NOT EXISTS projection_cursors (
     projection_name            TEXT PRIMARY KEY,
     last_applied_event_sequence INTEGER NOT NULL DEFAULT 0,
@@ -149,7 +151,7 @@ const WORKSPACE_SCHEMA: string[] = [
 
 /**
  * Initialize the workspace database at the current schema version.
- * For a fresh database, creates all tables and records version 2.
+ * For a fresh database, creates all tables and records the current version.
  * For an existing database, runs migrations from the detected version.
  */
 export function initWorkspaceDb(db: Database.Database): void {
@@ -192,6 +194,9 @@ export function initWorkspaceDb(db: Database.Database): void {
   }
   if (getSchemaVersion(db) < 7) {
     migrateV6toV7(db);
+  }
+  if (getSchemaVersion(db) < 8) {
+    migrateV7toV8(db);
   }
 }
 
@@ -562,6 +567,30 @@ function migrateV6toV7(db: Database.Database): void {
     db.exec("DELETE FROM reasoning_edges");
 
     db.prepare("INSERT OR REPLACE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(7, new Date().toISOString());
+  });
+
+  migrationTxn();
+}
+
+/**
+ * Migration from schema v7 to v8.
+ * Adds the optional ProgramStateId event-envelope column and index.
+ *
+ * Historical rows are deliberately not rewritten and their request
+ * fingerprints/event digests are deliberately not recomputed. A NULL column
+ * means the key was absent from the historical canonical event. Current read
+ * verification therefore omits programStateId entirely for those rows.
+ */
+function migrateV7toV8(db: Database.Database): void {
+  const migrationTxn = db.transaction(() => {
+    const hasColumn = db.prepare(
+      "SELECT COUNT(*) as c FROM pragma_table_info('events') WHERE name = 'program_state_id'",
+    ).get() as { c: number };
+    if (hasColumn.c === 0) {
+      db.exec("ALTER TABLE events ADD COLUMN program_state_id TEXT");
+    }
+    db.exec("CREATE INDEX IF NOT EXISTS idx_events_program_state ON events(program_state_id)");
+    db.prepare("INSERT OR REPLACE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(8, new Date().toISOString());
   });
 
   migrationTxn();

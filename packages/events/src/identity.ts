@@ -14,6 +14,7 @@ export type EventId = Branded<"EventId">;
 export type WorkspaceId = Branded<"WorkspaceId">;
 export type SessionId = Branded<"SessionId">;
 export type OperationId = Branded<"OperationId">;
+export type ProgramStateId = Branded<"ProgramStateId">;
 export type MemoryId = Branded<"MemoryId">;
 export type ReasoningNodeId = Branded<"ReasoningNodeId">;
 
@@ -22,9 +23,10 @@ export type ReasoningNodeId = Branded<"ReasoningNodeId">;
 // ---------------------------------------------------------------------------
 
 /**
- * Generate a UUIDv7 (time-ordered) string. UUIDv7's leading 48 bits encode a
- * Unix millisecond timestamp, which gives roughly sortable ids and useful
- * diagnostics without requiring content.
+ * Generate a UUIDv7 string. UUIDv7's leading 48 bits encode Unix milliseconds,
+ * so values are time-sortable at millisecond granularity. The remaining 74
+ * unconstrained bits are CSPRNG output after version/variant bits are applied;
+ * same-millisecond values are intentionally random, not a monotonic counter.
  *
  * Spec: https://datatracker.ietf.org/doc/draft-ietf-uuidrev-rfc4122bis/
  * Layout: 48-bit unix_ts_ms | 4-bit ver (0x7) | 12-bit rand_a |
@@ -34,11 +36,18 @@ export function uuidv7(): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
 
-  // Write the current Unix epoch in milliseconds into bytes 0..5 (big-endian).
-  const now = Date.now();
-  const view = new DataView(bytes.buffer);
-  view.setUint32(0, Math.floor(now / 0x1000000)); // high 32 bits
-  view.setUint16(4, now & 0xffff); // low 16 bits
+  // Encode the 48-bit timestamp one byte at a time. Date.now() is an integer
+  // below 2^48 for the UUIDv7 epoch range we can represent, and every division
+  // here stays within JavaScript's exact safe-integer range. This avoids both
+  // 32-bit Number bitwise coercion and wide BigInt→Number conversion.
+  let remaining = Date.now();
+  if (!Number.isSafeInteger(remaining) || remaining < 0 || remaining >= 2 ** 48) {
+    throw new RangeError("UUIDv7 Unix-millisecond timestamp is outside the 48-bit range");
+  }
+  for (let i = 5; i >= 0; i--) {
+    bytes[i] = remaining % 0x100;
+    remaining = Math.floor(remaining / 0x100);
+  }
 
   // Set the version nibble to 0x7 (overwrites the high nibble of byte 6).
   bytes[6] = (bytes[6]! & 0x0f) | 0x70;
@@ -70,6 +79,15 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 function brandUuid<brand extends string>(value: string, name: brand): Branded<brand> {
   if (!UUID_RE.test(value)) {
     throw new TypeError(`${name} must be a UUID; got: ${value}`);
+  }
+  return value as Branded<brand>;
+}
+
+/** UUIDv7 with the RFC variant bits. ProgramStateId is specified as UUIDv7. */
+const UUID_V7_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function brandUuidV7<brand extends string>(value: string, name: brand): Branded<brand> {
+  if (!UUID_V7_RE.test(value)) {
+    throw new TypeError(`${name} must be a UUIDv7; got: ${value}`);
   }
   return value as Branded<brand>;
 }
@@ -114,6 +132,16 @@ export function mkOperationId(): OperationId {
 /** Construct an OperationId from a known UUID string. */
 export function asOperationId(value: string): OperationId {
   return brandUuid(value, "OperationId");
+}
+
+/** Generate a fresh ProgramStateId (UUIDv7). */
+export function mkProgramStateId(): ProgramStateId {
+  return brandUuidV7(uuidv7(), "ProgramStateId");
+}
+
+/** Construct a ProgramStateId from a known UUIDv7 string. */
+export function asProgramStateId(value: string): ProgramStateId {
+  return brandUuidV7(value, "ProgramStateId");
 }
 
 /**

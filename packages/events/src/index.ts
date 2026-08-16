@@ -10,6 +10,7 @@ export type {
   WorkspaceId,
   SessionId,
   OperationId,
+  ProgramStateId,
   MemoryId,
   ReasoningNodeId,
 } from "./identity.ts";
@@ -22,6 +23,8 @@ export {
   asSessionId,
   mkOperationId,
   asOperationId,
+  mkProgramStateId,
+  asProgramStateId,
   asMemoryId,
   asReasoningNodeId,
   uuidv7,

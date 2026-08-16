@@ -3,7 +3,7 @@
 // Composes gate:0.2 (transitively gate:0.1A, gate:0.0), then adds:
 //   1. @alcode/memory typecheck + tests (semantic formulas, fixtures).
 //   2. Storage typecheck + tests (schema v6 migration, memory projection v2).
-//   3. Schema version is 6 (memory_stats table present).
+//   3. Current storage schema version (memory_stats table preserved).
 //   4. No-detached-worker check (memory package has no process/scheduler code).
 //   5. Ola differential fixture families present (5 families in semantic tests).
 
@@ -80,19 +80,19 @@ async function main(): Promise<void> {
     });
   }
 
-  // 3. Schema version is 6
+  // 3. Current storage schema version, preserving the Phase 0.3 structures.
   {
     const result = run("npx", ["tsx", "-e", `
       import { readFileSync } from "node:fs";
       const content = readFileSync("${join(ROOT, "packages/storage/src/schema.ts").replace(/\\/g, "/")}", "utf-8");
       const match = content.match(/export const SCHEMA_VERSION = (\\d+)/);
-      if (match && match[1] === "7") { console.log("SCHEMA_VERSION=7"); process.exit(0); }
+      if (match && match[1] === "8") { console.log("SCHEMA_VERSION=8"); process.exit(0); }
       console.log("SCHEMA_VERSION=" + (match ? match[1] : "unknown")); process.exit(1);
     `], { cwd: ROOT, throwOnError: false });
     checks.push({
       id: "phase0.schema_version",
       status: result.exitCode === 0 ? "passed" : "failed",
-      evidence: result.exitCode === 0 ? "SCHEMA_VERSION=7" : result.stdout.trim().slice(0, 100),
+      evidence: result.exitCode === 0 ? "SCHEMA_VERSION=8" : result.stdout.trim().slice(0, 100),
     });
   }
 

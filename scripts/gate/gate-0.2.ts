@@ -113,19 +113,19 @@ async function main(): Promise<void> {
     });
   }
 
-  // 4. Schema version is 5 (transcript_messages table present)
+  // 4. Current storage schema version, preserving the Phase 0.2 structures.
   {
     const result = run("npx", ["tsx", "-e", `
       import { readFileSync } from "node:fs";
       const content = readFileSync("${join(ROOT, "packages/storage/src/schema.ts").replace(/\\/g, "/")}", "utf-8");
       const match = content.match(/export const SCHEMA_VERSION = (\\d+)/);
-      if (match && match[1] === "7") { console.log("SCHEMA_VERSION=7"); process.exit(0); }
+      if (match && match[1] === "8") { console.log("SCHEMA_VERSION=8"); process.exit(0); }
       console.log("SCHEMA_VERSION=" + (match ? match[1] : "unknown")); process.exit(1);
     `], { cwd: ROOT, throwOnError: false });
     checks.push({
       id: "phase0.schema_version",
       status: result.exitCode === 0 ? "passed" : "failed",
-      evidence: result.exitCode === 0 ? "SCHEMA_VERSION=7" : result.stdout.trim().slice(0, 100),
+      evidence: result.exitCode === 0 ? "SCHEMA_VERSION=8" : result.stdout.trim().slice(0, 100),
     });
   }
 
