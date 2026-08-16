@@ -1,4 +1,4 @@
-import { assertCanonical, canonicalStringify } from "@alcode/events";
+import { assertCanonical, canonicalStringify } from "./canonical.ts";
 import { PROGRAM_LIMITS } from "./limits.ts";
 import type {
   FreshnessPathEntry,
@@ -6,7 +6,6 @@ import type {
   ProgramState,
   VerificationFreshnessScopeV1,
   VerificationObligation,
-  VerificationPredicateV1,
 } from "./types.ts";
 
 export type ProgramInvariantCode =
@@ -33,6 +32,7 @@ export class ProgramInvariantError extends Error {
 }
 
 const encoder = new TextEncoder();
+const UUID_V7_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function utf8Bytes(value: string): number {
   return encoder.encode(value).byteLength;
@@ -149,7 +149,7 @@ function assertPredicate(
   obligation: VerificationObligation,
   outputSlotIds: ReadonlySet<string>,
 ): number {
-  const predicate: VerificationPredicateV1 = obligation.predicate;
+  const predicate = obligation.predicate as VerificationObligation["predicate"] & { kind: string };
   switch (predicate.kind) {
     case "operation_result":
       return assertOperationSpec(
@@ -174,10 +174,8 @@ function assertPredicate(
         );
       }
       return 0;
-    default: {
-      const neverPredicate: never = predicate;
-      return neverPredicate;
-    }
+    default:
+      return fail("invalid_value", `Unsupported VerificationPredicateV1 kind: ${String(predicate.kind)}`);
   }
 }
 
@@ -262,7 +260,9 @@ export function assertValidProgramState(state: ProgramState): void {
   if (state.revision < 1 || !Number.isSafeInteger(state.revision)) {
     fail("invalid_value", "ProgramState.revision must be a positive safe integer");
   }
-  requireNonEmptyString("ProgramStateId", String(state.programStateId));
+  if (!UUID_V7_RE.test(String(state.programStateId))) {
+    fail("invalid_value", `ProgramStateId must be a UUIDv7; got ${String(state.programStateId)}`);
+  }
   if (utf8Bytes(state.objective) > PROGRAM_LIMITS.objectiveBytes) {
     fail("limit_exceeded", `objective exceeds ${PROGRAM_LIMITS.objectiveBytes} UTF-8 bytes`);
   }
@@ -277,8 +277,7 @@ export function assertValidProgramState(state: ProgramState): void {
   requireCount("session attachments", state.attachedSessionIds.length, PROGRAM_LIMITS.uniqueSessionAttachments);
 
   const workIds = assertUniqueIds("work items", state.workItems, (work) => String(work.workItemId));
-  const blockerIds = assertUniqueIds("blockers", state.blockers, (blocker) => String(blocker.blockerId));
-  void blockerIds;
+  assertUniqueIds("blockers", state.blockers, (blocker) => String(blocker.blockerId));
   const verificationIds = assertUniqueIds(
     "verification obligations",
     state.verification,
@@ -290,7 +289,7 @@ export function assertValidProgramState(state: ProgramState): void {
     state.productionSteps,
     (step) => String(step.productionStepId),
   );
-  assertUniqueIds("decisive evidence", state.decisiveEvidence, (ref) => String(ref.evidenceRefId));
+  const evidenceIds = assertUniqueIds("decisive evidence", state.decisiveEvidence, (ref) => String(ref.evidenceRefId));
   assertUniqueIds("artifact refs", state.artifacts, (ref) => ref.artifactRef);
 
   const sessions = new Set(state.attachedSessionIds.map(String));
@@ -344,6 +343,14 @@ export function assertValidProgramState(state: ProgramState): void {
         obligation.satisfaction.evidenceRefIds.length,
         PROGRAM_LIMITS.decisiveEvidenceRefsPerTarget,
       );
+      for (const evidenceRefId of obligation.satisfaction.evidenceRefIds) {
+        if (!evidenceIds.has(String(evidenceRefId))) {
+          fail(
+            "unknown_reference",
+            `verification ${String(obligation.obligationId)} satisfaction references unknown evidence ${String(evidenceRefId)}`,
+          );
+        }
+      }
     }
     if (obligation.waiver !== null) {
       requireGeneration("waiver subjectGeneration", obligation.waiver.subjectGeneration);
@@ -354,9 +361,7 @@ export function assertValidProgramState(state: ProgramState): void {
     totalArgsBytes += assertPredicate(obligation, outputSlotIds);
   }
 
-  for (const step of state.productionSteps) {
-    totalArgsBytes += assertProductionStep(step, workIds);
-  }
+  for (const step of state.productionSteps) totalArgsBytes += assertProductionStep(step, workIds);
   requireCount(
     "total predicate + production-step canonical argument bytes",
     totalArgsBytes,
