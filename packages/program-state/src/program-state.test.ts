@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { mkProgramStateId, mkSessionId } from "@alcode/events";
 import {
   PROGRAM_LIMITS,
   ProgramInvariantError,
@@ -12,7 +11,9 @@ import {
   asProgramBlockerId,
   asProgramEvidenceRefId,
   asProgramOutputSlotId,
+  asProgramStateId,
   asProgramWorkItemId,
+  asSessionId,
   asVerificationObligationId,
   assertNormalizedWorkspacePath,
   createProgramState,
@@ -21,15 +22,21 @@ import {
   freshnessScopeCoversPath,
   isVerificationCurrent,
   selectNextEligibleWork,
+  type ProgramAttemptExecutionBase,
   type ProgramCreationInput,
   type ProgramState,
-  type ProgramAttemptExecutionBase,
 } from "./index.ts";
 
 const workA = asProgramWorkItemId("work-a");
 const workB = asProgramWorkItemId("work-b");
 const verificationA = asVerificationObligationId("verify-a");
 const verificationB = asVerificationObligationId("verify-b");
+const programId = asProgramStateId("018f0000-0000-7000-8000-000000000001");
+const sourceSession = asSessionId("018f0000-0000-7000-8000-000000000101");
+
+function session(index: number) {
+  return asSessionId(`018f0000-0000-7000-8000-${index.toString(16).padStart(12, "0")}`);
+}
 
 function baseExecutionBase(generation = 1, stateDigest = "state-1"): ProgramAttemptExecutionBase {
   return {
@@ -46,9 +53,9 @@ function baseExecutionBase(generation = 1, stateDigest = "state-1"): ProgramAtte
 
 function creationInput(): ProgramCreationInput {
   return {
-    programStateId: mkProgramStateId(),
+    programStateId: programId,
     objective: "Implement a durable ProgramState kernel",
-    sourceSessionId: mkSessionId(),
+    sourceSessionId: sourceSession,
     workItems: [
       {
         workItemId: workA,
@@ -258,7 +265,7 @@ describe("derived eligibility", () => {
 describe("revision algebra and atomic semantic transitions", () => {
   it("advances revision once for an effective transition and not for an exact semantic no-op", () => {
     let program = state();
-    const attached = mkSessionId();
+    const attached = session(102);
     program = applyProgramTransition(program, {
       kind: "session.attach",
       expectedProgramRevision: 1,
@@ -280,12 +287,12 @@ describe("revision algebra and atomic semantic transitions", () => {
     expect(() => applyProgramTransition(program, {
       kind: "session.attach",
       expectedProgramRevision: 0,
-      sessionId: mkSessionId(),
+      sessionId: session(103),
     })).toThrow(ProgramRevisionConflictError);
     expect(() => applyProgramTransition(program, {
       kind: "session.attach",
       expectedProgramRevision: 2,
-      sessionId: mkSessionId(),
+      sessionId: session(104),
     })).toThrow(ProgramRevisionConflictError);
   });
 
