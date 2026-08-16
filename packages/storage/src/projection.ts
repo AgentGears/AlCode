@@ -187,18 +187,15 @@ function validateStatements(statements: readonly StatementDefinition[]): void {
   }
 }
 
-/** Run static, idempotent setup statements before regular statement compile. */
-function runSetupStatements(
+/** Run static, idempotent setup statements inside the caller's transaction. */
+function applySetupStatements(
   db: Database.Database,
   statements: readonly StatementDefinition[],
 ): void {
   validateStatements(statements);
-  if (statements.length === 0) return;
-  db.transaction(() => {
-    for (const statement of statements) {
-      db.prepare(statement.sql).run();
-    }
-  })();
+  for (const statement of statements) {
+    db.prepare(statement.sql).run();
+  }
 }
 
 /** Compile and cache statements. */
@@ -247,7 +244,7 @@ class ProjectionRunnerImpl {
     if (!PROJECTION_NAME_RE.test(projection.name)) throw new InvalidProjectionNameError(projection.name);
     if (projection.classification === "inline") throw new InlineProjectionInRunnerError(projection.name);
 
-    const cursor = this.getCursor(projection.name);
+    let cursor = this.getCursor(projection.name);
 
     // Schema version check
     if (cursor.schemaVersion !== 0 && cursor.schemaVersion !== projection.schemaVersion) {
@@ -267,12 +264,40 @@ class ProjectionRunnerImpl {
     }
 
     // Projection-owned tables/indexes are established before regular statements
-    // are compiled so prepared writes may safely target them. Setup is static,
-    // idempotent, and subject to the same reserved-table boundary.
-    runSetupStatements(this.db, projection.setupStatements ?? []);
+    // are compiled so prepared writes may safely target them. On first setup,
+    // persist schema/classification metadata in the same transaction even if
+    // canonical history is empty; later schema changes cannot bypass checks.
+    const setup = projection.setupStatements ?? [];
+    if (setup.length > 0) {
+      this.db.transaction(() => {
+        applySetupStatements(this.db, setup);
+        if (cursor.schemaVersion === 0) {
+          this.db.prepare(
+            `INSERT INTO projection_cursors (
+              projection_name, last_applied_event_sequence, projection_schema_version, classification
+            ) VALUES (?, 0, ?, ?)`,
+          ).run(projection.name, projection.schemaVersion, projection.classification);
+        }
+      })();
+      if (cursor.schemaVersion === 0) {
+        cursor = {
+          projectionName: projection.name,
+          lastAppliedEventSequence: 0,
+          schemaVersion: projection.schemaVersion,
+          classification: projection.classification,
+        };
+      }
+    }
 
     // Get verified events (bound internally — no caller-supplied provider)
     const events = this.verifiedReads(cursor.lastAppliedEventSequence, limit);
+    for (const event of events) {
+      if (String(event.workspaceId) !== this.workspaceId) {
+        throw new ProjectionError(
+          `Verified projection event Workspace ${String(event.workspaceId)} does not match runner Workspace ${this.workspaceId}`,
+        );
+      }
+    }
     if (events.length === 0) {
       return { appliedCount: 0, newCursor: cursor, caught: true };
     }
