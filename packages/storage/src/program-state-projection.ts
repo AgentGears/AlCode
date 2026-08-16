@@ -9,12 +9,6 @@ import type {
 export const PROGRAM_PROJECTION_NAME = "program-state";
 export const PROGRAM_PROJECTION_SCHEMA_VERSION = 1;
 
-/**
- * Storage owns projection mechanics only. The Host/pure ProgramState domain
- * owns semantic admission. Canonical Program events therefore carry the exact
- * post-admission semantic state; this derived projection stores/rebuilds that
- * state without reimplementing Program transitions in storage.
- */
 export interface ProgramProjectionCodec<TState = unknown> {
   serialize(state: TState): string;
   deserialize(serialized: string): TState;
@@ -25,10 +19,7 @@ export interface ProgramProjectionCodec<TState = unknown> {
   };
 }
 
-export interface ProgramStateEventPayloadV1<TState = unknown> {
-  state: TState;
-}
-
+export interface ProgramStateEventPayloadV1<TState = unknown> { state: TState; }
 export interface ProjectedProgramRecord<TState> {
   programStateId: string;
   workspaceId: string;
@@ -76,9 +67,7 @@ const statements: readonly StatementDefinition[] = [
 ];
 
 function requireProgramStateId(event: PersistedDomainEvent<string, unknown>): ProgramStateId {
-  if (event.programStateId === undefined) {
-    throw new Error(`${event.type} requires envelope.programStateId`);
-  }
+  if (event.programStateId === undefined) throw new Error(`${event.type} requires envelope.programStateId`);
   return event.programStateId;
 }
 
@@ -102,11 +91,7 @@ function inspectAndValidate<TState>(
   if (!Number.isSafeInteger(inspected.revision) || inspected.revision < 1) {
     throw new Error("Program projection revision must be a positive safe integer");
   }
-  if (
-    inspected.lifecycle !== "active" &&
-    inspected.lifecycle !== "completed" &&
-    inspected.lifecycle !== "cancelled"
-  ) {
+  if (inspected.lifecycle !== "active" && inspected.lifecycle !== "completed" && inspected.lifecycle !== "cancelled") {
     throw new Error(`Unsupported Program lifecycle ${String(inspected.lifecycle)}`);
   }
   const serialized = codec.serialize(state);
@@ -117,10 +102,8 @@ function inspectAndValidate<TState>(
 }
 
 function isProgramStateEvent(type: string): boolean {
-  return type === "program.created" ||
-    type === "program.transitioned" ||
-    type === "program.completed" ||
-    type === "program.cancelled";
+  return type === "program.created" || type === "program.transitioned" ||
+    type === "program.completed" || type === "program.cancelled";
 }
 
 function assertLifecycleMatchesEvent(
@@ -148,9 +131,7 @@ function applyProgramEvent<TState>(
   tx: ProjectionTransaction,
 ): void {
   if (String(event.workspaceId) !== workspaceId) {
-    throw new Error(
-      `Program projection Workspace ${workspaceId} does not match event Workspace ${String(event.workspaceId)}`,
-    );
+    throw new Error(`Program projection Workspace ${workspaceId} does not match event Workspace ${String(event.workspaceId)}`);
   }
   if (!isProgramStateEvent(event.type)) return;
 
@@ -161,38 +142,22 @@ function applyProgramEvent<TState>(
   const programStateId = inspected.programStateId;
 
   if (event.type === "program.created") {
-    if (inspected.revision !== 1) {
-      throw new Error("program.created must project Program revision 1");
-    }
+    if (inspected.revision !== 1) throw new Error("program.created must project Program revision 1");
     const changes = tx.exec(
       "insert-program-state",
-      programStateId,
-      workspaceId,
-      inspected.revision,
-      inspected.lifecycle,
-      serialized,
-      event.sequence,
-      event.sequence,
+      programStateId, workspaceId, inspected.revision, inspected.lifecycle,
+      serialized, event.sequence, event.sequence,
     );
-    if (changes !== 1) {
-      throw new Error(`program.created did not create exactly one ProgramState ${programStateId}`);
-    }
+    if (changes !== 1) throw new Error(`program.created did not create exactly one ProgramState ${programStateId}`);
     return;
   }
 
-  if (inspected.revision <= 1) {
-    throw new Error(`${event.type} must advance beyond Program revision 1`);
-  }
+  if (inspected.revision <= 1) throw new Error(`${event.type} must advance beyond Program revision 1`);
   const expectedPreviousRevision = inspected.revision - 1;
   const changes = tx.exec(
     "advance-program-state",
-    inspected.revision,
-    inspected.lifecycle,
-    serialized,
-    event.sequence,
-    programStateId,
-    workspaceId,
-    expectedPreviousRevision,
+    inspected.revision, inspected.lifecycle, serialized, event.sequence,
+    programStateId, workspaceId, expectedPreviousRevision,
   );
   if (changes !== 1) {
     throw new Error(
@@ -213,9 +178,7 @@ export function createProgramStateProjection<TState>(
     classification: "derived",
     setupStatements,
     statements,
-    apply(event, tx) {
-      applyProgramEvent(workspaceId, codec, event, tx);
-    },
+    apply(event, tx) { applyProgramEvent(workspaceId, codec, event, tx); },
   };
 }
 
@@ -233,11 +196,7 @@ function readRow<TState>(
 ): ProjectedProgramRecord<TState> {
   const state = codec.deserialize(row.state_json);
   const inspected = codec.inspect(state);
-  if (
-    inspected.programStateId !== row.program_state_id ||
-    inspected.revision !== row.revision ||
-    inspected.lifecycle !== row.lifecycle
-  ) {
+  if (inspected.programStateId !== row.program_state_id || inspected.revision !== row.revision || inspected.lifecycle !== row.lifecycle) {
     throw new Error(`Program projection row/state mismatch for ${row.program_state_id}`);
   }
   return {
@@ -251,16 +210,23 @@ function readRow<TState>(
   };
 }
 
+/**
+ * Direct reads are Workspace-scoped even though a workspace database normally
+ * contains one Workspace. Keeping the Workspace predicate in SQL makes the
+ * helper consistent with projection writes and fails closed under manual DB
+ * corruption or future storage-layout changes.
+ */
 export function readProgramState<TState>(
   db: Database.Database,
   codec: ProgramProjectionCodec<TState>,
+  workspaceId: string,
   programStateId: ProgramStateId | string,
 ): ProjectedProgramRecord<TState> | null {
   const row = db.prepare(
     `SELECT program_state_id, workspace_id, revision, lifecycle, state_json,
       created_sequence, updated_sequence
-     FROM program_states WHERE program_state_id = ?`,
-  ).get(String(programStateId)) as {
+     FROM program_states WHERE program_state_id = ? AND workspace_id = ?`,
+  ).get(String(programStateId), workspaceId) as {
     program_state_id: string;
     workspace_id: string;
     revision: number;
