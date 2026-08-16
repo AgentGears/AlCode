@@ -1,4 +1,4 @@
-import { canonicalStringify, type SessionId } from "@alcode/events";
+import { canonicalStringify } from "./canonical.ts";
 import { evaluateCompletionOracle } from "./completion.ts";
 import { assertValidProgramState, ProgramInvariantError } from "./validation.ts";
 import { isVerificationCurrent } from "./verification.ts";
@@ -11,10 +11,10 @@ import type {
   ProgramBlocker,
   ProgramBlockerId,
   ProgramEvidenceReference,
-  ProgramEvidenceRefId,
   ProgramState,
   ProgramWorkItemId,
   ProgramWorkLifecycle,
+  SessionId,
   VerificationObligationId,
   VerificationSatisfaction,
   VerificationWaiver,
