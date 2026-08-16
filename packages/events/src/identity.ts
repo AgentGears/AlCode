@@ -23,10 +23,10 @@ export type ReasoningNodeId = Branded<"ReasoningNodeId">;
 // ---------------------------------------------------------------------------
 
 /**
- * Generate a UUIDv7 (time-ordered) string. UUIDv7's leading 48 bits encode a
- * Unix millisecond timestamp, which gives roughly sortable ids and useful
- * diagnostics without requiring content. Random bits are not a monotonic
- * same-millisecond ordering authority.
+ * Generate a UUIDv7 string. UUIDv7's leading 48 bits encode Unix milliseconds,
+ * so values are time-sortable at millisecond granularity. The remaining 74
+ * unconstrained bits are CSPRNG output after version/variant bits are applied;
+ * same-millisecond values are intentionally random, not a monotonic counter.
  *
  * Spec: https://datatracker.ietf.org/doc/draft-ietf-uuidrev-rfc4122bis/
  * Layout: 48-bit unix_ts_ms | 4-bit ver (0x7) | 12-bit rand_a |
@@ -36,13 +36,18 @@ export function uuidv7(): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
 
-  // Write the 48-bit Unix-millisecond value into bytes 0..5, big-endian.
-  // BigInt makes the intended 48-bit split explicit and avoids JavaScript's
-  // 32-bit coercion for Number bitwise operators.
-  const now = BigInt(Date.now());
-  const view = new DataView(bytes.buffer);
-  view.setUint32(0, Number((now >> 16n) & 0xffff_ffffn)); // timestamp bits 16..47
-  view.setUint16(4, Number(now & 0xffffn));               // timestamp bits 0..15
+  // Encode the 48-bit timestamp one byte at a time. Date.now() is an integer
+  // below 2^48 for the UUIDv7 epoch range we can represent, and every division
+  // here stays within JavaScript's exact safe-integer range. This avoids both
+  // 32-bit Number bitwise coercion and wide BigInt→Number conversion.
+  let remaining = Date.now();
+  if (!Number.isSafeInteger(remaining) || remaining < 0 || remaining >= 2 ** 48) {
+    throw new RangeError("UUIDv7 Unix-millisecond timestamp is outside the 48-bit range");
+  }
+  for (let i = 5; i >= 0; i--) {
+    bytes[i] = remaining % 0x100;
+    remaining = Math.floor(remaining / 0x100);
+  }
 
   // Set the version nibble to 0x7 (overwrites the high nibble of byte 6).
   bytes[6] = (bytes[6]! & 0x0f) | 0x70;
