@@ -11,6 +11,7 @@ const FORBIDDEN = [
   "node:http",
   "node:https",
   "better-sqlite3",
+  "@alcode/events",
   "@alcode/storage",
   "@alcode/workspace",
   "@alcode/host-runtime",
@@ -18,7 +19,7 @@ const FORBIDDEN = [
 ];
 
 describe("@alcode/program-state production boundary", () => {
-  it("contains no filesystem, SQLite, process, network, scheduler, or Host-runtime imports", () => {
+  it("contains no filesystem, SQLite, process, network, scheduler, event-store, or Host-runtime imports", () => {
     const productionFiles = readdirSync(SRC)
       .filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts"));
 
