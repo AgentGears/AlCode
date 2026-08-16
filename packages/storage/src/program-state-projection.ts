@@ -62,7 +62,7 @@ const statements: readonly StatementDefinition[] = [
     name: "advance-program-state",
     sql: `UPDATE program_states
       SET revision = ?, lifecycle = ?, state_json = ?, updated_sequence = ?
-      WHERE program_state_id = ? AND workspace_id = ? AND revision = ?`,
+      WHERE program_state_id = ? AND workspace_id = ? AND revision = ? AND lifecycle = 'active'`,
   },
 ];
 
@@ -162,7 +162,7 @@ function applyProgramEvent<TState>(
   if (changes !== 1) {
     throw new Error(
       `${event.type} cannot advance ${programStateId} from expected revision ${expectedPreviousRevision}; ` +
-      "the Program is unknown, belongs to another Workspace, or canonical revision history is non-contiguous",
+      "the Program is unknown, belongs to another Workspace, is already terminal, or canonical revision history is non-contiguous",
     );
   }
 }
