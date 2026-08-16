@@ -1,10 +1,12 @@
-import type {
-  Branded,
-  Json,
-  OperationId,
-  ProgramStateId,
-  SessionId,
-} from "@alcode/events";
+export type Branded<TBrand extends string> = string & { readonly __brand: TBrand };
+export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
+
+// Cross-domain identities are structurally compatible with @alcode/events by
+// carrying the same nominal brand. The pure kernel does not depend on the
+// event/storage runtime merely to name these values.
+export type ProgramStateId = Branded<"ProgramStateId">;
+export type SessionId = Branded<"SessionId">;
+export type OperationId = Branded<"OperationId">;
 
 export type ProgramWorkItemId = Branded<"ProgramWorkItemId">;
 export type ProgramAttemptId = Branded<"ProgramAttemptId">;
