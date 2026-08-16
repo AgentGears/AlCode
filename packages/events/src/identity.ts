@@ -36,14 +36,13 @@ export function uuidv7(): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
 
-  // Write the current Unix epoch in milliseconds into bytes 0..5 (big-endian).
-  // Divide instead of using a JS bitwise shift: bitwise operators truncate
-  // Date.now() to 32 bits. floor(now / 2^16) is exactly timestamp bits 16..47;
-  // the uint16 below supplies bits 0..15.
-  const now = Date.now();
+  // Write the 48-bit Unix-millisecond value into bytes 0..5, big-endian.
+  // BigInt makes the intended 48-bit split explicit and avoids JavaScript's
+  // 32-bit coercion for Number bitwise operators.
+  const now = BigInt(Date.now());
   const view = new DataView(bytes.buffer);
-  view.setUint32(0, Math.floor(now / 0x10000));
-  view.setUint16(4, now & 0xffff);
+  view.setUint32(0, Number((now >> 16n) & 0xffff_ffffn)); // timestamp bits 16..47
+  view.setUint16(4, Number(now & 0xffffn));               // timestamp bits 0..15
 
   // Set the version nibble to 0x7 (overwrites the high nibble of byte 6).
   bytes[6] = (bytes[6]! & 0x0f) | 0x70;
