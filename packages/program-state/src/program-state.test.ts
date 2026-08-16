@@ -25,6 +25,7 @@ import {
   type ProgramAttemptExecutionBase,
   type ProgramCreationInput,
   type ProgramState,
+  type VerificationObligationId,
 } from "./index.ts";
 
 const workA = asProgramWorkItemId("work-a");
@@ -105,6 +106,28 @@ function creationInput(): ProgramCreationInput {
 
 function state(): ProgramState {
   return createProgramState(creationInput());
+}
+
+function addEvidence(
+  program: ProgramState,
+  obligationId: VerificationObligationId,
+  value: string,
+): { program: ProgramState; evidenceRefId: ReturnType<typeof asProgramEvidenceRefId> } {
+  const evidenceRefId = asProgramEvidenceRefId(value);
+  return {
+    evidenceRefId,
+    program: applyProgramTransition(program, {
+      kind: "evidence.add",
+      expectedProgramRevision: program.revision,
+      evidence: {
+        evidenceRefId,
+        workItemId: null,
+        verificationObligationId: obligationId,
+        sourceOperationId: null,
+        artifactRef: null,
+      },
+    }),
+  };
 }
 
 const allSchedulerFacts = {
@@ -197,6 +220,12 @@ describe("Program creation and structural validation", () => {
       canonicalArgsDigest: "digest",
     };
     expect(() => createProgramState(input)).toThrow(/canonical arguments exceed/);
+  });
+
+  it("rejects a runtime predicate discriminant outside the closed v1 taxonomy", () => {
+    const input = creationInput();
+    (input.verification[0] as unknown as { predicate: unknown }).predicate = { kind: "model_judgment" };
+    expect(() => createProgramState(input)).toThrow(/Unsupported VerificationPredicateV1 kind/);
   });
 
   it("binds artifact predicates through an existing output slot and production step", () => {
@@ -367,6 +396,48 @@ describe("revision algebra and atomic semantic transitions", () => {
     expect(next.executionBaseMismatch?.expectedProgramRevision).toBe(mismatchRevision);
   });
 
+  it("requires explicit exact-candidate rebase while a mismatch receipt is current", () => {
+    let program = state();
+    const accepted = baseExecutionBase(4, "O4");
+    program = applyProgramTransition(program, {
+      kind: "execution_base.adopt",
+      expectedProgramRevision: program.revision,
+      executionBase: accepted,
+    });
+    const current = baseExecutionBase(4, "O5");
+    program = applyProgramTransition(program, {
+      kind: "execution_base.mismatch",
+      expectedProgramRevision: program.revision,
+      receipt: {
+        receiptId: asExecutionBaseMismatchReceiptId("mismatch-explicit"),
+        programStateId: program.programStateId,
+        expectedProgramRevision: program.revision,
+        acceptedWorkspaceEffectGeneration: 4,
+        acceptedObservationIdentity: accepted.observation,
+        currentWorkspaceEffectGeneration: 4,
+        currentObservationIdentity: current.observation,
+        kind: "observation_mismatch",
+        verificationImpactComplete: true,
+      },
+      invalidateVerificationObligationIds: [verificationA],
+    });
+
+    expect(() => applyProgramTransition(program, {
+      kind: "execution_base.adopt",
+      expectedProgramRevision: program.revision,
+      executionBase: current,
+    })).toThrow(/requires explicit rebase/);
+
+    const rebased = applyProgramTransition(program, {
+      kind: "execution_base.rebase_accept",
+      expectedProgramRevision: program.revision,
+      mismatchReceiptId: "mismatch-explicit",
+      executionBase: current,
+    });
+    expect(rebased.executionBaseMismatch).toBeNull();
+    expect(rebased.acceptedExecutionBase).toEqual(current);
+  });
+
   it("does not let rebase overtake verification-impact processing", () => {
     let program = state();
     const accepted = baseExecutionBase(4, "O4");
@@ -397,13 +468,34 @@ describe("revision algebra and atomic semantic transitions", () => {
 });
 
 describe("generation-indexed verification and terminal oracle", () => {
-  it("invalidates satisfaction and waiver when subjectGeneration advances", () => {
+  it("requires decisive evidence bound to the exact obligation before satisfaction is current", () => {
     let program = state();
-    program = applyProgramTransition(program, {
+    expect(() => applyProgramTransition(program, {
       kind: "verification.satisfy",
       expectedProgramRevision: program.revision,
       obligationId: verificationA,
       satisfaction: { subjectGeneration: 1, evidenceRefIds: [] },
+    })).toThrow(/requires decisive evidence/);
+
+    const wrong = addEvidence(program, verificationB, "wrong-evidence");
+    program = wrong.program;
+    expect(() => applyProgramTransition(program, {
+      kind: "verification.satisfy",
+      expectedProgramRevision: program.revision,
+      obligationId: verificationA,
+      satisfaction: { subjectGeneration: 1, evidenceRefIds: [wrong.evidenceRefId] },
+    })).toThrow(/not bound to verification/);
+  });
+
+  it("invalidates satisfaction and waiver when subjectGeneration advances", () => {
+    let program = state();
+    const evidence = addEvidence(program, verificationA, "evidence-generation-1");
+    program = evidence.program;
+    program = applyProgramTransition(program, {
+      kind: "verification.satisfy",
+      expectedProgramRevision: program.revision,
+      obligationId: verificationA,
+      satisfaction: { subjectGeneration: 1, evidenceRefIds: [evidence.evidenceRefId] },
     });
     program = applyProgramTransition(program, {
       kind: "verification.waive",
@@ -444,11 +536,13 @@ describe("generation-indexed verification and terminal oracle", () => {
         lifecycle: "completed",
       });
     }
+    const evidence = addEvidence(program, verificationA, "completion-evidence");
+    program = evidence.program;
     program = applyProgramTransition(program, {
       kind: "verification.satisfy",
       expectedProgramRevision: program.revision,
       obligationId: verificationA,
-      satisfaction: { subjectGeneration: 1, evidenceRefIds: [] },
+      satisfaction: { subjectGeneration: 1, evidenceRefIds: [evidence.evidenceRefId] },
     });
     program = applyProgramTransition(program, {
       kind: "verification.waive",
