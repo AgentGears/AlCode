@@ -25,7 +25,8 @@ export type ReasoningNodeId = Branded<"ReasoningNodeId">;
 /**
  * Generate a UUIDv7 (time-ordered) string. UUIDv7's leading 48 bits encode a
  * Unix millisecond timestamp, which gives roughly sortable ids and useful
- * diagnostics without requiring content.
+ * diagnostics without requiring content. Random bits are not a monotonic
+ * same-millisecond ordering authority.
  *
  * Spec: https://datatracker.ietf.org/doc/draft-ietf-uuidrev-rfc4122bis/
  * Layout: 48-bit unix_ts_ms | 4-bit ver (0x7) | 12-bit rand_a |
@@ -36,10 +37,13 @@ export function uuidv7(): string {
   crypto.getRandomValues(bytes);
 
   // Write the current Unix epoch in milliseconds into bytes 0..5 (big-endian).
+  // Divide instead of using a JS bitwise shift: bitwise operators truncate
+  // Date.now() to 32 bits. floor(now / 2^16) is exactly timestamp bits 16..47;
+  // the uint16 below supplies bits 0..15.
   const now = Date.now();
   const view = new DataView(bytes.buffer);
-  view.setUint32(0, Math.floor(now / 0x10000)); // high 32 bits of the 48-bit timestamp
-  view.setUint16(4, now & 0xffff); // low 16 bits
+  view.setUint32(0, Math.floor(now / 0x10000));
+  view.setUint16(4, now & 0xffff);
 
   // Set the version nibble to 0x7 (overwrites the high nibble of byte 6).
   bytes[6] = (bytes[6]! & 0x0f) | 0x70;
