@@ -44,6 +44,15 @@ export interface HostOperationSpecReferenceV1 {
   canonicalArgsDigest: string;
 }
 
+// Compile-time sentinel only: its required `never` property makes it
+// unconstructable by typed callers, while keeping the runtime validator's
+// default branch type-reachable for deserialized/untyped input. Canonical
+// admission still accepts exactly the three v1 predicate kinds below.
+type RuntimeUntrustedVerificationPredicateSentinel = {
+  kind: "__runtime_untrusted_never_admitted__";
+  __runtimeOnly: never;
+};
+
 export type VerificationPredicateV1 =
   | ({ kind: "operation_result" } & HostOperationSpecReferenceV1)
   | {
@@ -54,7 +63,8 @@ export type VerificationPredicateV1 =
   | {
       kind: "artifact_present";
       outputSlotId: ProgramOutputSlotId;
-    };
+    }
+  | RuntimeUntrustedVerificationPredicateSentinel;
 
 export interface ProgramWorkDefinition {
   workItemId: ProgramWorkItemId;
