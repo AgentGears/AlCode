@@ -15,6 +15,7 @@ import {
   type StatementDefinition,
 } from "@alcode/storage";
 import { CanonicalAdmissionQueue } from "./admission-queue.ts";
+import { buildPendingCreationInvalidations } from "./program-creation.ts";
 
 export class HostSessionStateError extends Error {
   constructor(message: string) {
@@ -145,29 +146,40 @@ export class HostSessionManager {
     reason: "completed" | "cancelled" | "host_shutdown",
     evidence?: CompletionEvidence,
   ): Promise<void> {
-    const state = await this.getState(sessionId);
-    if (!state.started || state.stopped) {
-      throw new HostSessionStateError(`Cannot stop inactive session ${sessionId as string}`);
-    }
+    // Source-session terminalization and pending Program-creation acceptance
+    // share this exact canonical lane. A stale pre-enqueue session snapshot can
+    // no longer stop a session while an acceptance concurrently consumes its
+    // pending creation draft.
+    await this.admission.enqueue(async () => {
+      const state = await this.getState(sessionId);
+      if (!state.started || state.stopped) {
+        throw new HostSessionStateError(`Cannot stop inactive session ${sessionId as string}`);
+      }
 
-    const payload: Record<string, unknown> = {
-      sessionId: sessionId as string,
-      reason,
-    };
-    if (evidence) payload.completionEvidence = evidence;
+      const occurredAt = new Date().toISOString();
+      const payload: Record<string, unknown> = {
+        sessionId: sessionId as string,
+        reason,
+      };
+      if (evidence) payload.completionEvidence = evidence;
 
-    await this.admission.append([{
-      eventId: mkEventId(),
-      idempotencyKey: `runtime.session.stopped:${sessionId as string}`,
-      correlationId: uuidv7(),
-      workspaceId: asWorkspaceId(this.store.workspaceId),
-      sessionId,
-      occurredAt: new Date().toISOString(),
-      type: "runtime.session.stopped",
-      payload,
-      payloadSchemaVersion: 1,
-      producer: { kind: "runtime", component: "host-session-manager" },
-    }]);
+      const invalidations = await buildPendingCreationInvalidations(this.store, sessionId, occurredAt);
+      await this.store.append([
+        ...invalidations,
+        {
+          eventId: mkEventId(),
+          idempotencyKey: `runtime.session.stopped:${sessionId as string}`,
+          correlationId: uuidv7(),
+          workspaceId: asWorkspaceId(this.store.workspaceId),
+          sessionId,
+          occurredAt,
+          type: "runtime.session.stopped",
+          payload,
+          payloadSchemaVersion: 1,
+          producer: { kind: "runtime", component: "host-session-manager" },
+        },
+      ]);
+    });
     this.catchUp();
   }
 }
