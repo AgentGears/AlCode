@@ -116,17 +116,47 @@ function inspectAndValidate<TState>(
   return inspected;
 }
 
+function isProgramStateEvent(type: string): boolean {
+  return type === "program.created" ||
+    type === "program.transitioned" ||
+    type === "program.completed" ||
+    type === "program.cancelled";
+}
+
+function assertLifecycleMatchesEvent(
+  eventType: string,
+  lifecycle: "active" | "completed" | "cancelled",
+): void {
+  if (eventType === "program.created" && lifecycle !== "active") {
+    throw new Error("program.created must project an active Program");
+  }
+  if (eventType === "program.transitioned" && lifecycle !== "active") {
+    throw new Error("program.transitioned cannot replace canonical Program terminal events");
+  }
+  if (eventType === "program.completed" && lifecycle !== "completed") {
+    throw new Error("program.completed must project lifecycle completed");
+  }
+  if (eventType === "program.cancelled" && lifecycle !== "cancelled") {
+    throw new Error("program.cancelled must project lifecycle cancelled");
+  }
+}
+
 function applyProgramEvent<TState>(
   workspaceId: string,
   codec: ProgramProjectionCodec<TState>,
   event: PersistedDomainEvent<string, unknown>,
   tx: ProjectionTransaction,
 ): void {
-  if (String(event.workspaceId) !== workspaceId) return;
-  if (event.type !== "program.created" && event.type !== "program.transitioned") return;
+  if (String(event.workspaceId) !== workspaceId) {
+    throw new Error(
+      `Program projection Workspace ${workspaceId} does not match event Workspace ${String(event.workspaceId)}`,
+    );
+  }
+  if (!isProgramStateEvent(event.type)) return;
 
   const state = requirePayloadState<TState>(event);
   const inspected = inspectAndValidate(event, codec, state);
+  assertLifecycleMatchesEvent(event.type, inspected.lifecycle);
   const serialized = codec.serialize(state);
   const programStateId = inspected.programStateId;
 
@@ -151,7 +181,7 @@ function applyProgramEvent<TState>(
   }
 
   if (inspected.revision <= 1) {
-    throw new Error("program.transitioned must advance beyond Program revision 1");
+    throw new Error(`${event.type} must advance beyond Program revision 1`);
   }
   const expectedPreviousRevision = inspected.revision - 1;
   const changes = tx.exec(
@@ -166,7 +196,7 @@ function applyProgramEvent<TState>(
   );
   if (changes !== 1) {
     throw new Error(
-      `program.transitioned cannot advance ${programStateId} from expected revision ${expectedPreviousRevision}; ` +
+      `${event.type} cannot advance ${programStateId} from expected revision ${expectedPreviousRevision}; ` +
       "the Program is unknown, belongs to another Workspace, or canonical revision history is non-contiguous",
     );
   }
