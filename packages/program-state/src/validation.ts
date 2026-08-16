@@ -292,6 +292,7 @@ export function assertValidProgramState(state: ProgramState): void {
   const evidenceIds = assertUniqueIds("decisive evidence", state.decisiveEvidence, (ref) => String(ref.evidenceRefId));
   assertUniqueIds("artifact refs", state.artifacts, (ref) => ref.artifactRef);
 
+  const evidenceById = new Map(state.decisiveEvidence.map((ref) => [String(ref.evidenceRefId), ref]));
   const sessions = new Set(state.attachedSessionIds.map(String));
   if (sessions.size !== state.attachedSessionIds.length) {
     fail("duplicate_id", "attachedSessionIds contains a duplicate session");
@@ -343,11 +344,27 @@ export function assertValidProgramState(state: ProgramState): void {
         obligation.satisfaction.evidenceRefIds.length,
         PROGRAM_LIMITS.decisiveEvidenceRefsPerTarget,
       );
+      if (obligation.satisfaction.evidenceRefIds.length === 0) {
+        fail("invalid_value", `verification ${String(obligation.obligationId)} satisfaction requires decisive evidence`);
+      }
+      const localEvidence = new Set<string>();
       for (const evidenceRefId of obligation.satisfaction.evidenceRefIds) {
-        if (!evidenceIds.has(String(evidenceRefId))) {
+        const evidenceId = String(evidenceRefId);
+        if (localEvidence.has(evidenceId)) {
+          fail("duplicate_id", `verification ${String(obligation.obligationId)} repeats evidence ${evidenceId}`);
+        }
+        localEvidence.add(evidenceId);
+        if (!evidenceIds.has(evidenceId)) {
           fail(
             "unknown_reference",
-            `verification ${String(obligation.obligationId)} satisfaction references unknown evidence ${String(evidenceRefId)}`,
+            `verification ${String(obligation.obligationId)} satisfaction references unknown evidence ${evidenceId}`,
+          );
+        }
+        const evidence = evidenceById.get(evidenceId)!;
+        if (evidence.verificationObligationId !== obligation.obligationId) {
+          fail(
+            "unknown_reference",
+            `evidence ${evidenceId} is not bound to verification ${String(obligation.obligationId)}`,
           );
         }
       }
