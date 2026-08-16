@@ -1,5 +1,6 @@
 export * from "./types.ts";
 export * from "./ids.ts";
+export * from "./canonical.ts";
 export * from "./limits.ts";
 export * from "./validation.ts";
 export * from "./creation.ts";
