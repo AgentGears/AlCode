@@ -3,7 +3,7 @@
 // Enforced guarantees:
 //   - ProjectionRunner is a frozen null-prototype facade (no db, no constructor)
 //   - catchUp() takes no event provider — verified reads are bound internally
-//   - ProjectionTransaction uses registered statements only (no arbitrary SQL)
+//   - Projection SQL is pre-registered; no caller-supplied arbitrary SQL
 //   - ProjectionTransaction is invalidated after apply() returns or throws
 //   - Classification is persisted (schema v3) and authoritative
 //   - catchUp() rejects inline classifications
@@ -49,7 +49,8 @@ export interface ProjectionTransaction {
 /**
  * Statement registration for a projection. Statements are SQL templates
  * associated with a projection. Reserved tables (events, projection_cursors,
- * workspace_metadata, schema_migrations) are rejected at registration time.
+ * workspace_metadata, schema_migrations, event_redactions) are rejected at
+ * registration time.
  */
 export interface StatementDefinition {
   readonly name: string;
@@ -60,7 +61,15 @@ export interface ProjectionDefinition {
   readonly name: string;
   readonly schemaVersion: number;
   readonly classification: ProjectionClassification;
-  /** Pre-registered statements the projection may use. */
+  /**
+   * Optional idempotent projection-owned setup statements. These are validated
+   * against the same reserved-table boundary as mutation statements and run
+   * before event reads/statement compilation on every catchUp(). This lets a
+   * derived projection own rebuildable tables without exposing the database or
+   * arbitrary SQL to projection code.
+   */
+  readonly setupStatements?: readonly StatementDefinition[];
+  /** Pre-registered statements the projection may use from apply(). */
   readonly statements: readonly StatementDefinition[];
   apply(event: PersistedDomainEvent<string, unknown>, tx: ProjectionTransaction): void;
 }
@@ -165,12 +174,31 @@ function createTransaction(
 
 /** Validate statement definitions: reject SQL touching reserved tables. */
 function validateStatements(statements: readonly StatementDefinition[]): void {
+  const names = new Set<string>();
   for (const s of statements) {
+    if (!s.name || names.has(s.name)) {
+      throw new ProjectionError(`Projection statement names must be non-empty and unique: "${s.name}"`);
+    }
+    names.add(s.name);
     if (RESERVED_TABLE_RE.test(s.sql)) {
       const match = s.sql.match(RESERVED_TABLE_RE);
       throw new ReservedTableInStatementError(s.name, match?.[1] ?? "unknown");
     }
   }
+}
+
+/** Run static, idempotent setup statements before regular statement compile. */
+function runSetupStatements(
+  db: Database.Database,
+  statements: readonly StatementDefinition[],
+): void {
+  validateStatements(statements);
+  if (statements.length === 0) return;
+  db.transaction(() => {
+    for (const statement of statements) {
+      db.prepare(statement.sql).run();
+    }
+  })();
 }
 
 /** Compile and cache statements. */
@@ -188,7 +216,7 @@ function compileStatements(
 
 /**
  * Module-internal runner implementation. NOT exported. Only accessible via
- * the frozen facade returned by createProjectionRunnerFacade().
+ * the frozen facade returned by createProjectionRunner().
  */
 class ProjectionRunnerImpl {
   constructor(
@@ -237,6 +265,11 @@ class ProjectionRunnerImpl {
     if (cursor.lastAppliedEventSequence > head) {
       throw new CursorAheadOfHeadError(projection.name, cursor.lastAppliedEventSequence, head);
     }
+
+    // Projection-owned tables/indexes are established before regular statements
+    // are compiled so prepared writes may safely target them. Setup is static,
+    // idempotent, and subject to the same reserved-table boundary.
+    runSetupStatements(this.db, projection.setupStatements ?? []);
 
     // Get verified events (bound internally — no caller-supplied provider)
     const events = this.verifiedReads(cursor.lastAppliedEventSequence, limit);
