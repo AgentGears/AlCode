@@ -178,9 +178,6 @@ export function assertProgramCreationDraft(draft: ProgramCreationDraftV1): void 
   assertPolicySnapshot(draft.policy);
   assertExecutionProfile(draft.executionObservationProfile);
 
-  // Pure ProgramState construction is the structural validation oracle for the
-  // immutable semantic contract. The reserved ProgramStateId is not canonical
-  // until acceptance, but using it here makes draft validation exact.
   createProgramState({
     programStateId: asProgramStateId(draft.reservedProgramStateId),
     sourceSessionId: draft.sourceSessionId as ProgramCreationInput["sourceSessionId"],
@@ -282,6 +279,31 @@ function reduceDraftControls(
   return drafts;
 }
 
+function sessionHasCreationBinding(
+  events: readonly PersistedDomainEvent<string, unknown>[],
+  sessionId: string,
+): boolean {
+  const controls = reduceDraftControls(events);
+  for (const control of controls.values()) {
+    if (
+      control.draft.sourceSessionId === sessionId &&
+      (control.status === "pending" || control.status === "accepted")
+    ) {
+      return true;
+    }
+  }
+
+  for (const event of events) {
+    if (event.type !== "program.created") continue;
+    const state = record(record(event.payload).state);
+    const attached = state.attachedSessionIds;
+    if (Array.isArray(attached) && attached.some((value) => String(value) === sessionId)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function creationDraftEvent(
   store: WorkspaceEventStore,
   sessionId: SessionId,
@@ -334,8 +356,14 @@ export class ProgramCreationServiceV1 {
 
     return this.options.admission.enqueue(async () => {
       const events = await replayAll(this.options.store);
-      if (!sessionIsActive(events, String(input.sourceSessionId))) {
-        throw new ProgramCreationStaleError(`Source session ${String(input.sourceSessionId)} is not active`);
+      const sourceSessionId = String(input.sourceSessionId);
+      if (!sessionIsActive(events, sourceSessionId)) {
+        throw new ProgramCreationStaleError(`Source session ${sourceSessionId} is not active`);
+      }
+      if (sessionHasCreationBinding(events, sourceSessionId)) {
+        throw new ProgramCreationControlError(
+          `Source session ${sourceSessionId} already has a pending or accepted Program binding`,
+        );
       }
 
       const policy = await this.options.policy.current();
@@ -348,7 +376,7 @@ export class ProgramCreationServiceV1 {
       const reservedProgramStateId = String(mkProgramStateId());
       const objectiveProvenance: ProgramObjectiveProvenanceV1 = {
         kind: "application-objective-v1",
-        sourceSessionId: String(input.sourceSessionId),
+        sourceSessionId,
         ...(input.sourceObjectiveEventId !== undefined ? { sourceEventId: input.sourceObjectiveEventId } : {}),
         objectiveDigest: planningCanonicalDigest(input.proposal.objective),
       };
@@ -356,7 +384,7 @@ export class ProgramCreationServiceV1 {
         profile: PROGRAM_CREATION_DRAFT_PROFILE,
         draftId,
         reservedProgramStateId,
-        sourceSessionId: String(input.sourceSessionId),
+        sourceSessionId,
         objectiveProvenance,
         planningObservationIdentity: input.planningObservationIdentity,
         proposal: input.proposal,
@@ -382,9 +410,6 @@ export class ProgramCreationServiceV1 {
     requireNonEmpty("draftDigest", input.draftDigest);
     requireNonEmpty("commandId", input.commandId);
 
-    // Waiting for Workspace mutation exclusion happens outside canonical
-    // admission. Once the barrier is held, every currentness check and the
-    // planning recheck are repeated inside the admission that creates P.
     return this.options.planningBarrier.runExclusive(() =>
       this.options.admission.enqueue(async () => {
         const events = await replayAll(this.options.store);
@@ -493,11 +518,6 @@ export class ProgramCreationServiceV1 {
     );
   }
 
-  /**
-   * Restart-safe first-dispatch bridge input. This deliberately performs only
-   * the durable accepted-planning-base recheck; Attempt issuance and execution
-   * observation belong to the later execution slice.
-   */
   async recheckAcceptedPlanningBase(programStateId: EventProgramStateId): Promise<void> {
     await this.options.planningBarrier.runExclusive(async () => {
       const events = await replayAll(this.options.store);
