@@ -3,7 +3,7 @@
 //
 // POSIX-only (requires OS workspace lock).
 // These prove:
-//   1. A v6 DB with caught-up reasoning projection upgrades to v7 correctly
+//   1. A v6 DB with caught-up reasoning projection upgrades through v7 correctly
 //   2. Canonical reasoning events project, close, reopen, catch up, equivalent
 //   3. Delete derived graph + cursor → replay → equivalent
 
@@ -18,7 +18,7 @@ import {
   createReasoningProjection,
   type LockedWorkspaceStore,
 } from "./index.ts";
-import { getSchemaVersion } from "./schema.ts";
+import { getSchemaVersion, SCHEMA_VERSION } from "./schema.ts";
 
 const require = createRequire(import.meta.url);
 const Database = require("better-sqlite3") as typeof import("better-sqlite3");
@@ -46,14 +46,14 @@ describeLocked("reasoning projection integration proofs", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("schema v7 fresh DB has reasoning_edges table and reasoning_nodes has session_id + step", async () => {
+  it("current fresh DB retains the v7 reasoning_edges/session_id/step schema", async () => {
     const dbPath = join(dir, "ws.sqlite");
     const rt = await openStore(dbPath);
     rt.close();
 
     const roDb = new Database(dbPath, { readonly: true, fileMustExist: true });
     try {
-      expect(getSchemaVersion(roDb)).toBe(7);
+      expect(getSchemaVersion(roDb)).toBe(SCHEMA_VERSION);
 
       const hasEdges = roDb.prepare(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='reasoning_edges'",
@@ -74,7 +74,7 @@ describeLocked("reasoning projection integration proofs", () => {
     }
   });
 
-  it("v6→v7 migration: caught-up reasoning cursor invalidated, derived graph rebuilt", async () => {
+  it("v6→current migration: caught-up reasoning cursor invalidated, derived graph rebuilt", async () => {
     const dbPath = join(dir, "ws_migrate.sqlite");
 
     // Step 1: Manually create a v6 database with old reasoning schema
@@ -165,13 +165,13 @@ describeLocked("reasoning projection integration proofs", () => {
       JSON.stringify(legacyProducer), legacyOccurredAt, legacyRecordedAt, eventDigest, fingerprint);
     rawDb.close();
 
-    // Step 2: Open via openLockedWorkspaceStore — this triggers v6→v7 migration
+    // Step 2: Open via openLockedWorkspaceStore — this triggers v6→current migration
     const rt = await openStore(dbPath);
 
     // Step 3: Verify migration results
     const roDb = new Database(dbPath, { readonly: true, fileMustExist: true });
     try {
-      expect(getSchemaVersion(roDb)).toBe(7);
+      expect(getSchemaVersion(roDb)).toBe(SCHEMA_VERSION);
       const hasEdges = roDb.prepare(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='reasoning_edges'",
       ).get();
