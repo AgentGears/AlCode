@@ -8,6 +8,7 @@
 import type {
   EventId,
   OperationId,
+  ProgramStateId,
   SessionId,
   WorkspaceId,
 } from "./identity.ts";
@@ -49,6 +50,8 @@ export interface EventDraft<
   workspaceId: WorkspaceId;
   sessionId: SessionId;
   operationId?: OperationId;
+  /** Optional durable Phase 1 Program ownership/correlation identity. */
+  programStateId?: ProgramStateId;
 
   /** ISO 8601, logical time of the thing that happened. */
   occurredAt: string;

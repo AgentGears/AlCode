@@ -14,6 +14,7 @@ export type EventId = Branded<"EventId">;
 export type WorkspaceId = Branded<"WorkspaceId">;
 export type SessionId = Branded<"SessionId">;
 export type OperationId = Branded<"OperationId">;
+export type ProgramStateId = Branded<"ProgramStateId">;
 export type MemoryId = Branded<"MemoryId">;
 export type ReasoningNodeId = Branded<"ReasoningNodeId">;
 
@@ -37,7 +38,7 @@ export function uuidv7(): string {
   // Write the current Unix epoch in milliseconds into bytes 0..5 (big-endian).
   const now = Date.now();
   const view = new DataView(bytes.buffer);
-  view.setUint32(0, Math.floor(now / 0x1000000)); // high 32 bits
+  view.setUint32(0, Math.floor(now / 0x10000)); // high 32 bits of the 48-bit timestamp
   view.setUint16(4, now & 0xffff); // low 16 bits
 
   // Set the version nibble to 0x7 (overwrites the high nibble of byte 6).
@@ -70,6 +71,15 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 function brandUuid<brand extends string>(value: string, name: brand): Branded<brand> {
   if (!UUID_RE.test(value)) {
     throw new TypeError(`${name} must be a UUID; got: ${value}`);
+  }
+  return value as Branded<brand>;
+}
+
+/** UUIDv7 with the RFC variant bits. ProgramStateId is specified as UUIDv7. */
+const UUID_V7_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function brandUuidV7<brand extends string>(value: string, name: brand): Branded<brand> {
+  if (!UUID_V7_RE.test(value)) {
+    throw new TypeError(`${name} must be a UUIDv7; got: ${value}`);
   }
   return value as Branded<brand>;
 }
@@ -114,6 +124,16 @@ export function mkOperationId(): OperationId {
 /** Construct an OperationId from a known UUID string. */
 export function asOperationId(value: string): OperationId {
   return brandUuid(value, "OperationId");
+}
+
+/** Generate a fresh ProgramStateId (UUIDv7). */
+export function mkProgramStateId(): ProgramStateId {
+  return brandUuidV7(uuidv7(), "ProgramStateId");
+}
+
+/** Construct a ProgramStateId from a known UUIDv7 string. */
+export function asProgramStateId(value: string): ProgramStateId {
+  return brandUuidV7(value, "ProgramStateId");
 }
 
 /**

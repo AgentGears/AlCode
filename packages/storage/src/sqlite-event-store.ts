@@ -14,6 +14,7 @@ import {
   asWorkspaceId,
   asSessionId,
   asOperationId,
+  asProgramStateId,
 } from "@alcode/events";
 import { assertCanonical, canonicalStringify } from "@alcode/events";
 import {
@@ -65,12 +66,31 @@ export class EventIntegrityError extends Error {
 }
 
 // ---------------------------------------------------------------------------
+// Program envelope normalization
+// ---------------------------------------------------------------------------
+
+/**
+ * Preserve the Phase 1 omission contract exactly:
+ * - no own property means the canonical key is absent;
+ * - an own property with `undefined` is invalid, not equivalent to absence;
+ * - a present value must be a UUIDv7 ProgramStateId.
+ */
+function programStateIdFromDraft(draft: EventDraft<string, unknown>): string | undefined {
+  if (!Object.prototype.hasOwnProperty.call(draft, "programStateId")) return undefined;
+  if (draft.programStateId === undefined) {
+    throw new TypeError("programStateId must be omitted or contain a UUIDv7; explicit undefined is not canonical");
+  }
+  return String(asProgramStateId(String(draft.programStateId)));
+}
+
+// ---------------------------------------------------------------------------
 // Fingerprint computation
 // ---------------------------------------------------------------------------
 
 /** Compute the canonical request fingerprint (immutable content hash). */
 export function computeRequestFingerprint(draft: EventDraft<string, unknown>): string {
-  const fpInput = {
+  const programStateId = programStateIdFromDraft(draft);
+  const fpInput: Record<string, unknown> = {
     workspaceId: String(draft.workspaceId),
     sessionId: String(draft.sessionId),
     operationId: draft.operationId ? String(draft.operationId) : null,
@@ -82,6 +102,9 @@ export function computeRequestFingerprint(draft: EventDraft<string, unknown>): s
     correlationId: draft.correlationId ?? null,
     occurredAt: draft.occurredAt,
   };
+  // New optional envelope fields must preserve historical omission. Do not
+  // serialize an absent ProgramStateId as null or undefined.
+  if (programStateId !== undefined) fpInput.programStateId = programStateId;
   return createHash("sha256").update(canonicalStringify(fpInput)).digest("hex");
 }
 
@@ -108,6 +131,8 @@ function computeEventDigest(
   };
   if (draft.idempotencyKey !== undefined) withoutDigest.idempotencyKey = draft.idempotencyKey;
   if (draft.operationId !== undefined) withoutDigest.operationId = String(draft.operationId);
+  const programStateId = programStateIdFromDraft(draft);
+  if (programStateId !== undefined) withoutDigest.programStateId = programStateId;
   if (draft.causationEventId !== undefined) withoutDigest.causationEventId = String(draft.causationEventId);
   if (draft.correlationId !== undefined) withoutDigest.correlationId = draft.correlationId;
   return createHash("sha256").update(canonicalStringify(withoutDigest)).digest("hex");
@@ -124,6 +149,7 @@ interface EventRow {
   workspace_id: string;
   session_id: string;
   operation_id: string | null;
+  program_state_id: string | null;
   type: string;
   payload: string;
   payload_schema_version: number;
@@ -157,8 +183,18 @@ function verifyEventRow(row: EventRow, expectedWorkspaceId: string): PersistedDo
     throw new EventIntegrityError(row.event_id, "payloadOrProducer", "valid JSON", "malformed JSON");
   }
 
-  // Reconstruct the fingerprint input from the stored fields
-  const fpInput = {
+  let programStateId: string | undefined;
+  if (row.program_state_id !== null) {
+    try {
+      programStateId = String(asProgramStateId(row.program_state_id));
+    } catch {
+      throw new EventIntegrityError(row.event_id, "programStateId", "UUIDv7", row.program_state_id);
+    }
+  }
+
+  // Reconstruct the fingerprint input from the stored fields. A historical
+  // NULL program_state_id means the key did not exist and must stay omitted.
+  const fpInput: Record<string, unknown> = {
     workspaceId: row.workspace_id,
     sessionId: row.session_id,
     operationId: row.operation_id ?? null,
@@ -170,12 +206,13 @@ function verifyEventRow(row: EventRow, expectedWorkspaceId: string): PersistedDo
     correlationId: row.correlation_id ?? null,
     occurredAt: row.occurred_at,
   };
+  if (programStateId !== undefined) fpInput.programStateId = programStateId;
   const recomputedFp = createHash("sha256").update(canonicalStringify(fpInput)).digest("hex");
   if (recomputedFp !== row.request_fingerprint) {
     throw new EventIntegrityError(row.event_id, "requestFingerprint", row.request_fingerprint, recomputedFp);
   }
 
-  // Reconstruct the digest input
+  // Reconstruct the digest input with the same omission rule.
   const digestInput: Record<string, unknown> = {
     eventId: row.event_id,
     workspaceId: row.workspace_id,
@@ -190,6 +227,7 @@ function verifyEventRow(row: EventRow, expectedWorkspaceId: string): PersistedDo
   };
   if (row.idempotency_key !== null) digestInput.idempotencyKey = row.idempotency_key;
   if (row.operation_id !== null) digestInput.operationId = row.operation_id;
+  if (programStateId !== undefined) digestInput.programStateId = programStateId;
   if (row.causation_event_id !== null) digestInput.causationEventId = row.causation_event_id;
   if (row.correlation_id !== null) digestInput.correlationId = row.correlation_id;
 
@@ -198,7 +236,8 @@ function verifyEventRow(row: EventRow, expectedWorkspaceId: string): PersistedDo
     throw new EventIntegrityError(row.event_id, "eventDigest", row.event_digest, recomputedDigest);
   }
 
-  // Convert to PersistedDomainEvent
+  // Convert to PersistedDomainEvent, preserving historical omission rather
+  // than materializing programStateId as null/undefined.
   const event: Record<string, unknown> = {
     eventId: row.event_id,
     workspaceId: row.workspace_id,
@@ -214,6 +253,7 @@ function verifyEventRow(row: EventRow, expectedWorkspaceId: string): PersistedDo
   };
   if (row.idempotency_key !== null) event.idempotencyKey = row.idempotency_key;
   if (row.operation_id !== null) event.operationId = row.operation_id;
+  if (programStateId !== undefined) event.programStateId = programStateId;
   if (row.causation_event_id !== null) event.causationEventId = row.causation_event_id;
   if (row.correlation_id !== null) event.correlationId = row.correlation_id;
   return event as unknown as PersistedDomainEvent<string, unknown>;
@@ -300,6 +340,9 @@ class SqliteEventStoreImpl implements WorkspaceEventStore {
       }
       assertCanonical(draft.payload);
       assertCanonical(draft.producer);
+      // Validate the optional field even before fingerprinting/SQL so malformed
+      // or explicit-undefined values fail the whole batch without persistence.
+      programStateIdFromDraft(draft);
     }
 
     const results: PersistedDomainEvent<string, unknown>[] = [];
@@ -354,14 +397,15 @@ class SqliteEventStoreImpl implements WorkspaceEventStore {
         const sequence = (maxSeqRow?.max_seq ?? 0) + 1;
         const recordedAt = new Date().toISOString();
         const eventDigest = computeEventDigest(draft, sequence, recordedAt);
+        const programStateId = programStateIdFromDraft(draft);
 
         this.db.prepare(
           `INSERT INTO events (
             event_id, idempotency_key, sequence, workspace_id, session_id,
-            operation_id, type, payload, payload_schema_version, producer,
+            operation_id, program_state_id, type, payload, payload_schema_version, producer,
             causation_event_id, correlation_id, occurred_at, recorded_at, event_digest,
             request_fingerprint
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           draft.eventId,
           draft.idempotencyKey ?? null,
@@ -369,6 +413,7 @@ class SqliteEventStoreImpl implements WorkspaceEventStore {
           typeof draft.workspaceId === "string" ? draft.workspaceId : String(draft.workspaceId),
           typeof draft.sessionId === "string" ? draft.sessionId : String(draft.sessionId),
           draft.operationId ? String(draft.operationId) : null,
+          programStateId ?? null,
           draft.type,
           canonicalStringify(draft.payload),
           draft.payloadSchemaVersion,
