@@ -9,6 +9,10 @@
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
+    },
+    "./program-state-projection": {
+      "types": "./src/program-state-projection.ts",
+      "import": "./src/program-state-projection.ts"
     }
   },
   "scripts": {
@@ -17,13 +21,10 @@
   },
   "dependencies": {
     "@alcode/events": "workspace:*",
-    "@alcode/secrets": "workspace:*",
-    "@alcode/transcript": "workspace:*",
-    "@alcode/workspace": "workspace:*",
-    "better-sqlite3": "^13.0.3"
+    "better-sqlite3": "11.10.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
-    "fs-ext": "^2.1.1"
+    "@alcode/workspace": "workspace:*",
+    "@types/better-sqlite3": "7.6.13"
   }
 }
