@@ -12,10 +12,6 @@
 import type { PersistedDomainEvent } from "@alcode/events";
 import type Database from "better-sqlite3";
 
-// ---------------------------------------------------------------------------
-// Public types
-// ---------------------------------------------------------------------------
-
 export type ProjectionClassification = "inline" | "critical" | "derived";
 
 export interface ProjectionCursor {
@@ -31,27 +27,10 @@ export interface ProjectionCatchUpResult {
   readonly caught: boolean;
 }
 
-/**
- * A constrained projection mutation interface. Projections receive this
- * during apply(); it is invalidated immediately after apply() returns or
- * throws. Only pre-registered statement names are accepted — no arbitrary SQL.
- */
 export interface ProjectionTransaction {
-  /**
-   * Execute a registered statement by name with positional params.
-   * Returns the number of rows affected (better-sqlite3's `changes`).
-   * Throws if the statement name is not registered or the transaction is
-   * no longer active.
-   */
   exec(statementName: string, ...params: unknown[]): number;
 }
 
-/**
- * Statement registration for a projection. Statements are SQL templates
- * associated with a projection. Reserved tables (events, projection_cursors,
- * workspace_metadata, schema_migrations, event_redactions) are rejected at
- * registration time.
- */
 export interface StatementDefinition {
   readonly name: string;
   readonly sql: string;
@@ -62,100 +41,69 @@ export interface ProjectionDefinition {
   readonly schemaVersion: number;
   readonly classification: ProjectionClassification;
   /**
-   * Optional idempotent projection-owned setup statements. These are validated
-   * against the same reserved-table boundary as mutation statements and run
-   * before event reads/statement compilation on every catchUp(). This lets a
-   * derived projection own rebuildable tables without exposing the database or
-   * arbitrary SQL to projection code.
+   * Optional idempotent, projection-owned setup statements. They run only when
+   * the projection is first registered (cursor schemaVersion === 0), in the
+   * same transaction that records schema/classification metadata. Existing
+   * projections may omit this field; omission is handled explicitly.
    */
   readonly setupStatements?: readonly StatementDefinition[];
-  /** Pre-registered statements the projection may use from apply(). */
   readonly statements: readonly StatementDefinition[];
   apply(event: PersistedDomainEvent<string, unknown>, tx: ProjectionTransaction): void;
 }
 
-// ---------------------------------------------------------------------------
-// Errors
-// ---------------------------------------------------------------------------
-
 export class ProjectionError extends Error {
   constructor(message: string) { super(message); this.name = "ProjectionError"; }
 }
-
 export class CursorAheadOfHeadError extends ProjectionError {
   constructor(name: string, cursor: number, head: number) {
     super(`Projection "${name}" cursor (${cursor}) ahead of head (${head}). Corruption.`);
   }
 }
-
 export class SchemaVersionMismatchError extends ProjectionError {
   constructor(name: string, expected: number, actual: number) {
     super(`Projection "${name}" schema mismatch: expected ${expected}, got ${actual}.`);
   }
 }
-
 export class ClassificationMismatchError extends ProjectionError {
   constructor(name: string, expected: string, actual: string) {
     super(`Projection "${name}" classification mismatch: expected ${expected}, got ${actual}.`);
   }
 }
-
 export class InlineProjectionInRunnerError extends ProjectionError {
   constructor(name: string) {
     super(`Projection "${name}" is classified inline; inline projections cannot use the replay runner.`);
   }
 }
-
 export class InvalidProjectionNameError extends ProjectionError {
   constructor(name: string) {
     super(`Invalid projection name: "${name}". Must match /^[a-z0-9_-]+$/i.`);
   }
 }
-
 export class UnregisteredStatementError extends ProjectionError {
   constructor(statementName: string) {
     super(`Unregistered statement: "${statementName}". Only pre-registered statements may be used.`);
   }
 }
-
 export class InactiveTransactionError extends ProjectionError {
   constructor() {
     super("Projection transaction is no longer active.");
   }
 }
-
 export class ReservedTableInStatementError extends ProjectionError {
   constructor(statementName: string, tableName: string) {
     super(`Statement "${statementName}" touches reserved table "${tableName}". Projections may not mutate reserved tables.`);
   }
 }
 
-// ---------------------------------------------------------------------------
-// Reserved tables (projections may NOT touch these)
-// ---------------------------------------------------------------------------
-
 const RESERVED_TABLES = ["events", "projection_cursors", "workspace_metadata", "schema_migrations", "event_redactions"];
 const RESERVED_TABLE_RE = new RegExp(`\\b(${RESERVED_TABLES.join("|")})\\b`, "i");
 const PROJECTION_NAME_RE = /^[a-z0-9_-]+$/i;
 
-// ---------------------------------------------------------------------------
-// Implementation (module-internal)
-// ---------------------------------------------------------------------------
-
-/**
- * Create a constrained, lifetime-scoped ProjectionTransaction.
- *
- * The transaction:
- *   - Accepts only pre-registered statement names
- *   - Rejects all SQL touching reserved tables (checked at registration)
- *   - Is invalidated after apply() returns or throws (via a flag)
- */
 function createTransaction(
   db: Database.Database,
   statements: Map<string, Database.Statement>,
 ): { tx: ProjectionTransaction; invalidate: () => void } {
   let active = true;
-
   return {
     tx: Object.freeze(Object.create(null, {
       exec: {
@@ -172,7 +120,6 @@ function createTransaction(
   };
 }
 
-/** Validate statement definitions: reject SQL touching reserved tables. */
 function validateStatements(statements: readonly StatementDefinition[]): void {
   const names = new Set<string>();
   for (const s of statements) {
@@ -187,34 +134,21 @@ function validateStatements(statements: readonly StatementDefinition[]): void {
   }
 }
 
-/** Run static, idempotent setup statements inside the caller's transaction. */
-function applySetupStatements(
-  db: Database.Database,
-  statements: readonly StatementDefinition[],
-): void {
+function applySetupStatements(db: Database.Database, statements: readonly StatementDefinition[]): void {
   validateStatements(statements);
-  for (const statement of statements) {
-    db.prepare(statement.sql).run();
-  }
+  for (const statement of statements) db.prepare(statement.sql).run();
 }
 
-/** Compile and cache statements. */
 function compileStatements(
   db: Database.Database,
   statements: readonly StatementDefinition[],
 ): Map<string, Database.Statement> {
   validateStatements(statements);
   const map = new Map<string, Database.Statement>();
-  for (const s of statements) {
-    map.set(s.name, db.prepare(s.sql));
-  }
+  for (const s of statements) map.set(s.name, db.prepare(s.sql));
   return map;
 }
 
-/**
- * Module-internal runner implementation. NOT exported. Only accessible via
- * the frozen facade returned by createProjectionRunner().
- */
 class ProjectionRunnerImpl {
   constructor(
     private readonly db: Database.Database,
@@ -229,9 +163,7 @@ class ProjectionRunnerImpl {
     ).get(projectionName) as
       | { last_applied_event_sequence: number; projection_schema_version: number; classification: string }
       | undefined;
-    if (!row) {
-      return { projectionName, lastAppliedEventSequence: 0, schemaVersion: 0, classification: "derived" };
-    }
+    if (!row) return { projectionName, lastAppliedEventSequence: 0, schemaVersion: 0, classification: "derived" };
     return {
       projectionName,
       lastAppliedEventSequence: row.last_applied_event_sequence,
@@ -245,51 +177,40 @@ class ProjectionRunnerImpl {
     if (projection.classification === "inline") throw new InlineProjectionInRunnerError(projection.name);
 
     let cursor = this.getCursor(projection.name);
-
-    // Schema version check
     if (cursor.schemaVersion !== 0 && cursor.schemaVersion !== projection.schemaVersion) {
       throw new SchemaVersionMismatchError(projection.name, projection.schemaVersion, cursor.schemaVersion);
     }
-
-    // Classification check (if already registered)
     if (cursor.schemaVersion !== 0 && cursor.classification !== projection.classification) {
       throw new ClassificationMismatchError(projection.name, projection.classification, cursor.classification);
     }
 
-    // Head check
     const headRow = this.db.prepare("SELECT MAX(sequence) as max_seq FROM events").get() as { max_seq: number | null } | undefined;
     const head = headRow?.max_seq ?? 0;
     if (cursor.lastAppliedEventSequence > head) {
       throw new CursorAheadOfHeadError(projection.name, cursor.lastAppliedEventSequence, head);
     }
 
-    // Projection-owned tables/indexes are established before regular statements
-    // are compiled so prepared writes may safely target them. On first setup,
-    // persist schema/classification metadata in the same transaction even if
-    // canonical history is empty; later schema changes cannot bypass checks.
-    const setup = projection.setupStatements ?? [];
-    if (setup.length > 0) {
+    // `setupStatements` is optional for backward compatibility. Never iterate
+    // an omitted value. When present, setup runs exactly on first registration,
+    // atomically with the projection metadata row.
+    const setup = projection.setupStatements;
+    if (cursor.schemaVersion === 0 && setup !== undefined) {
       this.db.transaction(() => {
         applySetupStatements(this.db, setup);
-        if (cursor.schemaVersion === 0) {
-          this.db.prepare(
-            `INSERT INTO projection_cursors (
-              projection_name, last_applied_event_sequence, projection_schema_version, classification
-            ) VALUES (?, 0, ?, ?)`,
-          ).run(projection.name, projection.schemaVersion, projection.classification);
-        }
+        this.db.prepare(
+          `INSERT INTO projection_cursors (
+            projection_name, last_applied_event_sequence, projection_schema_version, classification
+          ) VALUES (?, 0, ?, ?)`,
+        ).run(projection.name, projection.schemaVersion, projection.classification);
       })();
-      if (cursor.schemaVersion === 0) {
-        cursor = {
-          projectionName: projection.name,
-          lastAppliedEventSequence: 0,
-          schemaVersion: projection.schemaVersion,
-          classification: projection.classification,
-        };
-      }
+      cursor = {
+        projectionName: projection.name,
+        lastAppliedEventSequence: 0,
+        schemaVersion: projection.schemaVersion,
+        classification: projection.classification,
+      };
     }
 
-    // Get verified events (bound internally — no caller-supplied provider)
     const events = this.verifiedReads(cursor.lastAppliedEventSequence, limit);
     for (const event of events) {
       if (String(event.workspaceId) !== this.workspaceId) {
@@ -298,28 +219,18 @@ class ProjectionRunnerImpl {
         );
       }
     }
-    if (events.length === 0) {
-      return { appliedCount: 0, newCursor: cursor, caught: true };
-    }
+    if (events.length === 0) return { appliedCount: 0, newCursor: cursor, caught: true };
 
-    // Compile statements for this projection (cached internally)
     const statements = compileStatements(this.db, projection.statements);
-
     let applied = 0;
     let lastSeq = cursor.lastAppliedEventSequence;
 
     for (const event of events) {
       const seq = event.sequence;
       if (seq <= cursor.lastAppliedEventSequence) continue;
-
       this.db.transaction(() => {
         const { tx, invalidate } = createTransaction(this.db, statements);
-        try {
-          projection.apply(event, tx);
-        } finally {
-          invalidate();
-        }
-
+        try { projection.apply(event, tx); } finally { invalidate(); }
         this.db.prepare(
           `INSERT INTO projection_cursors (projection_name, last_applied_event_sequence, projection_schema_version, classification)
            VALUES (?, ?, ?, ?)
@@ -329,14 +240,11 @@ class ProjectionRunnerImpl {
              classification = excluded.classification`,
         ).run(projection.name, seq, projection.schemaVersion, projection.classification);
       })();
-
       applied++;
       lastSeq = seq;
     }
 
-    // Determine caught: cursor vs head (not batch size vs limit)
     const caught = lastSeq >= head;
-
     return {
       appliedCount: applied,
       newCursor: {
@@ -350,21 +258,11 @@ class ProjectionRunnerImpl {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Public facade type + factory
-// ---------------------------------------------------------------------------
-
-/** The public ProjectionRunner surface. No db, no constructor, no provider. */
 export interface ProjectionRunner {
   getCursor(projectionName: string): ProjectionCursor;
   catchUp(projection: ProjectionDefinition, limit?: number): ProjectionCatchUpResult;
 }
 
-/**
- * Create a frozen, null-prototype ProjectionRunner facade.
- * The implementation class, database handle, and verified-reads function
- * are all captured in closures — inaccessible at runtime.
- */
 export function createProjectionRunner(
   db: Database.Database,
   workspaceId: string,
