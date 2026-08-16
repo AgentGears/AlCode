@@ -116,6 +116,13 @@ export interface ProgramEvidenceReference {
   verificationObligationId: VerificationObligationId | null;
   sourceOperationId: OperationId | null;
   artifactRef: string | null;
+  /**
+   * Canonical verification-generation provenance. The Host reducer stamps the
+   * exact current generation when verification-bound evidence is admitted and
+   * stamps null for work-only evidence. Optional only at the proposal/input
+   * boundary; canonical ProgramState validation requires an explicit value.
+   */
+  subjectGeneration?: number | null;
 }
 
 export interface ProgramArtifactReference {
