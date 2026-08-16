@@ -8,94 +8,46 @@
 
 Phase 1.0 is explicitly approved and frozen against the exact reviewed candidate at `main@5588c6782fe896d496970a1855eae7d30c58ec38`.
 
-This is the separate approval/freeze decision required by the Phase 1.0 draft. It supersedes only the candidate-status language that says Phase 1.0 is DRAFT, not approved, not frozen, or implementation unauthorized. It does not otherwise rewrite, broaden, weaken, or reinterpret the reviewed contract.
+This is the separate approval/freeze decision required by the Phase 1.0 draft. It supersedes only candidate-status language saying Phase 1.0 is DRAFT, not approved, not frozen, or implementation unauthorized. It does not otherwise rewrite, broaden, weaken, or reinterpret the reviewed contract.
 
-Implementation of the frozen Phase 1.0 objective is authorized. This decision does not assert that implementation has started or completed.
+Implementation is authorized to proceed against the frozen contract. This decision does not assert that implementation has started or completed.
 
-## Frozen contract composition
+## Frozen contract
 
-The frozen contract is the exact composition already defined by the reviewed candidate:
+The frozen contract is exactly this composition at the approved head:
 
-1. `docs/phase-1.0-plan.md` at approved head `5588c6782fe896d496970a1855eae7d30c58ec38` — blob `31b1614b3cfd982022d3b9d014276f4631972eff`;
-2. `docs/phase-1.0-implementability-closure-amendment.md` at that same approved head — blob `7e7ac15334c53c5458b14466a4d04bd6711fd032`;
-3. `docs/phase-1.0-implementability-closure-read-args-correction.md` at that same approved head — blob `6a9a81ea823918c87d3fb1c3d1a52d7e4e202f55`.
+1. `docs/phase-1.0-plan.md` — blob `31b1614b3cfd982022d3b9d014276f4631972eff`;
+2. `docs/phase-1.0-implementability-closure-amendment.md` — blob `7e7ac15334c53c5458b14466a4d04bd6711fd032`;
+3. `docs/phase-1.0-implementability-closure-read-args-correction.md` — blob `6a9a81ea823918c87d3fb1c3d1a52d7e4e202f55`.
 
-Precedence remains exactly as those documents specify:
+Precedence remains exactly as those documents specify: the planning-read correction overrides the amendment where stated; the amendment overrides the base plan where stated; the base plan governs unaffected semantics.
 
-```text
-planning-read argument correction
-  overrides the implementability amendment where stated
-
-implementability amendment
-  overrides the base plan where stated
-
-base plan
-  governs all unaffected Phase 1.0 semantics
-```
-
-The approved Git commit is the atomic repository commitment to this exact composition. Its Git tree is `fc2607e7db0bb019edd5b32ca9f45f0ec859016c`; the three blob identities above bind the exact normative document bytes within that tree. Freeze verification therefore consists of resolving the approved commit and confirming those exact paths/blob identities. No mutable branch tip, current provider state, or reconstructed prose is substituted for the approved objects.
-
-Supporting studies and review documents remain rationale/evidence and do not independently alter the frozen contract.
+The approved Git commit is the atomic repository commitment to that composition. Its tree is `fc2607e7db0bb019edd5b32ca9f45f0ec859016c`; the blob identities above bind the exact normative bytes. Verification resolves that exact commit/tree/path set rather than a mutable branch tip or reconstructed prose.
 
 ## Frozen acceptance boundary
 
-The Phase 1.0 acceptance boundary is now frozen as the composed contract's **AC-10-01 through AC-10-11**, together with the required **Scenarios A through H** and their incorporated amendment/correction semantics.
+The composed contract's **AC-10-01 through AC-10-11**, **Scenarios A through H**, incorporated implementability amendment, and planning-read-argument correction are frozen.
 
-In particular, the freeze includes the reviewed closures for:
+The correction requiring durable bounded exact canonical planning-read arguments, or an equivalent immutable durable canonical reference, is part of the frozen contract and may not be weakened to digest-only reconstruction.
 
-- Host-owned `ProgramState` authority and exact revision semantics;
-- fresh non-reusable `ProgramAttemptId` execution authority;
-- tracked-read planning provenance with durable exact canonical read arguments and restart-safe recheck;
-- immutable first-slice required-work topology;
-- Workspace execution freshness through `WorkspaceEffectGeneration` plus `ExecutionObservationIdentity`;
-- the closed first-slice freshness-cut taxonomy;
-- Host-owned `WorkspaceAccessClass` derivation;
-- operation-local historical mutation-containment/quiescence contracts and canonical `operation.mutation_quiesced` proof;
-- Workspace-domain writer barriers that gate Program and ordinary Host mutation admission;
-- same-Workspace ProgramAttempt serialization with deterministic busy/no-hidden-queue behavior;
-- recovery source-session attribution;
-- one-revision-per-effective-atomic-Program-transition algebra;
-- lazy Program-local verification-impact catch-up for parked Programs;
-- generation-indexed mandatory verification and crash-safe mismatch/verification-impact composition before rebase;
-- artifact identity remaining distinct from evidence authority;
-- Host-only serialized Completion Oracle authority;
-- cancellation as terminal authority cutoff rather than rollback;
-- historical envelope omission/fingerprint/digest compatibility;
-- the frozen structural hard ceilings and bounded projections.
-
-The implementability correction requiring durable bounded exact canonical planning-read arguments, or an equivalent immutable durable canonical reference, is part of the frozen contract and may not be weakened to digest-only reconstruction.
+All structural hard ceilings, authority boundaries, freshness/quiescence semantics, recovery rules, verification-generation semantics, Completion Oracle rules, cancellation semantics, and explicit exclusions defined by the composed contract remain in force exactly as reviewed.
 
 ## Change control
 
-Implementation begins with the acceptance criteria frozen.
+Acceptance criteria are frozen when implementation begins. Contributors may not add gates, strengthen proof requirements, expand scope, reinterpret accepted criteria into materially more work, or reopen accepted authority decisions merely because a stronger design is possible.
 
-After this decision, a contributor may not:
-
-- add gates or strengthen proof requirements;
-- expand the frozen scope;
-- reinterpret an accepted criterion into materially more work; or
-- reopen accepted Phase 1.0 authority decisions merely because a stronger design is possible.
-
-A frozen criterion may change only under project change control when concrete implementation evidence demonstrates that the accepted result would otherwise be incorrect, unsafe, corrupted, or materially unusable.
-
-Implementation-owned reversible choices remain implementation-owned where the contract explicitly leaves them open.
+A frozen criterion may change only under project change control when concrete implementation evidence demonstrates that the accepted result would otherwise be incorrect, unsafe, corrupted, or materially unusable. Reversible choices explicitly left open by the contract remain implementation-owned.
 
 ## Scope boundary
 
-All explicit Phase 1.0 exclusions remain excluded. This freeze does not authorize successor scope such as multi-Program orchestration, same-Workspace parallel ProgramAttempts, topology amendment, subagent teams, recurring automation, isolated/remote Workspace providers, browser execution, marketplace expansion, or other excluded later-phase work.
-
-No successor phase is authorized by this decision.
+All explicit Phase 1.0 exclusions remain excluded. This freeze does not authorize successor scope, and no successor phase is authorized by this decision.
 
 ## Review evidence
 
-The repository-local whole-contract adversarial review is `docs/phase-1.0-whole-contract-adversarial-review.md`. It recorded no known remaining P0/P1/P2 contract correctness finding after its validated corrections. The subsequent implementability closure retest likewise closed its concrete implementation-semantic gaps, including the restart-safe planning-read argument correction, before the approved head was merged.
+`docs/phase-1.0-whole-contract-adversarial-review.md` records no known remaining P0/P1/P2 contract correctness finding after its validated corrections. The subsequent implementability closure and exact-head correction closed the concrete implementation-semantic gaps before the approved head was merged.
 
-Those reviews are evidence for the decision; they do not create additional acceptance criteria beyond the frozen composed contract. An external audit or attestation is not part of the accepted Phase 1.0 proof boundary and is not introduced as a new freeze requirement by this decision.
+Those reviews are evidence only; they create no additional acceptance criteria. External audit or attestation is not part of the accepted Phase 1.0 proof boundary and is not introduced as a new freeze requirement.
 
 ## Implementation authority
 
-Phase 1.0 implementation may now proceed directly against this frozen contract.
-
-The governing execution rule is:
-
-> Implement the frozen objective, resolve ordinary reversible details through repository evidence and bounded tests, change the contract only for a demonstrated blocker, and close Phase 1.0 when the frozen acceptance criteria pass at the exact implementation head.
+Phase 1.0 implementation may now proceed directly against this frozen contract. Implement the frozen objective, resolve ordinary reversible details through repository evidence and bounded tests, change the contract only for a demonstrated blocker, and close Phase 1.0 when the frozen acceptance criteria pass at the exact implementation head.
