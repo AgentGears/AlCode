@@ -13,6 +13,7 @@ import {
 import { openLockedWorkspaceStore } from "./index.ts";
 import {
   PROGRAM_PROJECTION_NAME,
+  PROGRAM_PROJECTION_SCHEMA_VERSION,
   createProgramStateProjection,
   listProgramStates,
   readProgramState,
@@ -89,7 +90,7 @@ async function appendProgramHistory(
       sessionId,
       programStateId,
       occurredAt: "2026-08-16T00:00:02.000Z",
-      type: "program.transitioned",
+      type: "program.completed",
       payload: { state: state(programStateId, 3, "completed", 15) },
       payloadSchemaVersion: 1,
       producer: { kind: "runtime", component: "program-projection-test" },
@@ -100,7 +101,7 @@ async function appendProgramHistory(
 const describeLocked = process.platform === "win32" ? describe.skip : describe;
 
 describeLocked("ProgramState projection", () => {
-  it("projects canonical snapshots, survives reopen, and rebuilds exactly from history", async () => {
+  it("projects canonical snapshots including terminal completion, survives reopen, and rebuilds exactly", async () => {
     const dir = mkdtempSync(join(tmpdir(), "alcode-program-projection-"));
     const dbPath = join(dir, "workspace.sqlite");
     const lockPath = join(dir, "workspace.lock");
@@ -169,7 +170,43 @@ describeLocked("ProgramState projection", () => {
     db.close();
   });
 
-  it("creates its derived schema even when canonical history is empty", async () => {
+  it("projects canonical cancellation as terminal Program state", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "alcode-program-projection-cancel-"));
+    const dbPath = join(dir, "workspace.sqlite");
+    const lockPath = join(dir, "workspace.lock");
+    const workspaceId = mkWorkspaceId();
+    const sessionId = mkSessionId();
+    const programStateId = mkProgramStateId();
+
+    const runtime = await openLockedWorkspaceStore({
+      databasePath: dbPath,
+      lockPath,
+      workspaceId: String(workspaceId),
+      repositoryId: "program-projection-test",
+    });
+    await runtime.store.append([
+      {
+        eventId: mkEventId(), workspaceId, sessionId, programStateId,
+        occurredAt: "2026-08-16T00:00:00.000Z", type: "program.created",
+        payload: { state: state(programStateId, 1, "active", 1) }, payloadSchemaVersion: 1,
+        producer: { kind: "runtime", component: "program-projection-test" },
+      },
+      {
+        eventId: mkEventId(), workspaceId, sessionId, programStateId,
+        occurredAt: "2026-08-16T00:00:01.000Z", type: "program.cancelled",
+        payload: { state: state(programStateId, 2, "cancelled", 1) }, payloadSchemaVersion: 1,
+        producer: { kind: "runtime", component: "program-projection-test" },
+      },
+    ]);
+    runtime.store.getProjectionRunner().catchUp(createProgramStateProjection(String(workspaceId), codec));
+    runtime.close();
+
+    const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+    expect(readProgramState(db, codec, programStateId)?.lifecycle).toBe("cancelled");
+    db.close();
+  });
+
+  it("creates derived schema and persists projection metadata even when canonical history is empty", async () => {
     const dir = mkdtempSync(join(tmpdir(), "alcode-program-projection-empty-"));
     const dbPath = join(dir, "workspace.sqlite");
     const lockPath = join(dir, "workspace.lock");
@@ -181,10 +218,16 @@ describeLocked("ProgramState projection", () => {
       workspaceId: String(workspaceId),
       repositoryId: "program-projection-test",
     });
-    const result = runtime.store.getProjectionRunner().catchUp(
-      createProgramStateProjection(String(workspaceId), codec),
-    );
+    const runner = runtime.store.getProjectionRunner();
+    const result = runner.catchUp(createProgramStateProjection(String(workspaceId), codec));
     expect(result.appliedCount).toBe(0);
+    expect(result.newCursor).toEqual({
+      projectionName: PROGRAM_PROJECTION_NAME,
+      lastAppliedEventSequence: 0,
+      schemaVersion: PROGRAM_PROJECTION_SCHEMA_VERSION,
+      classification: "derived",
+    });
+    expect(runner.getCursor(PROGRAM_PROJECTION_NAME)).toEqual(result.newCursor);
     runtime.close();
 
     const db = new Database(dbPath, { readonly: true, fileMustExist: true });
@@ -209,14 +252,9 @@ describeLocked("ProgramState projection", () => {
     });
     await runtime.store.append([
       {
-        eventId: mkEventId(),
-        workspaceId,
-        sessionId,
-        programStateId,
-        occurredAt: "2026-08-16T00:00:00.000Z",
-        type: "program.created",
-        payload: { state: state(otherProgramStateId, 1, "active", 1) },
-        payloadSchemaVersion: 1,
+        eventId: mkEventId(), workspaceId, sessionId, programStateId,
+        occurredAt: "2026-08-16T00:00:00.000Z", type: "program.created",
+        payload: { state: state(otherProgramStateId, 1, "active", 1) }, payloadSchemaVersion: 1,
         producer: { kind: "runtime", component: "program-projection-test" },
       },
     ]);
@@ -243,25 +281,15 @@ describeLocked("ProgramState projection", () => {
     });
     await runtime.store.append([
       {
-        eventId: mkEventId(),
-        workspaceId,
-        sessionId,
-        programStateId,
-        occurredAt: "2026-08-16T00:00:00.000Z",
-        type: "program.created",
-        payload: { state: state(programStateId, 1, "active", 1) },
-        payloadSchemaVersion: 1,
+        eventId: mkEventId(), workspaceId, sessionId, programStateId,
+        occurredAt: "2026-08-16T00:00:00.000Z", type: "program.created",
+        payload: { state: state(programStateId, 1, "active", 1) }, payloadSchemaVersion: 1,
         producer: { kind: "runtime", component: "program-projection-test" },
       },
       {
-        eventId: mkEventId(),
-        workspaceId,
-        sessionId,
-        programStateId,
-        occurredAt: "2026-08-16T00:00:01.000Z",
-        type: "program.transitioned",
-        payload: { state: state(programStateId, 3, "active", 2) },
-        payloadSchemaVersion: 1,
+        eventId: mkEventId(), workspaceId, sessionId, programStateId,
+        occurredAt: "2026-08-16T00:00:01.000Z", type: "program.transitioned",
+        payload: { state: state(programStateId, 3, "active", 2) }, payloadSchemaVersion: 1,
         producer: { kind: "runtime", component: "program-projection-test" },
       },
     ]);
@@ -269,6 +297,41 @@ describeLocked("ProgramState projection", () => {
     expect(() => runtime.store.getProjectionRunner().catchUp(
       createProgramStateProjection(String(workspaceId), codec),
     )).toThrow(/non-contiguous/);
+    runtime.close();
+  });
+
+  it("fails a mismatched projection Workspace without consuming the cursor", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "alcode-program-projection-workspace-"));
+    const dbPath = join(dir, "workspace.sqlite");
+    const lockPath = join(dir, "workspace.lock");
+    const workspaceId = mkWorkspaceId();
+    const otherWorkspaceId = mkWorkspaceId();
+    const sessionId = mkSessionId();
+    const programStateId = mkProgramStateId();
+
+    const runtime = await openLockedWorkspaceStore({
+      databasePath: dbPath,
+      lockPath,
+      workspaceId: String(workspaceId),
+      repositoryId: "program-projection-test",
+    });
+    await runtime.store.append([
+      {
+        eventId: mkEventId(), workspaceId, sessionId, programStateId,
+        occurredAt: "2026-08-16T00:00:00.000Z", type: "program.created",
+        payload: { state: state(programStateId, 1, "active", 1) }, payloadSchemaVersion: 1,
+        producer: { kind: "runtime", component: "program-projection-test" },
+      },
+    ]);
+
+    const runner = runtime.store.getProjectionRunner();
+    expect(() => runner.catchUp(
+      createProgramStateProjection(String(otherWorkspaceId), codec),
+    )).toThrow(/does not match event Workspace/);
+    expect(runner.getCursor(PROGRAM_PROJECTION_NAME).lastAppliedEventSequence).toBe(0);
+
+    const correct = runner.catchUp(createProgramStateProjection(String(workspaceId), codec));
+    expect(correct.appliedCount).toBe(1);
     runtime.close();
   });
 });
