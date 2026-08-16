@@ -33,6 +33,8 @@ base plan
   governs all unaffected Phase 1.0 semantics
 ```
 
+The approved Git commit is the atomic repository commitment to this exact composition. Its Git tree is `fc2607e7db0bb019edd5b32ca9f45f0ec859016c`; the three blob identities above bind the exact normative document bytes within that tree. Freeze verification therefore consists of resolving the approved commit and confirming those exact paths/blob identities. No mutable branch tip, current provider state, or reconstructed prose is substituted for the approved objects.
+
 Supporting studies and review documents remain rationale/evidence and do not independently alter the frozen contract.
 
 ## Frozen acceptance boundary
@@ -67,7 +69,12 @@ The implementability correction requiring durable bounded exact canonical planni
 
 Implementation begins with the acceptance criteria frozen.
 
-After this decision, a contributor may not add gates, strengthen proof requirements, expand scope, reinterpret an accepted criterion into materially more work, or reopen accepted Phase 1.0 authority decisions merely because a stronger design is possible.
+After this decision, a contributor may not:
+
+- add gates or strengthen proof requirements;
+- expand the frozen scope;
+- reinterpret an accepted criterion into materially more work; or
+- reopen accepted Phase 1.0 authority decisions merely because a stronger design is possible.
 
 A frozen criterion may change only under project change control when concrete implementation evidence demonstrates that the accepted result would otherwise be incorrect, unsafe, corrupted, or materially unusable.
 
@@ -81,9 +88,9 @@ No successor phase is authorized by this decision.
 
 ## Review evidence
 
-The whole-contract adversarial review recorded no known remaining P0/P1/P2 contract correctness finding after its validated corrections. The subsequent implementability closure retest likewise closed its concrete implementation-semantic gaps, including the restart-safe planning-read argument correction, before the approved head was merged.
+The repository-local whole-contract adversarial review is `docs/phase-1.0-whole-contract-adversarial-review.md`. It recorded no known remaining P0/P1/P2 contract correctness finding after its validated corrections. The subsequent implementability closure retest likewise closed its concrete implementation-semantic gaps, including the restart-safe planning-read argument correction, before the approved head was merged.
 
-Those reviews are evidence for the decision; they do not create additional acceptance criteria beyond the frozen composed contract.
+Those reviews are evidence for the decision; they do not create additional acceptance criteria beyond the frozen composed contract. An external audit or attestation is not part of the accepted Phase 1.0 proof boundary and is not introduced as a new freeze requirement by this decision.
 
 ## Implementation authority
 
