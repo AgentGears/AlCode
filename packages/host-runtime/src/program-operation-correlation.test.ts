@@ -175,14 +175,53 @@ describeLocked("Program root operation correlation", () => {
     runtime.locked.close();
   });
 
-  it("keeps supported Program may_write non-admitting until effect/base settlement is installed", async () => {
+  it("settles supported Program may_write through confirmed G advancement and post-quiescence observation", async () => {
     let executed = 0;
     const runtime = await setup("14", { name: "mutate", workspaceAccessClass: "may_write", quiescence: { containmentKind: "operation_scoped_containment", proofContractId: "host-capability-promise-v1", proofContractVersion: 1 }, async execute() { executed += 1; return { result: { ok: true }, outcome: "succeeded" }; } });
-    const before = (await replay(runtime.locked)).filter((event) => event.type === "operation.requested").length;
-    const result = await runtime.broker.execute({ sessionId: runtime.session.sessionId, toolCallId: "tc-settlement-pending", toolName: "mutate", args: { path: "src/14.ts" } });
-    expect(result).toMatchObject({ outcome: "denied", errorCode: "program_mutation_settlement_pending" });
-    expect(executed).toBe(0);
-    expect((await replay(runtime.locked)).filter((event) => event.type === "operation.requested")).toHaveLength(before);
+    const result = await runtime.broker.execute({ sessionId: runtime.session.sessionId, toolCallId: "tc-settled-mutation", toolName: "mutate", args: { path: "src/14.ts" } });
+    expect(result).toMatchObject({ outcome: "succeeded", result: { ok: true } });
+    expect(executed).toBe(1);
+
+    const events = await replay(runtime.locked);
+    const requested = events.find((event) => event.type === "operation.requested");
+    expect(requested?.payload).toMatchObject({
+      workspaceAccessClass: "may_write",
+      quiescenceContract: {
+        containment: "operation_scoped_containment",
+        proofContractId: "host-capability-promise-v1",
+        proofContractVersion: 1,
+      },
+    });
+    expect(events.some((event) => event.type === "operation.completed")).toBe(true);
+    expect(events.some((event) => event.type === "operation.mutation_quiesced")).toBe(true);
+    const generation = events.find((event) => event.type === "workspace.effect_generation.advanced");
+    expect(generation?.payload).toMatchObject({ previousWorkspaceEffectGeneration: 0, workspaceEffectGeneration: 1, effectStatus: "confirmed" });
+    const transition = [...events].reverse().find((event) => event.type === "program.transitioned");
+    expect(transition?.payload).toMatchObject({
+      transitionKind: "attempt.execution_base.advance",
+      state: { revision: 3, acceptedExecutionBase: { workspaceEffectGeneration: 1 } },
+    });
+
+    await expect(runtime.dispatch.assertCurrentAttempt({
+      programStateId: String(runtime.initial.programStateId),
+      expectedProgramRevision: 3,
+      programAttemptId: runtime.issued.programAttemptId,
+      workItemId: "work-14",
+      sessionId: runtime.session.sessionId,
+      agentGeneration: 7,
+    })).resolves.toMatchObject({ executionBase: { workspaceEffectGeneration: 1 } });
+    runtime.locked.close();
+  });
+
+  it("keeps failed Program may_write effect certainty unavailable after quiescence", async () => {
+    const runtime = await setup("19", { name: "mutate", workspaceAccessClass: "may_write", quiescence: { containmentKind: "operation_scoped_containment", proofContractId: "host-capability-promise-v1", proofContractVersion: 1 }, async execute() { return { result: { ok: false }, outcome: "failed" }; } });
+    const result = await runtime.broker.execute({ sessionId: runtime.session.sessionId, toolCallId: "tc-indeterminate-mutation", toolName: "mutate", args: {} });
+    expect(result).toMatchObject({ outcome: "failed", result: { ok: false } });
+    const events = await replay(runtime.locked);
+    expect(events.some((event) => event.type === "operation.mutation_quiesced")).toBe(true);
+    expect(events.some((event) => event.type === "workspace.effect_generation.advanced")).toBe(false);
+    const transition = [...events].reverse().find((event) => event.type === "program.transitioned");
+    expect(transition?.payload).toMatchObject({ transitionKind: "execution_base.unavailable", state: { executionBaseUnavailable: true, activeAttempt: null } });
     runtime.locked.close();
   });
 
