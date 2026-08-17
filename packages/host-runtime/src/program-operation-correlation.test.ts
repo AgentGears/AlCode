@@ -89,6 +89,40 @@ describeLocked("Program root operation correlation", () => {
     runtime.locked.close();
   });
 
+  it("atomically routes an Attempt issued after capability handling begins but before root admission", async () => {
+    const suffix = "17";
+    const dir = mkdtempSync(join(tmpdir(), "alcode-program-operation-race-"));
+    dirs.push(dir);
+    const locked = await openLockedWorkspaceStore({ databasePath: join(dir, "workspace.sqlite"), lockPath: join(dir, "workspace.lock"), workspaceId: "018f0000-0000-7000-8000-000000000517", repositoryId: "program-operation-race" });
+    const admission = new CanonicalAdmissionQueue(locked.store);
+    const sessions = new HostSessionManager(locked, admission);
+    const session = await sessions.openOrResume();
+    const initial = program(session.sessionId, suffix);
+    await admission.append([{ eventId: mkEventId(), workspaceId: asWorkspaceId(locked.store.workspaceId), sessionId: session.sessionId, programStateId: asEventProgramStateId(String(initial.programStateId)), occurredAt: new Date().toISOString(), type: "program.created", payload: { state: initial }, payloadSchemaVersion: 1, producer: { kind: "runtime", component: "program-operation-race-test" } }]);
+    const current = base(locked.store.workspaceId);
+    const dispatch = new ProgramDispatchServiceV1({ store: locked.store, admission, workspaceCoordinator: { runExclusive: (work) => work() }, observations: { observe: async () => ({ status: "complete" as const, base: current }) }, agentGenerations: { isCurrent: (_sessionId, generation) => generation === 7 }, recovery: { isClear: () => true }, firstDispatchPlanning: { recheckAcceptedPlanningBase: async () => {} } });
+    let releasePolicy!: () => void;
+    let policyEntered!: () => void;
+    const entered = new Promise<void>((resolve) => { policyEntered = resolve; });
+    const released = new Promise<void>((resolve) => { releasePolicy = resolve; });
+    let executed = 0;
+    const broker = new CapabilityBroker(locked.store, admission, new CognitionGateway(locked), { authorizeCapability: async () => { policyEntered(); await released; return { allowed: true as const }; } }, [{ name: "inspect", workspaceAccessClass: "read_only", async execute() { executed += 1; return { result: {}, outcome: "succeeded" }; } }]);
+    broker.setProgramOperationAuthority(dispatch);
+
+    const pending = broker.execute({ sessionId: session.sessionId, toolCallId: "tc-race", toolName: "inspect", args: {} });
+    await entered;
+    const issued = await dispatch.issueAttempt({ programStateId: String(initial.programStateId), expectedProgramRevision: initial.revision, workItemId: "work-17", sessionId: session.sessionId, agentGeneration: 7 });
+    if (issued.status !== "issued") throw new Error(`expected Attempt issuance, got ${issued.status}`);
+    releasePolicy();
+    const result = await pending;
+    expect(result.outcome).toBe("succeeded");
+    expect(executed).toBe(1);
+    const requested = (await replay(locked)).find((event) => event.type === "operation.requested");
+    expect(String(requested?.programStateId)).toBe(String(initial.programStateId));
+    expect(requested?.payload).toMatchObject({ programAttemptId: issued.programAttemptId, expectedProgramRevision: issued.state.revision, workItemId: "work-17", agentGeneration: 7 });
+    locked.close();
+  });
+
   it("fails closed when an active ProgramAttempt exists before Host Program authority is wired", async () => {
     let executed = 0;
     const runtime = await setup("16", { name: "inspect", workspaceAccessClass: "read_only", async execute() { executed += 1; return { result: {}, outcome: "succeeded" }; } });

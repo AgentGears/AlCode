@@ -156,6 +156,8 @@ export {
   type ProgramDispatchServiceOptionsV1,
   type ProgramRootOperationContextV1,
   type ProgramRootOperationInputV1,
+  type ProgramRoutedRootOperationInputV1,
+  type ProgramRoutedRootOperationResultV1,
   type ProgramRootOperationAuthorityV1,
   resolveCurrentProgramOperationContext,
 } from "./program-dispatch.ts";

@@ -7,6 +7,7 @@ import {
   uuidv7,
   type EventDraft,
   type OperationId,
+  type PersistedDomainEvent,
   type SessionId,
 } from "@alcode/events";
 import type { AuthorizedToolDescriptor, ModelToolDefinition } from "@alcode/agent-protocol";
@@ -301,15 +302,6 @@ export class CapabilityBroker {
     const frozenArgs = freezeCanonical(request.args);
     const workspaceAccessClass = workspaceAccessClassOf(capability);
     const isReadOnly = workspaceAccessClass !== "may_write";
-    const currentProgram = await resolveCurrentProgramOperationContext(this.store, request.sessionId);
-    const program = request.program ?? currentProgram;
-    if (program !== undefined && program !== null && this.programOperationAuthority === undefined) {
-      return this.finish(request, {
-        outcome: "denied",
-        errorCode: "program_operation_authority_unavailable",
-        error: "An active ProgramAttempt requires protected Program operation authority",
-      });
-    }
     const approvalKey = this.approvalKey(request.sessionId, request.toolName);
     const alreadyApproved = this.alwaysApproved.has(approvalKey);
 
@@ -366,20 +358,6 @@ export class CapabilityBroker {
     }
 
     const quiescenceBinding = workspaceAccessClass === "may_write" ? operationScopedQuiescence(capability) : undefined;
-    if (program !== undefined && program !== null && workspaceAccessClass === "may_write") {
-      if (quiescenceBinding === undefined) {
-        return this.finish(request, {
-          outcome: "denied",
-          errorCode: "program_quiescence_unsupported",
-          error: `Program-linked may_write capability lacks a supported operation-scoped quiescence contract: ${request.toolName}`,
-        });
-      }
-      return this.finish(request, {
-        outcome: "denied",
-        errorCode: "program_mutation_settlement_pending",
-        error: "Program-linked may_write execution remains non-admitting until confirmed-effect generation advancement and post-quiescence observation settlement are installed",
-      });
-    }
 
     const verificationPlan = await this.cognition.matchVerification(
       request.sessionId as string,
@@ -389,7 +367,6 @@ export class CapabilityBroker {
 
     const operationId = mkOperationId();
     const workspaceId = asWorkspaceId(this.store.workspaceId);
-    const programEnvelope = program ? { programStateId: asProgramStateId(program.programStateId) } : {};
     const quiescenceContract = quiescenceBinding === undefined ? undefined : {
       version: 1 as const,
       containment: quiescenceBinding.containmentKind,
@@ -400,7 +377,7 @@ export class CapabilityBroker {
     };
     const preDrafts: EventDraft<string, unknown>[] = [
       {
-        eventId: mkEventId(), workspaceId, sessionId: request.sessionId, operationId, ...programEnvelope,
+        eventId: mkEventId(), workspaceId, sessionId: request.sessionId, operationId,
         occurredAt: new Date().toISOString(), type: "operation.requested",
         payload: {
           operationId: operationId as string,
@@ -409,36 +386,72 @@ export class CapabilityBroker {
           isReadOnly,
           workspaceAccessClass,
           workspaceAccessClassifier: { id: "host-capability-workspace-access-v1", version: 1 },
-          ...(program ? {
-            programStateId: program.programStateId,
-            expectedProgramRevision: program.expectedProgramRevision,
-            programAttemptId: program.programAttemptId,
-            workItemId: program.workItemId,
-            agentGeneration: program.agentGeneration,
-          } : {}),
           ...(quiescenceContract !== undefined ? { quiescenceContract } : {}),
         },
         payloadSchemaVersion: 1, producer: { kind: "runtime", component: "host-capability-broker" },
       },
       {
-        eventId: mkEventId(), workspaceId, sessionId: request.sessionId, operationId, ...programEnvelope,
+        eventId: mkEventId(), workspaceId, sessionId: request.sessionId, operationId,
         occurredAt: new Date().toISOString(), type: "operation.started",
         payload: { operationId: operationId as string }, payloadSchemaVersion: 1,
         producer: { kind: "runtime", component: "host-capability-broker" },
       },
       {
-        eventId: mkEventId(), workspaceId, sessionId: request.sessionId, operationId, ...programEnvelope,
+        eventId: mkEventId(), workspaceId, sessionId: request.sessionId, operationId,
         occurredAt: new Date().toISOString(), type: "action.recorded",
         payload: { operationId: operationId as string, toolName: request.toolName, inputDigest: verificationPlan.inputDigest, argsSummary: frozenArgs },
         payloadSchemaVersion: 1, producer: { kind: "runtime", component: "host-cognition" },
       },
     ];
-    const pre = program
-      ? await this.programOperationAuthority!.appendRootOperation(
-          { ...program, sessionId: request.sessionId, operationId: operationId as string },
-          preDrafts,
-        )
-      : await this.admission.append(preDrafts);
+    let pre: PersistedDomainEvent<string, unknown>[];
+    let program: ProgramCapabilityOperationContextV1 | null = null;
+    if (this.programOperationAuthority !== undefined) {
+      const routed = await this.programOperationAuthority.appendRoutedRootOperation({
+        sessionId: request.sessionId,
+        operationId: operationId as string,
+        workspaceAccessClass,
+        ...(request.program !== undefined ? { program: request.program } : {}),
+        drafts: preDrafts,
+      });
+      if (routed.status === "program_may_write_blocked") {
+        if (quiescenceBinding === undefined) {
+          return this.finish(request, {
+            outcome: "denied",
+            errorCode: "program_quiescence_unsupported",
+            error: `Program-linked may_write capability lacks a supported operation-scoped quiescence contract: ${request.toolName}`,
+          });
+        }
+        return this.finish(request, {
+          outcome: "denied",
+          errorCode: "program_mutation_settlement_pending",
+          error: "Program-linked may_write execution remains non-admitting until confirmed-effect generation advancement and post-quiescence observation settlement are installed",
+        });
+      }
+      pre = routed.events;
+      program = routed.program;
+    } else {
+      if (request.program !== undefined) {
+        return this.finish(request, {
+          outcome: "denied",
+          errorCode: "program_operation_authority_unavailable",
+          error: "Explicit Program operation context requires protected Program operation authority",
+        });
+      }
+      const routed = await this.admission.enqueue(async () => {
+        const currentProgram = await resolveCurrentProgramOperationContext(this.store, request.sessionId);
+        if (currentProgram !== null) return { status: "program_authority_required" as const };
+        return { status: "appended" as const, events: await this.store.append(preDrafts) };
+      });
+      if (routed.status === "program_authority_required") {
+        return this.finish(request, {
+          outcome: "denied",
+          errorCode: "program_operation_authority_unavailable",
+          error: "An active ProgramAttempt requires protected Program operation authority",
+        });
+      }
+      pre = routed.events;
+    }
+    const programEnvelope = program ? { programStateId: asProgramStateId(program.programStateId) } : {};
 
     const actionEvent = pre[2];
     if (!actionEvent) throw new Error("action.recorded was not persisted");

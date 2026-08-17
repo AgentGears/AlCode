@@ -72,8 +72,27 @@ export interface ProgramRootOperationInputV1 extends ProgramRootOperationContext
   operationId: string;
 }
 
+export interface ProgramRoutedRootOperationInputV1 {
+  sessionId: EventSessionId;
+  operationId: string;
+  workspaceAccessClass: "no_workspace_access" | "read_only" | "may_write";
+  program?: ProgramRootOperationContextV1;
+  drafts: readonly EventDraft<string, unknown>[];
+}
+
+export type ProgramRoutedRootOperationResultV1 =
+  | {
+      status: "appended";
+      events: PersistedDomainEvent<string, unknown>[];
+      program: ProgramRootOperationContextV1 | null;
+    }
+  | { status: "program_may_write_blocked"; program: ProgramRootOperationContextV1 };
+
 export interface ProgramRootOperationAuthorityV1 {
   resolveCurrentOperation(sessionId: EventSessionId): Promise<ProgramRootOperationContextV1 | null>;
+  appendRoutedRootOperation(
+    input: ProgramRoutedRootOperationInputV1,
+  ): Promise<ProgramRoutedRootOperationResultV1>;
   appendRootOperation(
     input: ProgramRootOperationInputV1,
     drafts: readonly EventDraft<string, unknown>[],
@@ -149,11 +168,10 @@ function requireProgramState(
   return state;
 }
 
-export async function resolveCurrentProgramOperationContext(
-  store: WorkspaceEventStore,
+function currentProgramOperationContextFromEvents(
+  events: readonly PersistedDomainEvent<string, unknown>[],
   sessionId: EventSessionId,
-): Promise<ProgramRootOperationContextV1 | null> {
-  const events = await replayAll(store);
+): ProgramRootOperationContextV1 | null {
   let current: ProgramRootOperationContextV1 | null = null;
   for (const [programStateId, state] of latestProgramStates(events)) {
     const attempt = state.lifecycle === "active" ? state.activeAttempt : null;
@@ -173,6 +191,13 @@ export async function resolveCurrentProgramOperationContext(
     current = candidate;
   }
   return current;
+}
+
+export async function resolveCurrentProgramOperationContext(
+  store: WorkspaceEventStore,
+  sessionId: EventSessionId,
+): Promise<ProgramRootOperationContextV1 | null> {
+  return currentProgramOperationContextFromEvents(await replayAll(store), sessionId);
 }
 
 function sessionIsActive(
@@ -463,6 +488,141 @@ export class ProgramDispatchServiceV1 {
 
   resolveCurrentOperation(sessionId: EventSessionId): Promise<ProgramRootOperationContextV1 | null> {
     return resolveCurrentProgramOperationContext(this.options.store, sessionId);
+  }
+
+  async appendRoutedRootOperation(
+    input: ProgramRoutedRootOperationInputV1,
+  ): Promise<ProgramRoutedRootOperationResultV1> {
+    const operationId = String(asOperationId(input.operationId));
+    const sessionId = String(input.sessionId);
+    if (input.drafts.length === 0 || input.drafts[0]?.type !== "operation.requested") {
+      throw new ProgramDispatchControlError("Root operation must begin with operation.requested");
+    }
+
+    return this.options.workspaceCoordinator.runExclusive(async () => {
+      const preliminaryEvents = await replayAll(this.options.store);
+      const preliminaryProgram = input.program ??
+        currentProgramOperationContextFromEvents(preliminaryEvents, input.sessionId);
+      let protectedObservation: ProgramAttemptExecutionBase | null = null;
+      if (preliminaryProgram !== null && preliminaryProgram !== undefined &&
+          input.workspaceAccessClass !== "may_write") {
+        const observation = await this.options.observations.observe();
+        if (observation.status === "unknown") {
+          throw new ProgramDispatchStaleError(`Current execution base is unavailable: ${observation.reason}`);
+        }
+        requireObservationWorkspace(this.options.store, observation.base);
+        protectedObservation = observation.base;
+      }
+
+      return this.options.admission.enqueue(async () => {
+        const events = await replayAll(this.options.store);
+        const canonicalProgram = currentProgramOperationContextFromEvents(events, input.sessionId);
+        const program = input.program ?? canonicalProgram;
+
+        if (program === null || program === undefined) {
+          const ordinary = input.drafts.map((draft) => {
+            if (String(draft.workspaceId) !== this.options.store.workspaceId) {
+              throw new ProgramDispatchControlError("Root operation draft belongs to another Workspace");
+            }
+            if (String(draft.sessionId) !== sessionId) {
+              throw new ProgramDispatchControlError("Root operation draft session does not match request session");
+            }
+            if (draft.operationId === undefined || String(draft.operationId) !== operationId) {
+              throw new ProgramDispatchControlError("Root operation draft operationId does not match root operation");
+            }
+            if (draft.programStateId !== undefined) {
+              throw new ProgramDispatchControlError("Ordinary root operation may not carry ProgramStateId");
+            }
+            return draft;
+          });
+          return {
+            status: "appended",
+            events: await this.options.store.append(ordinary),
+            program: null,
+          } as const;
+        }
+
+        if (input.workspaceAccessClass === "may_write") {
+          return { status: "program_may_write_blocked", program } as const;
+        }
+        if (protectedObservation === null) {
+          throw new ProgramDispatchStaleError(
+            "ProgramAttempt became active after the protected routing observation cut",
+          );
+        }
+
+        const programStateId = String(asProgramStateId(program.programStateId));
+        const programAttemptId = String(asProgramAttemptId(program.programAttemptId));
+        const workItemId = String(asProgramWorkItemId(program.workItemId));
+        if (!Number.isSafeInteger(program.agentGeneration) || program.agentGeneration <= 0) {
+          throw new ProgramDispatchControlError("agentGeneration must be a positive safe integer");
+        }
+        const state = requireProgramState(events, programStateId);
+        requireExactRevision(state, program.expectedProgramRevision);
+        if (!sessionIsActive(events, sessionId) ||
+            !state.attachedSessionIds.some((id) => String(id) === sessionId)) {
+          throw new ProgramDispatchStaleError("ProgramAttempt session is stopped or detached");
+        }
+        const attempt = state.activeAttempt;
+        if (attempt === null || String(attempt.programAttemptId) !== programAttemptId) {
+          throw new ProgramDispatchStaleError("ProgramAttempt authority is stale");
+        }
+        if (String(attempt.workItemId) !== workItemId || String(attempt.sessionId) !== sessionId) {
+          throw new ProgramDispatchStaleError("ProgramAttempt work/session authority is stale");
+        }
+        if (attempt.agentGeneration !== program.agentGeneration ||
+            !await this.options.agentGenerations.isCurrent(sessionId, program.agentGeneration)) {
+          throw new ProgramDispatchStaleError("ProgramAttempt Agent generation is stale");
+        }
+        if (!await this.options.recovery.isClear()) {
+          throw new ProgramDispatchStaleError("Program recovery barrier is not clear");
+        }
+        const writers = outstandingWriterOperations(events);
+        if (writers.length > 0) {
+          throw new ProgramDispatchStaleError(`Outstanding Workspace writer barrier: ${writers.join(",")}`);
+        }
+        if (state.executionBaseMismatch !== null || state.executionBaseUnavailable) {
+          throw new ProgramDispatchStaleError("Program execution base is not current");
+        }
+        if (!sameBase(attempt.expectedExecutionBase, protectedObservation)) {
+          throw new ProgramDispatchStaleError(
+            "ProgramAttempt execution base no longer matches the protected current base",
+          );
+        }
+
+        const ownership = {
+          programStateId,
+          expectedProgramRevision: program.expectedProgramRevision,
+          programAttemptId,
+          workItemId,
+          agentGeneration: program.agentGeneration,
+        };
+        const stamped = input.drafts.map((draft, index) => {
+          if (String(draft.workspaceId) !== this.options.store.workspaceId) {
+            throw new ProgramDispatchControlError("Program operation draft belongs to another Workspace");
+          }
+          if (String(draft.sessionId) !== sessionId) {
+            throw new ProgramDispatchControlError("Program operation draft session does not match Attempt authority");
+          }
+          if (draft.operationId === undefined || String(draft.operationId) !== operationId) {
+            throw new ProgramDispatchControlError("Program operation draft operationId does not match root operation");
+          }
+          if (draft.programStateId !== undefined && String(draft.programStateId) !== programStateId) {
+            throw new ProgramDispatchControlError("Program operation draft ProgramStateId does not match Attempt authority");
+          }
+          return {
+            ...draft,
+            ...(index === 0 ? { payload: { ...record(draft.payload), ...ownership } } : {}),
+            programStateId: asEventProgramStateId(programStateId),
+          };
+        });
+        return {
+          status: "appended",
+          events: await this.options.store.append(stamped),
+          program,
+        } as const;
+      });
+    });
   }
 
   async appendRootOperation(
