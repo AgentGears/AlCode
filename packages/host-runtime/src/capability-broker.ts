@@ -27,6 +27,8 @@ import { CanonicalAdmissionQueue } from "./admission-queue.ts";
 import { CognitionGateway } from "./cognition-gateway.ts";
 import type { HostPolicy } from "./policy.ts";
 import {
+  ProgramDispatchControlError,
+  ProgramDispatchStaleError,
   resolveCurrentProgramOperationContext,
   type ProgramRootOperationAuthorityV1,
 } from "./program-dispatch.ts";
@@ -359,6 +361,13 @@ export class CapabilityBroker {
     }
 
     const quiescenceBinding = workspaceAccessClass === "may_write" ? operationScopedQuiescence(capability) : undefined;
+    // Existing uncontained ordinary writers remain pre-baseline/legacy until their
+    // adapter declares a supported containment contract. Program may_write still
+    // routes as may_write and is rejected before operation.requested below.
+    const persistedWorkspaceAccessClass =
+      workspaceAccessClass !== "may_write" || quiescenceBinding !== undefined
+        ? workspaceAccessClass
+        : undefined;
 
     const verificationPlan = await this.cognition.matchVerification(
       request.sessionId as string,
@@ -385,8 +394,10 @@ export class CapabilityBroker {
           toolName: request.toolName,
           args: frozenArgs,
           isReadOnly,
-          workspaceAccessClass,
-          workspaceAccessClassifier: { id: "host-capability-workspace-access-v1", version: 1 },
+          ...(persistedWorkspaceAccessClass !== undefined ? {
+            workspaceAccessClass: persistedWorkspaceAccessClass,
+            workspaceAccessClassifier: { id: "host-capability-workspace-access-v1", version: 1 },
+          } : {}),
           ...(quiescenceContract !== undefined ? { quiescenceContract } : {}),
         },
         payloadSchemaVersion: 1, producer: { kind: "runtime", component: "host-capability-broker" },
@@ -406,51 +417,69 @@ export class CapabilityBroker {
     ];
     let pre: PersistedDomainEvent<string, unknown>[];
     let program: ProgramCapabilityOperationContextV1 | null = null;
-    if (this.programOperationAuthority !== undefined) {
-      const routed = await this.programOperationAuthority.appendRoutedRootOperation({
-        sessionId: request.sessionId,
-        operationId: operationId as string,
-        workspaceAccessClass,
-        ...(request.program !== undefined ? { program: request.program } : {}),
-        drafts: preDrafts,
-      });
-      if (routed.status === "program_may_write_blocked") {
-        if (quiescenceBinding === undefined) {
+    try {
+      if (this.programOperationAuthority !== undefined) {
+        const routed = await this.programOperationAuthority.appendRoutedRootOperation({
+          sessionId: request.sessionId,
+          operationId: operationId as string,
+          workspaceAccessClass,
+          ...(request.program !== undefined ? { program: request.program } : {}),
+          drafts: preDrafts,
+        });
+        if (routed.status === "program_may_write_blocked") {
+          if (quiescenceBinding === undefined) {
+            return this.finish(request, {
+              outcome: "denied",
+              errorCode: "program_quiescence_unsupported",
+              error: `Program-linked may_write capability lacks a supported operation-scoped quiescence contract: ${request.toolName}`,
+            });
+          }
           return this.finish(request, {
             outcome: "denied",
-            errorCode: "program_quiescence_unsupported",
-            error: `Program-linked may_write capability lacks a supported operation-scoped quiescence contract: ${request.toolName}`,
+            errorCode: "program_mutation_settlement_pending",
+            error: "Program-linked may_write execution remains non-admitting until confirmed-effect generation advancement and post-quiescence observation settlement are installed",
           });
         }
+        pre = routed.events;
+        program = routed.program;
+      } else {
+        if (request.program !== undefined) {
+          return this.finish(request, {
+            outcome: "denied",
+            errorCode: "program_operation_authority_unavailable",
+            error: "Explicit Program operation context requires protected Program operation authority",
+          });
+        }
+        const routed = await this.admission.enqueue(async () => {
+          const currentProgram = await resolveCurrentProgramOperationContext(this.store, request.sessionId);
+          if (currentProgram !== null) return { status: "program_authority_required" as const };
+          return { status: "appended" as const, events: await this.store.append(preDrafts) };
+        });
+        if (routed.status === "program_authority_required") {
+          return this.finish(request, {
+            outcome: "denied",
+            errorCode: "program_operation_authority_unavailable",
+            error: "An active ProgramAttempt requires protected Program operation authority",
+          });
+        }
+        pre = routed.events;
+      }
+    } catch (error) {
+      if (error instanceof ProgramDispatchStaleError) {
         return this.finish(request, {
-          outcome: "denied",
-          errorCode: "program_mutation_settlement_pending",
-          error: "Program-linked may_write execution remains non-admitting until confirmed-effect generation advancement and post-quiescence observation settlement are installed",
+          outcome: "stale",
+          errorCode: "program_execution_stale",
+          error: error.message,
         });
       }
-      pre = routed.events;
-      program = routed.program;
-    } else {
-      if (request.program !== undefined) {
+      if (error instanceof ProgramDispatchControlError) {
         return this.finish(request, {
           outcome: "denied",
-          errorCode: "program_operation_authority_unavailable",
-          error: "Explicit Program operation context requires protected Program operation authority",
+          errorCode: "program_operation_invalid",
+          error: error.message,
         });
       }
-      const routed = await this.admission.enqueue(async () => {
-        const currentProgram = await resolveCurrentProgramOperationContext(this.store, request.sessionId);
-        if (currentProgram !== null) return { status: "program_authority_required" as const };
-        return { status: "appended" as const, events: await this.store.append(preDrafts) };
-      });
-      if (routed.status === "program_authority_required") {
-        return this.finish(request, {
-          outcome: "denied",
-          errorCode: "program_operation_authority_unavailable",
-          error: "An active ProgramAttempt requires protected Program operation authority",
-        });
-      }
-      pre = routed.events;
+      throw error;
     }
     const programEnvelope = program ? { programStateId: asProgramStateId(program.programStateId) } : {};
 

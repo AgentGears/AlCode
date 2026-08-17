@@ -25,7 +25,7 @@ import { CanonicalAdmissionQueue } from "./admission-queue.ts";
 import { CapabilityBroker, type HostCapability } from "./capability-broker.ts";
 import { CognitionGateway } from "./cognition-gateway.ts";
 import { DefaultHostPolicy } from "./policy.ts";
-import { ProgramDispatchServiceV1, ProgramDispatchStaleError } from "./program-dispatch.ts";
+import { ProgramDispatchServiceV1 } from "./program-dispatch.ts";
 import { HostSessionManager } from "./session-manager.ts";
 
 const describeLocked = process.platform === "win32" ? describe.skip : describe;
@@ -139,7 +139,8 @@ describeLocked("Program root operation correlation", () => {
     let executed = 0;
     const runtime = await setup("12", { name: "inspect", workspaceAccessClass: "read_only", async execute() { executed += 1; return { result: {}, outcome: "succeeded" }; } });
     const before = (await replay(runtime.locked)).filter((event) => event.type === "operation.requested").length;
-    await expect(runtime.broker.execute({ sessionId: runtime.session.sessionId, toolCallId: "tc-stale", toolName: "inspect", args: {}, program: { ...programContext(runtime, "12"), programAttemptId: `${runtime.issued.programAttemptId}-stale` } })).rejects.toBeInstanceOf(ProgramDispatchStaleError);
+    const stale = await runtime.broker.execute({ sessionId: runtime.session.sessionId, toolCallId: "tc-stale", toolName: "inspect", args: {}, program: { ...programContext(runtime, "12"), programAttemptId: `${runtime.issued.programAttemptId}-stale` } });
+    expect(stale).toMatchObject({ outcome: "stale", errorCode: "program_execution_stale" });
     expect(executed).toBe(0);
     expect((await replay(runtime.locked)).filter((event) => event.type === "operation.requested")).toHaveLength(before);
     runtime.locked.close();
@@ -152,6 +153,25 @@ describeLocked("Program root operation correlation", () => {
     expect(result).toMatchObject({ outcome: "denied", errorCode: "program_quiescence_unsupported" });
     expect(executed).toBe(0);
     expect((await replay(runtime.locked)).some((event) => event.type === "operation.requested")).toBe(false);
+    runtime.locked.close();
+  });
+
+  it("returns structured stale when protected Program observation is unavailable", async () => {
+    const runtime = await setup("19", { name: "inspect", workspaceAccessClass: "read_only", async execute() { return { result: {}, outcome: "succeeded" }; } });
+    const unavailable = new ProgramDispatchServiceV1({
+      store: runtime.locked.store,
+      admission: runtime.admission,
+      workspaceCoordinator: { runExclusive: (work) => work() },
+      observations: { observe: async () => ({ status: "unknown" as const, reason: "tracker unavailable" }) },
+      agentGenerations: { isCurrent: (_sessionId, generation) => generation === 7 },
+      recovery: { isClear: () => true },
+      firstDispatchPlanning: { recheckAcceptedPlanningBase: async () => {} },
+    });
+    runtime.broker.setProgramOperationAuthority(unavailable);
+    const before = (await replay(runtime.locked)).filter((event) => event.type === "operation.requested").length;
+    const result = await runtime.broker.execute({ sessionId: runtime.session.sessionId, toolCallId: "tc-stale-result", toolName: "inspect", args: {} });
+    expect(result).toMatchObject({ outcome: "stale", errorCode: "program_execution_stale" });
+    expect((await replay(runtime.locked)).filter((event) => event.type === "operation.requested")).toHaveLength(before);
     runtime.locked.close();
   });
 
@@ -180,6 +200,29 @@ describeLocked("Program root operation correlation", () => {
     expect(executed).toBe(0);
     expect((await replay(runtime.locked)).filter((event) => event.type === "operation.requested")).toHaveLength(before);
     runtime.locked.close();
+  });
+
+  it("keeps an unsupported ordinary writer on the legacy completion-cleared path", async () => {
+    const suffix = "20";
+    const dir = mkdtempSync(join(tmpdir(), "alcode-program-operation-ordinary-writer-"));
+    dirs.push(dir);
+    const locked = await openLockedWorkspaceStore({ databasePath: join(dir, "workspace.sqlite"), lockPath: join(dir, "workspace.lock"), workspaceId: "018f0000-0000-7000-8000-000000000520", repositoryId: "program-operation-ordinary-writer" });
+    const admission = new CanonicalAdmissionQueue(locked.store);
+    const sessions = new HostSessionManager(locked, admission);
+    const session = await sessions.openOrResume();
+    const initial = program(session.sessionId, suffix);
+    await admission.append([{ eventId: mkEventId(), workspaceId: asWorkspaceId(locked.store.workspaceId), sessionId: session.sessionId, programStateId: asEventProgramStateId(String(initial.programStateId)), occurredAt: new Date().toISOString(), type: "program.created", payload: { state: initial }, payloadSchemaVersion: 1, producer: { kind: "runtime", component: "ordinary-writer-test" } }]);
+    const current = base(locked.store.workspaceId);
+    const dispatch = new ProgramDispatchServiceV1({ store: locked.store, admission, workspaceCoordinator: { runExclusive: (work) => work() }, observations: { observe: async () => ({ status: "complete" as const, base: current }) }, agentGenerations: { isCurrent: (_sessionId, generation) => generation === 7 }, recovery: { isClear: () => true }, firstDispatchPlanning: { recheckAcceptedPlanningBase: async () => {} } });
+    const broker = new CapabilityBroker(locked.store, admission, new CognitionGateway(locked), new DefaultHostPolicy({ knownTools: ["mutate"], allowMutations: true }), [{ name: "mutate", isReadOnly: false, async execute() { return { result: {}, outcome: "succeeded" }; } }]);
+    broker.setProgramOperationAuthority(dispatch);
+    const mutation = await broker.execute({ sessionId: session.sessionId, toolCallId: "tc-ordinary-writer", toolName: "mutate", args: {} });
+    expect(mutation.outcome).toBe("succeeded");
+    const requested = (await replay(locked)).find((event) => event.type === "operation.requested");
+    expect((requested?.payload as Record<string, unknown>).workspaceAccessClass).toBeUndefined();
+    const issued = await dispatch.issueAttempt({ programStateId: String(initial.programStateId), expectedProgramRevision: initial.revision, workItemId: "work-20", sessionId: session.sessionId, agentGeneration: 7 });
+    expect(issued.status).toBe("issued");
+    locked.close();
   });
 
   it("does not turn a completed legacy pre-baseline writer into a permanent barrier", async () => {
