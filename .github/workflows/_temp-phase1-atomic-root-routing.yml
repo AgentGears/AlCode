@@ -1,0 +1,44 @@
+name: Temporary Phase 1 atomic root routing correction
+
+on:
+  push:
+    branches:
+      - automation/phase-1.0-atomic-root-routing-correction
+
+permissions:
+  contents: write
+
+jobs:
+  correct:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: automation/phase-1.0-atomic-root-routing-correction
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.20.0'
+          cache: pnpm
+      - name: Create corrected implementation branch
+        run: git switch -c feat/phase-1.0-program-operation-atomic-routing
+      - name: Apply bounded atomic-routing correction
+        run: python3 .github/scripts/_temp_phase1_atomic_root_routing.py
+      - name: Remove bootstrap-only files
+        run: |
+          rm .github/scripts/_temp_phase1_atomic_root_routing.py
+          rm .github/workflows/_temp-phase1-atomic-root-routing.yml
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck Host runtime
+        run: pnpm --filter @alcode/host-runtime typecheck
+      - name: Run targeted Program operation and dispatch tests
+        run: pnpm exec vitest run packages/host-runtime/src/program-operation-correlation.test.ts packages/host-runtime/src/program-dispatch.test.ts packages/host-runtime/src/host-runtime.integration.test.ts
+      - name: Commit and publish corrected implementation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix(1.0): make Program root routing atomic"
+          git push origin HEAD:refs/heads/feat/phase-1.0-program-operation-atomic-routing
