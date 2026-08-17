@@ -55,6 +55,8 @@ export {
   type OperationStartedPayload,
   type OperationCompletedPayload,
   type OperationInterruptedPayload,
+  type OperationReconciliationResolvedPayload,
+  type OperationReconciliationUnresolvedPayload,
   OperationStateError,
   defaultEffectStatus,
   defaultReconciliationStatus,
