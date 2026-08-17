@@ -32,6 +32,7 @@ import { HostContextService, type HostContextServiceOptions } from "./context-se
 import { HostContextSourceReader } from "./context-source.ts";
 import { DefaultHostPolicy, type HostPolicy } from "./policy.ts";
 import type { ProgramRootOperationAuthorityV1 } from "./program-dispatch.ts";
+import type { Phase1RecoveryLifecycleV1 } from "./program-recovery.ts";
 import { HostSessionManager, type HostSessionHandle } from "./session-manager.ts";
 import { TranscriptAdmissionService } from "./transcript-admission.ts";
 import { assertContextContinuable, compileVerbatimContext } from "./verbatim-context.ts";
@@ -81,6 +82,7 @@ export class HostRuntime {
   private readonly hostInstanceId: string;
   private readonly requestCache = new Map<string, CapabilityResult>();
   private readonly contextRequestCache = new Map<string, ContextUpdate>();
+  private phase1Recovery: Phase1RecoveryLifecycleV1 | undefined;
 
   constructor(options: HostRuntimeOptions) {
     this.store = options.store;
@@ -122,6 +124,7 @@ export class HostRuntime {
   async startup(): Promise<{ pendingOperationIds: string[]; interruptedWork: number }> {
     const recovery = await this.store.store.recoverInterruptedOperations();
     const interruptedWork = await this.workDispatcher.recoverInterruptedWork();
+    if (this.phase1Recovery !== undefined) await this.phase1Recovery.recover();
     this.cognitionGateway.catchUpCognition();
     return { pendingOperationIds: recovery.pendingOperationIds, interruptedWork };
   }
@@ -132,6 +135,11 @@ export class HostRuntime {
 
   setProgramOperationAuthority(authority: ProgramRootOperationAuthorityV1 | undefined): void {
     this.capabilityBroker.setProgramOperationAuthority(authority);
+  }
+
+  setPhase1RecoveryController(controller: Phase1RecoveryLifecycleV1 | undefined): void {
+    this.phase1Recovery = controller;
+    this.capabilityBroker.setWorkspaceMutationAdmissionAuthority(controller);
   }
 
   async admitInput(sessionId: SessionId, text: string): Promise<{ timestamp: number }> {
