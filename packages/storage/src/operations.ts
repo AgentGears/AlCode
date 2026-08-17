@@ -156,6 +156,20 @@ export const operationStatements: readonly StatementDefinition[] = [
         AND lifecycle_state IN ('requested', 'started')
         AND reconciliation_status = 'not_required'`,
   },
+  {
+    name: "update-reconciliation-resolved",
+    sql: `UPDATE operations SET effect_status = ?, reconciliation_status = 'resolved'
+      WHERE operation_id = ?
+        AND effect_status = 'indeterminate'
+        AND reconciliation_status IN ('pending', 'unresolved')`,
+  },
+  {
+    name: "update-reconciliation-unresolved",
+    sql: `UPDATE operations SET reconciliation_status = 'unresolved'
+      WHERE operation_id = ?
+        AND effect_status = 'indeterminate'
+        AND reconciliation_status = 'pending'`,
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -204,6 +218,32 @@ export interface OperationInterruptedPayload {
   operationId: string;
 }
 
+/** Host-admitted reconciliation proved whether a previously indeterminate effect occurred. */
+export interface OperationReconciliationResolvedPayload {
+  operationId: string;
+  effectStatus: "confirmed" | "absent";
+  evidenceDigest: string;
+  reconciliationContractId: string;
+  reconciliationContractVersion: number;
+}
+
+/** Host-admitted reconciliation ran but could not prove the external effect. */
+export interface OperationReconciliationUnresolvedPayload {
+  operationId: string;
+  evidenceDigest: string;
+  reconciliationContractId: string;
+  reconciliationContractVersion: number;
+}
+
+function assertReconciliationAuthority(
+  payload: OperationReconciliationResolvedPayload | OperationReconciliationUnresolvedPayload,
+): void {
+  if (payload.evidenceDigest.length === 0 || payload.reconciliationContractId.length === 0 ||
+      !Number.isSafeInteger(payload.reconciliationContractVersion) || payload.reconciliationContractVersion <= 0) {
+    throw new OperationStateError("operation reconciliation lacks bounded versioned Host evidence authority");
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Projection definition
 // ---------------------------------------------------------------------------
@@ -212,11 +252,13 @@ export interface OperationInterruptedPayload {
  * The operations projection. Classified as 'critical' — an operation cannot
  * be reported complete until this projection has caught up.
  *
- * Handles four event types:
+ * Handles operation lifecycle plus canonical reconciliation facts:
  *   operation.requested → insert with lifecycle_state='requested'
  *   operation.started → update to 'started'
  *   operation.completed → update to 'terminal' with outcome × effect × reconciliation
  *   operation.interrupted → one-way not_required→pending for crash survivors
+ *   operation.reconciliation.resolved → indeterminate pending/unresolved → confirmed|absent + resolved
+ *   operation.reconciliation.unresolved → indeterminate pending → unresolved
  */
 export function createOperationsProjection(workspaceId: string): ProjectionDefinition {
   return {
@@ -288,6 +330,33 @@ export function createOperationsProjection(workspaceId: string): ProjectionDefin
             throw new OperationStateError(
               `operation.interrupted for ${p.operationId}: expected 1 row updated, got ${changes}. ` +
               "Operation may not exist, may already be terminal, or may already be pending.",
+            );
+          }
+          break;
+        }
+
+        case "operation.reconciliation.resolved": {
+          const p = event.payload as OperationReconciliationResolvedPayload;
+          assertReconciliationAuthority(p);
+          if (p.effectStatus !== "confirmed" && p.effectStatus !== "absent") {
+            throw new OperationStateError("resolved reconciliation must prove effect confirmed or absent");
+          }
+          const changes = tx.exec("update-reconciliation-resolved", p.effectStatus, p.operationId);
+          if (changes !== 1) {
+            throw new OperationStateError(
+              `operation.reconciliation.resolved for ${p.operationId}: operation is not indeterminate pending/unresolved`,
+            );
+          }
+          break;
+        }
+
+        case "operation.reconciliation.unresolved": {
+          const p = event.payload as OperationReconciliationUnresolvedPayload;
+          assertReconciliationAuthority(p);
+          const changes = tx.exec("update-reconciliation-unresolved", p.operationId);
+          if (changes !== 1) {
+            throw new OperationStateError(
+              `operation.reconciliation.unresolved for ${p.operationId}: operation is not indeterminate pending`,
             );
           }
           break;
