@@ -1,0 +1,43 @@
+name: Temporary Phase 1 generation continuity branch
+
+on:
+  push:
+    branches:
+      - automation/phase-1.0-generation-continuity-branch
+
+permissions:
+  contents: write
+
+jobs:
+  correct:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Preserve correction and create correction branch
+        run: |
+          cp .github/scripts/_temp-phase1-generation-continuity.py /tmp/generation-continuity.py
+          git fetch origin feat/phase-1.0-recovery-barrier-v2
+          git checkout -b fix/phase-1.0-generation-continuity origin/feat/phase-1.0-recovery-barrier-v2
+      - name: Apply bounded correction
+        run: python /tmp/generation-continuity.py
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm --filter @alcode/host-runtime typecheck
+      - name: Focused tests
+        run: |
+          pnpm exec vitest run packages/host-runtime/src/program-recovery.test.ts packages/host-runtime/src/program-dispatch.test.ts packages/host-runtime/src/program-operation-correlation.test.ts packages/host-runtime/src/recovery.integration.test.ts packages/host-runtime/src/host-runtime.integration.test.ts
+      - name: Commit and publish correction branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/host-runtime/src/capability-broker.ts packages/host-runtime/src/program-recovery.ts packages/host-runtime/src/program-recovery.test.ts
+          git commit -m "fix(1.0): validate effect generation continuity"
+          git push origin fix/phase-1.0-generation-continuity
