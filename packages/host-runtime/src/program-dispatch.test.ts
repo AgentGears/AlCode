@@ -184,6 +184,17 @@ describeLocked("Program dispatch admission", () => {
       sessionId: runtime.session.sessionId,
       agentGeneration: 7,
     })).rejects.toBeInstanceOf(ProgramDispatchStaleError);
+
+    runtime.setAgentGeneration(7);
+    await runtime.sessions.stop(runtime.session.sessionId, "cancelled");
+    await expect(runtime.service.assertCurrentAttempt({
+      programStateId: String(runtime.initial.programStateId),
+      expectedProgramRevision: 2,
+      programAttemptId: issued.programAttemptId,
+      workItemId: "work-01",
+      sessionId: runtime.session.sessionId,
+      agentGeneration: 7,
+    })).rejects.toBeInstanceOf(ProgramDispatchStaleError);
     runtime.locked.close();
   });
 
@@ -291,7 +302,7 @@ describeLocked("Program dispatch admission", () => {
       ...eventBase,
       eventId: mkEventId(),
       type: "operation.requested",
-      payload: { operationId: String(operationId), workspaceAccessClass: "may_write" },
+      payload: { operationId: String(operationId), isReadOnly: false },
     };
     await runtime.admission.append([requested]);
 
@@ -367,4 +378,21 @@ describeLocked("Program dispatch admission", () => {
     }
     runtime.locked.close();
   });
+
+  it("rejects a complete execution observation bound to another Workspace", async () => {
+    const runtime = await setup("06");
+    runtime.observation.value = {
+      status: "complete",
+      base: base("018f0000-0000-7000-8000-000000009999", 0, "foreign-state"),
+    };
+    await expect(runtime.service.issueAttempt({
+      programStateId: String(runtime.initial.programStateId),
+      expectedProgramRevision: 1,
+      workItemId: "work-06",
+      sessionId: runtime.session.sessionId,
+      agentGeneration: 7,
+    })).rejects.toBeInstanceOf(ProgramDispatchStaleError);
+    runtime.locked.close();
+  });
+
 });

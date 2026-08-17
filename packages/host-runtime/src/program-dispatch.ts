@@ -149,7 +149,10 @@ function outstandingWriterOperations(
     const payload = record(event.payload);
     const operationId = String(event.operationId ?? payload.operationId ?? "");
     if (operationId.length === 0) continue;
-    if (event.type === "operation.requested" && payload.workspaceAccessClass === "may_write") {
+    const accessClass = payload.workspaceAccessClass;
+    const isMayWrite = accessClass === "may_write" ||
+      (accessClass === undefined && payload.isReadOnly === false);
+    if (event.type === "operation.requested" && isMayWrite) {
       outstanding.add(operationId);
       continue;
     }
@@ -173,6 +176,17 @@ function activeWorkspaceAttempt(
     };
   }
   return null;
+}
+
+function requireObservationWorkspace(
+  store: WorkspaceEventStore,
+  base: ProgramAttemptExecutionBase,
+): void {
+  if (base.observation.workspaceIdentity !== store.workspaceId) {
+    throw new ProgramDispatchStaleError(
+      `Execution observation belongs to another Workspace: ${base.observation.workspaceIdentity}`,
+    );
+  }
 }
 
 function sameBase(left: ProgramAttemptExecutionBase, right: ProgramAttemptExecutionBase): boolean {
@@ -299,6 +313,7 @@ export class ProgramDispatchServiceV1 {
         }
 
         const currentBase = observation.base;
+        requireObservationWorkspace(this.options.store, currentBase);
         if (state.acceptedExecutionBase !== null && !sameBase(state.acceptedExecutionBase, currentBase)) {
           const receiptId = asExecutionBaseMismatchReceiptId(uuidv7());
           const receipt = {
@@ -366,6 +381,7 @@ export class ProgramDispatchServiceV1 {
       if (observation.status === "unknown") {
         throw new ProgramDispatchStaleError(`Current execution base is unavailable: ${observation.reason}`);
       }
+      requireObservationWorkspace(this.options.store, observation.base);
 
       return this.options.admission.enqueue(async () => {
         const events = await replayAll(this.options.store);
@@ -410,10 +426,15 @@ export class ProgramDispatchServiceV1 {
       if (observation.status === "unknown") {
         throw new ProgramDispatchStaleError(`Current execution base is unavailable: ${observation.reason}`);
       }
+      requireObservationWorkspace(this.options.store, observation.base);
       return this.options.admission.enqueue(async () => {
         const events = await replayAll(this.options.store);
         const state = requireProgramState(events, programStateId);
         requireExactRevision(state, input.expectedProgramRevision);
+        if (!sessionIsActive(events, String(input.sessionId)) ||
+            !state.attachedSessionIds.some((id) => String(id) === String(input.sessionId))) {
+          throw new ProgramDispatchStaleError("ProgramAttempt session is stopped or detached");
+        }
         const attempt = state.activeAttempt;
         if (attempt === null || String(attempt.programAttemptId) !== input.programAttemptId) {
           throw new ProgramDispatchStaleError("ProgramAttempt authority is stale");
