@@ -96,12 +96,6 @@ function program(sessionId: SessionId, suffix: string): ProgramState {
   });
 }
 
-function serviceOptions(input: {
-  store: Parameters<typeof CanonicalAdmissionQueue>[0] extends never ? never : any;
-}): never {
-  throw new Error(String(input));
-}
-
 async function setup(suffix: string) {
   const dir = mkdtempSync(join(tmpdir(), `alcode-program-dispatch-${suffix}-`));
   const locked = await openLockedWorkspaceStore({
