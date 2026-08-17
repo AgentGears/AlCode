@@ -201,3 +201,9 @@ export {
   type ProgramCancellationResultV1,
   type ProgramCompletionResultV1,
 } from "./program-terminal.ts";
+
+export {
+  ProgramAgentServiceV1,
+  ProgramAgentControlError,
+  PROGRAM_ATTEMPT_PROJECTION_MAX_BYTES,
+} from "./program-agent.ts";
