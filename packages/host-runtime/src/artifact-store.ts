@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -92,6 +93,40 @@ export class HostArtifactStore {
     const info = await stat(this.pathForDigest(digest));
     if (!info.isFile()) throw new Error("artifact reference does not resolve to a regular file");
     return { handle, digest, size: info.size };
+  }
+
+  /**
+   * Revalidate bytes behind a Host content-addressed handle.
+   *
+   * This is an integrity/presence check only. Semantic trust remains the
+   * caller's responsibility (for Phase 1, canonical ProgramState binding plus
+   * exact production-operation provenance). Verification is bounded by the
+   * same maximum size that governs Host retention and streams bytes rather
+   * than buffering an artifact into memory.
+   */
+  async verify(handle: string): Promise<HostArtifactReference> {
+    const digest = this.digestFromHandle(handle);
+    const target = this.pathForDigest(digest);
+    const info = await stat(target);
+    if (!info.isFile()) throw new Error("artifact reference does not resolve to a regular file");
+    if (info.size > this.maxArtifactBytes) {
+      throw new Error(`artifact exceeds Host retention bound (${this.maxArtifactBytes} bytes)`);
+    }
+
+    const hash = createHash("sha256");
+    let size = 0;
+    for await (const chunk of createReadStream(target)) {
+      const bytes = chunk as Buffer;
+      size += bytes.byteLength;
+      if (size > this.maxArtifactBytes) {
+        throw new Error(`artifact exceeds Host retention bound (${this.maxArtifactBytes} bytes)`);
+      }
+      hash.update(bytes);
+    }
+    if (size !== info.size || hash.digest("hex") !== digest) {
+      throw new Error(`artifact digest mismatch: ${digest}`);
+    }
+    return { handle, digest, size };
   }
 
   async read(handle: string, maxBytes = this.maxInlineReadBytes): Promise<Uint8Array> {

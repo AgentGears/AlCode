@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -38,5 +38,18 @@ describe("HostArtifactStore", () => {
     await store.initialize();
     await expect(store.read("../../etc/passwd")).rejects.toThrow(/invalid Host artifact handle/);
     await expect(store.read("artifact:sha256:not-a-digest")).rejects.toThrow(/invalid Host artifact digest/);
+  });
+
+  it("bounds full integrity verification by the Host retention ceiling", async () => {
+    const root = await tempRoot();
+    const store = new HostArtifactStore({ root, maxArtifactBytes: 8, maxInlineReadBytes: 4 });
+    await store.initialize();
+    const reference = await store.retain("12345678");
+    expect(await store.verify(reference.handle)).toMatchObject({ digest: reference.digest, size: 8 });
+
+    const digest = reference.digest;
+    const target = path.join(root, digest.slice(0, 2), digest.slice(2, 4), digest);
+    await writeFile(target, Buffer.alloc(9, 0x61));
+    await expect(store.verify(reference.handle)).rejects.toThrow(/retention bound/);
   });
 });
