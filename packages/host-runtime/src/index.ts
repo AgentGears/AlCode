@@ -190,3 +190,14 @@ export {
   type ProgramProductionStepResultV1,
   type ProgramVerificationResultV1,
 } from "./program-verification.ts";
+
+export {
+  ProgramTerminalServiceV1,
+  ProgramTerminalControlError,
+  ProgramTerminalStaleError,
+  type ProgramTerminalServiceOptionsV1,
+  type ProgramCancellationCommandV1,
+  type ProgramCompletionCommandV1,
+  type ProgramCancellationResultV1,
+  type ProgramCompletionResultV1,
+} from "./program-terminal.ts";
