@@ -8,6 +8,7 @@ export const AGENT_PROTOCOL_VERSION = 1 as const;
 export const DURABLE_TRANSCRIPT_CAPABILITY = "durable_transcript_v1" as const;
 export const GRAPH_CONTEXT_CAPABILITY = "graph_context_v1" as const;
 export const DYNAMIC_CAPABILITY_BINDING_CAPABILITY = "dynamic_capability_binding_v1" as const;
+export const PROGRAM_STATE_CAPABILITY = "program_state_v1" as const;
 export const VERBATIM_COMPILER_VERSION = "verbatim-v1" as const;
 
 export type ProtocolRequestId = string;
@@ -40,6 +41,81 @@ export interface AuthorizedToolDescriptor {
 export interface InferenceToolCatalog {
   digest: string;
   tools: AuthorizedToolDescriptor[];
+}
+
+/** Host-owned exact current ProgramAttempt authority carried inside a bounded projection. */
+export interface ProgramAttemptAuthorityV1 {
+  programStateId: string;
+  expectedProgramRevision: number;
+  programAttemptId: string;
+  workItemId: string;
+  agentGeneration: number;
+}
+
+export interface ProgramExecutionObservationIdentityV1 {
+  kind: "workspace-observation-v1";
+  providerKind: string;
+  workspaceIdentity: string;
+  coverageDigest: string;
+  stateDigest: string;
+}
+
+export interface ProgramAttemptExecutionBaseV1 {
+  workspaceEffectGeneration: number;
+  observation: ProgramExecutionObservationIdentityV1;
+}
+
+/**
+ * Disposable Agent-facing rendering of current Program authority/state.
+ * Canonical ProgramState remains Host-owned; this projection is intentionally
+ * bounded and may report omitted summary entries.
+ */
+export interface ProgramAttemptProjectionV1 {
+  version: 1;
+  authority: ProgramAttemptAuthorityV1;
+  objective: string;
+  work: {
+    description: string;
+    lifecycle: string;
+    dependencyIds: string[];
+    affectedPaths: string[];
+    omittedAffectedPathCount: number;
+  };
+  dependencies: Array<{ workItemId: string; lifecycle: string }>;
+  blockers: Array<{ blockerId: string; workItemId: string | null; reason: string; truncated: boolean }>;
+  executionBase: ProgramAttemptExecutionBaseV1;
+  verification: Array<{
+    obligationId: string;
+    subjectGeneration: number;
+    current: boolean;
+    waived: boolean;
+    predicate: Record<string, unknown>;
+    freshnessScope: Record<string, unknown>;
+  }>;
+  outputSlots: Array<{ outputSlotId: string; productionStepId: string }>;
+  productionSteps: Array<{
+    productionStepId: string;
+    outputSlotIds: string[];
+    outputChannel: string;
+    specId: string;
+    specVersion: number;
+    canonicalArgsDigest: string;
+  }>;
+  decisiveEvidence: Array<{
+    evidenceRefId: string;
+    verificationObligationId: string | null;
+    sourceOperationId: string | null;
+    artifactRef: string | null;
+    subjectGeneration: number | null;
+  }>;
+  artifacts: Array<{ artifactRef: string; outputSlotId: string | null; productionStepId: string | null }>;
+  control: { executionBaseMismatch: boolean; executionBaseUnavailable: boolean };
+  omissions: { verification: number; blockers: number; evidence: number; artifacts: number };
+  stopConditions: {
+    attemptMustRemainCurrent: true;
+    rebaseRequiredOnExecutionBaseMismatch: true;
+    hostOwnsVerificationAndCompletion: true;
+  };
 }
 
 export interface AgentHello { type: "agent.hello"; protocolVersion: typeof AGENT_PROTOCOL_VERSION; generationId: AgentGenerationId; capabilities: string[]; }
@@ -80,6 +156,8 @@ export interface ContextUpdate {
   messages: TranscriptMessage[];
   /** Present only when the Host and Agent negotiated dynamic capability binding. */
   toolCatalog?: InferenceToolCatalog;
+  /** Present only when the Agent negotiated `program_state_v1` and has a current Attempt. */
+  programAttempt?: ProgramAttemptProjectionV1;
 }
 
 export interface TranscriptAdmitted { type: "transcript.admitted"; requestId: ProtocolRequestId; sessionId: string; eventId: string; sequence: number; }

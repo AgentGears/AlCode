@@ -29,6 +29,27 @@ function isInferenceToolCatalog(value: unknown): boolean {
       && (tool.isReadOnly === undefined || typeof tool.isReadOnly === "boolean"));
 }
 
+function isProgramAttemptProjection(value: unknown): boolean {
+  if (!isObject(value) || value.version !== 1 || !isObject(value.authority)) return false;
+  const authority = value.authority;
+  if (!hasString(authority, "programStateId") || !hasNumber(authority, "expectedProgramRevision")
+      || !hasString(authority, "programAttemptId") || !hasString(authority, "workItemId")
+      || !hasNumber(authority, "agentGeneration")) return false;
+  if (!hasString(value, "objective") || !isObject(value.work) || !isObject(value.executionBase)
+      || !isObject(value.control) || !isObject(value.omissions) || !isObject(value.stopConditions)) return false;
+  if (!hasString(value.work, "description") || !hasString(value.work, "lifecycle")
+      || !Array.isArray(value.work.dependencyIds) || !value.work.dependencyIds.every((item) => typeof item === "string")
+      || !Array.isArray(value.work.affectedPaths) || !value.work.affectedPaths.every((item) => typeof item === "string")
+      || !hasNumber(value.work, "omittedAffectedPathCount")) return false;
+  if (!Array.isArray(value.dependencies) || !Array.isArray(value.blockers) || !Array.isArray(value.verification)
+      || !Array.isArray(value.outputSlots) || !Array.isArray(value.productionSteps)
+      || !Array.isArray(value.decisiveEvidence) || !Array.isArray(value.artifacts)) return false;
+  if (!hasNumber(value.executionBase, "workspaceEffectGeneration") || !isObject(value.executionBase.observation)) return false;
+  const observation = value.executionBase.observation;
+  return observation.kind === "workspace-observation-v1" && hasString(observation, "providerKind")
+    && hasString(observation, "workspaceIdentity") && hasString(observation, "coverageDigest") && hasString(observation, "stateDigest");
+}
+
 export function isAgentToHostMessage(value: unknown): value is AgentToHostMessage {
   if (!isObject(value) || typeof value.type !== "string") return false;
   switch (value.type) {
@@ -85,7 +106,8 @@ export function isHostToAgentMessage(value: unknown): value is HostToAgentMessag
         && ["verbatim-v1", "graph-v1"].includes(String(value.effectiveMode))
         && hasNumber(value, "sourceEventSequence") && hasString(value, "systemPrompt")
         && Array.isArray(value.messages)
-        && (value.toolCatalog === undefined || isInferenceToolCatalog(value.toolCatalog));
+        && (value.toolCatalog === undefined || isInferenceToolCatalog(value.toolCatalog))
+        && (value.programAttempt === undefined || isProgramAttemptProjection(value.programAttempt));
     case "transcript.admitted":
       return hasString(value, "requestId") && hasString(value, "sessionId") && hasString(value, "eventId") && hasNumber(value, "sequence");
     case "capability.result":
