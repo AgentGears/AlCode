@@ -140,3 +140,15 @@ export {
   type PlanningReadBarrierV1,
   type ProgramCreationServiceOptionsV1,
 } from "./program-creation.ts";
+export {
+  ProgramDispatchServiceV1,
+  ProgramDispatchControlError,
+  ProgramDispatchStaleError,
+  type ProgramDispatchResult,
+  type ProgramDispatchWorkspaceCoordinatorV1,
+  type ProgramExecutionObservationSourceV1,
+  type ProgramAgentGenerationAuthorityV1,
+  type ProgramRecoveryAuthorityV1,
+  type ProgramFirstDispatchPlanningBridgeV1,
+  type ProgramDispatchServiceOptionsV1,
+} from "./program-dispatch.ts";
