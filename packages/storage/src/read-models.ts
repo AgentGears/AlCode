@@ -129,6 +129,23 @@ export function reduceOperationsFromEvents(events: readonly PersistedDomainEvent
         });
         break;
       }
+      case "operation.reconciliation.resolved": {
+        const operationId = String(payload.operationId ?? event.operationId ?? "");
+        const current = operations.get(operationId);
+        const effectStatus = payload.effectStatus as EffectStatus;
+        if (!current || current.effectStatus !== "indeterminate" ||
+            (current.reconciliationStatus !== "pending" && current.reconciliationStatus !== "unresolved") ||
+            (effectStatus !== "confirmed" && effectStatus !== "absent")) break;
+        operations.set(operationId, { ...current, effectStatus, reconciliationStatus: "resolved" });
+        break;
+      }
+      case "operation.reconciliation.unresolved": {
+        const operationId = String(payload.operationId ?? event.operationId ?? "");
+        const current = operations.get(operationId);
+        if (!current || current.effectStatus !== "indeterminate" || current.reconciliationStatus !== "pending") break;
+        operations.set(operationId, { ...current, reconciliationStatus: "unresolved" });
+        break;
+      }
       default:
         break;
     }
