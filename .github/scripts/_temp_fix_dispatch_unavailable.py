@@ -12,7 +12,26 @@ path = Path("packages/program-state/src/reducer.ts")
 text = path.read_text()
 text = replace_once(
     text,
-    '''      if (state.acceptedExecutionBase === null) {
+    '''    case "attempt.issue": {
+      const ready = deriveReadyWorkItems(state).some(
+        (work) => work.workItemId === transition.attempt.workItemId,
+      );
+      if (!ready) {
+        throw new ProgramTransitionError(
+          `Work ${String(transition.attempt.workItemId)} is not Program-locally eligible for Attempt issuance`,
+        );
+      }
+
+      if (!semanticallyEqual(
+        transition.attempt.initialExecutionBase,
+        transition.attempt.expectedExecutionBase,
+      )) {
+        throw new ProgramTransitionError(
+          "A newly issued ProgramAttempt must start with identical initial and expected execution bases",
+        );
+      }
+
+      if (state.acceptedExecutionBase === null) {
         // The first dispatch bridge establishes the first accepted execution
         // base in the same semantic revision as Attempt issuance. Supplying it
         // to the pure core as pre-transition context keeps the published result
@@ -30,8 +49,20 @@ text = replace_once(
           "ProgramAttempt issuance must use the exact current accepted execution base",
         );
       }
+      break;
+    }
 ''',
-    '''      if (state.acceptedExecutionBase === null) {
+    '''    case "attempt.issue": {
+      if (!semanticallyEqual(
+        transition.attempt.initialExecutionBase,
+        transition.attempt.expectedExecutionBase,
+      )) {
+        throw new ProgramTransitionError(
+          "A newly issued ProgramAttempt must start with identical initial and expected execution bases",
+        );
+      }
+
+      if (state.acceptedExecutionBase === null) {
         // The first dispatch bridge establishes the first accepted execution
         // base in the same semantic revision as Attempt issuance. Supplying it
         // to the pure core as pre-transition context keeps the published result
@@ -57,8 +88,19 @@ text = replace_once(
         coreState = { ...state, executionBaseUnavailable: false };
         assertValidProgramState(coreState);
       }
+
+      const ready = deriveReadyWorkItems(coreState).some(
+        (work) => work.workItemId === transition.attempt.workItemId,
+      );
+      if (!ready) {
+        throw new ProgramTransitionError(
+          `Work ${String(transition.attempt.workItemId)} is not Program-locally eligible for Attempt issuance`,
+        );
+      }
+      break;
+    }
 ''',
-    "clear execution-base unavailable on attempt issue",
+    "restore availability before attempt eligibility",
 )
 path.write_text(text)
 
