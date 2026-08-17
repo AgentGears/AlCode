@@ -1,0 +1,44 @@
+name: Temporary reconciliation read-model parity
+
+on:
+  push:
+    branches:
+      - automation/phase-1.0-reconciliation-read-model
+
+permissions:
+  contents: write
+
+jobs:
+  correct:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: automation/phase-1.0-reconciliation-read-model
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.20.0
+          cache: pnpm
+      - name: Create correction branch
+        run: git switch -c fix/phase-1.0-reconciliation-read-model
+      - name: Apply bounded correction
+        run: python3 .github/scripts/_temp_phase1_reconciliation_read_model.py
+      - name: Remove bootstrap files
+        run: |
+          rm .github/scripts/_temp_phase1_reconciliation_read_model.py
+          rm .github/workflows/_temp-phase1-reconciliation-read-model.yml
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck storage
+        run: pnpm --filter @alcode/storage typecheck
+      - name: Run focused tests
+        run: pnpm exec vitest run packages/storage/src/operations.test.ts packages/storage/src/recovery.test.ts
+      - name: Commit and publish correction
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/storage/src/read-models.ts packages/storage/src/operations.test.ts
+          git commit -m "fix(1.0): replay operation reconciliation facts"
+          git push origin fix/phase-1.0-reconciliation-read-model
