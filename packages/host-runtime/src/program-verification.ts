@@ -19,6 +19,7 @@ import {
   type ProgramEvidenceReference,
   type ProgramState,
   type VerificationObligation,
+  type WorkspacePathState,
 } from "@alcode/program-state";
 import { reduceOperationsFromEvents, type WorkspaceEventStore } from "@alcode/storage";
 import { CanonicalAdmissionQueue } from "./admission-queue.ts";
@@ -65,11 +66,19 @@ export class HostVerificationOperationRegistryV1 {
   }
 }
 
+export interface ProgramWorkspacePathObservationSourceV1 {
+  observePath(path: string): Promise<
+    | { status: "complete"; base: ProgramAttemptExecutionBase; pathState: WorkspacePathState }
+    | { status: "unknown"; reason: string }
+  >;
+}
+
 export interface ProgramVerificationServiceOptionsV1 {
   store: WorkspaceEventStore;
   admission: CanonicalAdmissionQueue;
   workspaceCoordinator: ProgramDispatchWorkspaceCoordinatorV1;
   observations: ProgramExecutionObservationSourceV1;
+  pathObservations: ProgramWorkspacePathObservationSourceV1;
   recovery: ProgramRecoveryAuthorityV1;
   capabilityBroker: CapabilityBroker;
   operationSpecs: HostVerificationOperationRegistryV1;
@@ -83,9 +92,9 @@ export interface ProgramVerificationCommandV1 {
 }
 
 export type ProgramVerificationResultV1 =
-  | { status: "satisfied"; state: ProgramState; evidenceRefId: string; operationId: string }
+  | { status: "satisfied"; state: ProgramState; evidenceRefId: string; operationId?: string }
   | { status: "not_satisfied"; reason: string; operationId?: string }
-  | { status: "stale_generation"; state: ProgramState; operationId: string };
+  | { status: "stale_generation"; state: ProgramState; operationId?: string };
 
 export class ProgramVerificationControlError extends Error {
   constructor(message: string) {
@@ -352,6 +361,80 @@ export class ProgramVerificationServiceV1 {
         ]);
         if (persisted.length !== 2) throw new ProgramVerificationControlError("Verification evidence/satisfaction admission was not atomic");
         return { status: "satisfied", state: satisfied, evidenceRefId: String(evidenceRefId), operationId } as const;
+      });
+    });
+  }
+
+  async satisfyWorkspacePathState(command: ProgramVerificationCommandV1): Promise<ProgramVerificationResultV1> {
+    const prepared = await this.options.admission.enqueue(async () => {
+      const events = await replayAll(this.options.store);
+      const state = latestProgramState(events, String(asProgramStateId(command.programStateId)));
+      if (state.lifecycle !== "active") throw new ProgramVerificationStaleError(`Program is terminal: ${state.lifecycle}`);
+      requireExactRevision(state, command.expectedProgramRevision);
+      const obligation = requireObligation(state, command.verificationObligationId);
+      if (obligation.predicate.kind !== "workspace_path_state") {
+        throw new ProgramVerificationControlError("Verification obligation is not workspace_path_state");
+      }
+      return {
+        generation: obligation.subjectGeneration,
+        path: obligation.predicate.path,
+        requiredState: obligation.predicate.requiredState,
+      };
+    });
+
+    return this.options.workspaceCoordinator.runExclusive(async () => {
+      const observation = await this.options.pathObservations.observePath(prepared.path);
+      if (observation.status === "unknown") {
+        return { status: "not_satisfied", reason: `Workspace path observation unavailable: ${observation.reason}` } as const;
+      }
+      if (observation.pathState !== prepared.requiredState) {
+        return { status: "not_satisfied", reason: `Workspace path state is ${observation.pathState}; required ${prepared.requiredState}` } as const;
+      }
+      return this.options.admission.enqueue(async () => {
+        if (!await this.options.recovery.isClear()) throw new ProgramVerificationStaleError("Program recovery barrier is not clear");
+        const events = await replayAll(this.options.store);
+        const state = latestProgramState(events, command.programStateId);
+        if (state.lifecycle !== "active") throw new ProgramVerificationStaleError(`Program is terminal: ${state.lifecycle}`);
+        requireExactRevision(state, command.expectedProgramRevision);
+        if (observation.base.observation.workspaceIdentity !== this.options.store.workspaceId) {
+          throw new ProgramVerificationControlError("Protected path observation belongs to another Workspace");
+        }
+        const currentBase = effectiveObservedBase(events, observation.base);
+        if (state.executionBaseMismatch !== null || state.executionBaseUnavailable || state.acceptedExecutionBase === null ||
+            !sameBase(state.acceptedExecutionBase, currentBase)) {
+          throw new ProgramVerificationStaleError("Program accepted execution base is not the protected path-observation base");
+        }
+        if (state.activeAttempt !== null && !sameBase(state.activeAttempt.expectedExecutionBase, currentBase)) {
+          throw new ProgramVerificationStaleError("Current ProgramAttempt does not own the protected path-observation base");
+        }
+        const obligation = requireObligation(state, command.verificationObligationId);
+        if (obligation.subjectGeneration !== prepared.generation) return { status: "stale_generation", state } as const;
+
+        const evidenceRefId = asProgramEvidenceRefId(uuidv7());
+        const evidence: ProgramEvidenceReference = {
+          evidenceRefId,
+          workItemId: state.activeAttempt?.workItemId ?? null,
+          verificationObligationId: obligation.obligationId,
+          sourceOperationId: null,
+          artifactRef: null,
+          subjectGeneration: obligation.subjectGeneration,
+        };
+        const withEvidence = applyProgramTransition(state, {
+          kind: "evidence.add", expectedProgramRevision: state.revision, evidence,
+        });
+        const satisfied = applyProgramTransition(withEvidence, {
+          kind: "verification.satisfy",
+          expectedProgramRevision: withEvidence.revision,
+          obligationId: obligation.obligationId,
+          satisfaction: { subjectGeneration: obligation.subjectGeneration, evidenceRefIds: [evidenceRefId] },
+        });
+        const correlationId = `workspace_path_state:${prepared.path}:${prepared.generation}`;
+        const persisted = await this.options.store.append([
+          transitionDraft(this.options.store, command.sessionId, withEvidence, "evidence.add", correlationId),
+          transitionDraft(this.options.store, command.sessionId, satisfied, "verification.satisfy", correlationId),
+        ]);
+        if (persisted.length !== 2) throw new ProgramVerificationControlError("Path evidence/satisfaction admission was not atomic");
+        return { status: "satisfied", state: satisfied, evidenceRefId: String(evidenceRefId) } as const;
       });
     });
   }
