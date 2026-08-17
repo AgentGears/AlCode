@@ -16,6 +16,7 @@ export {
   type HostCapabilityReconciliationResultV1,
   type HostCapabilityReconciliationV1,
   type ProgramCapabilityOperationContextV1,
+  type HostProgramVerificationInvocationV1,
   type CapabilityBrokerRequest,
   type CapabilityBrokerResult,
   type CapabilityApprovalDecision,
@@ -175,3 +176,14 @@ export {
   type WorkspaceMutationAdmissionAuthorityV1,
   type WorkspaceMutationAdmissionStatusV1,
 } from "./program-recovery.ts";
+
+export {
+  HostVerificationOperationRegistryV1,
+  ProgramVerificationServiceV1,
+  ProgramVerificationControlError,
+  ProgramVerificationStaleError,
+  type HostVerificationOperationSpecV1,
+  type ProgramVerificationServiceOptionsV1,
+  type ProgramVerificationCommandV1,
+  type ProgramVerificationResultV1,
+} from "./program-verification.ts";
