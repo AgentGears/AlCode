@@ -166,6 +166,22 @@ describeLocked("Program root operation correlation", () => {
     runtime.locked.close();
   });
 
+  it("fails an invalid explicit Workspace access class closed to may_write", async () => {
+    let executed = 0;
+    const runtime = await setup("18", {
+      name: "inspect",
+      workspaceAccessClass: "READ_ONL" as unknown as "read_only",
+      isReadOnly: true,
+      async execute() { executed += 1; return { result: {}, outcome: "succeeded" }; },
+    });
+    const before = (await replay(runtime.locked)).filter((event) => event.type === "operation.requested").length;
+    const result = await runtime.broker.execute({ sessionId: runtime.session.sessionId, toolCallId: "tc-invalid-access", toolName: "inspect", args: {} });
+    expect(result).toMatchObject({ outcome: "denied", errorCode: "program_quiescence_unsupported" });
+    expect(executed).toBe(0);
+    expect((await replay(runtime.locked)).filter((event) => event.type === "operation.requested")).toHaveLength(before);
+    runtime.locked.close();
+  });
+
   it("does not turn a completed legacy pre-baseline writer into a permanent barrier", async () => {
     const runtime = await setup("15", { name: "inspect", workspaceAccessClass: "read_only", async execute() { return { result: {}, outcome: "succeeded" }; } });
     const legacyOperationId = mkOperationId();
