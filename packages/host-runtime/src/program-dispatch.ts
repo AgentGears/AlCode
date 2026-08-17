@@ -92,6 +92,7 @@ export interface ProgramMutationSettlementInputV1 {
   sessionId: EventSessionId;
   operationId: string;
   program: ProgramRootOperationContextV1;
+  quiescenceProven: boolean;
   buildTerminalDrafts(headSequence: number): readonly EventDraft<string, unknown>[];
 }
 
@@ -681,8 +682,10 @@ export class ProgramDispatchServiceV1 {
     const sessionId = String(input.sessionId);
 
     return this.options.workspaceCoordinator.runExclusive(async () => {
-      const postObservation = await this.options.observations.observe();
-      if (postObservation.status === "complete") {
+      const postObservation = input.quiescenceProven
+        ? await this.options.observations.observe()
+        : null;
+      if (postObservation?.status === "complete") {
         requireObservationWorkspace(this.options.store, postObservation.base);
       }
 
@@ -725,15 +728,25 @@ export class ProgramDispatchServiceV1 {
         }
         const completed = terminalDrafts.find((draft) => draft.type === "operation.completed");
         const quiesced = terminalDrafts.find((draft) => draft.type === "operation.mutation_quiesced");
-        if (completed === undefined || quiesced === undefined) {
-          throw new ProgramDispatchControlError("Program mutation settlement requires completion and quiescence facts");
+        if (completed === undefined) {
+          throw new ProgramDispatchControlError("Program mutation settlement requires a terminal completion fact");
         }
-        const quiescedPayload = record(quiesced.payload);
-        for (const key of ["containmentInstanceId", "containment", "proofContractId", "proofContractVersion", "providerBindingRevision"] as const) {
-          const expected = requestQuiescence[key];
-          const actual = quiescedPayload[key];
-          if (canonicalStringify(expected ?? null) !== canonicalStringify(actual ?? null)) {
-            throw new ProgramDispatchControlError(`Program mutation quiescence proof does not match request-time ${key}`);
+        if (input.quiescenceProven !== (quiesced !== undefined)) {
+          throw new ProgramDispatchControlError("Program mutation settlement quiescence flag does not match canonical proof event");
+        }
+        if (quiesced !== undefined) {
+          const quiescedPayload = record(quiesced.payload);
+          for (const key of ["containmentInstanceId", "containment", "proofContractId", "proofContractVersion", "providerBindingRevision"] as const) {
+            const expected = requestQuiescence[key];
+            const actual = quiescedPayload[key];
+            if (canonicalStringify(expected ?? null) !== canonicalStringify(actual ?? null)) {
+              throw new ProgramDispatchControlError(`Program mutation quiescence proof does not match request-time ${key}`);
+            }
+          }
+          if (quiescedPayload.proofKind !== "operation_containment_ended" ||
+              typeof quiescedPayload.proofEvidenceDigest !== "string" ||
+              quiescedPayload.proofEvidenceDigest.length === 0) {
+            throw new ProgramDispatchControlError("Program mutation quiescence proof lacks validated proof authority");
           }
         }
 
@@ -779,7 +792,7 @@ export class ProgramDispatchServiceV1 {
             (durableGeneration === null || durableGeneration <= currentAttempt.expectedExecutionBase.workspaceEffectGeneration);
 
           if (state.lifecycle === "active") {
-            if (attemptStillCurrent && postObservation.status === "complete") {
+            if (attemptStillCurrent && quiesced !== undefined && postObservation?.status === "complete") {
               const settledBase: ProgramAttemptExecutionBase = {
                 workspaceEffectGeneration: nextGeneration,
                 observation: postObservation.base.observation,
@@ -817,8 +830,8 @@ export class ProgramDispatchServiceV1 {
             }
           }
         } else if (state.lifecycle === "active") {
-          // A failed may_write has indeterminate effect certainty. Quiescence is
-          // known, but no trusted execution base may be adopted.
+          // A failed may_write has indeterminate effect certainty. Whether or not
+          // quiescence is proven, no trusted execution base may be adopted.
           nextState = applyProgramTransition(state, {
             kind: "execution_base.unavailable",
             expectedProgramRevision: state.revision,
