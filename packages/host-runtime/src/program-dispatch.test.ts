@@ -347,6 +347,23 @@ describeLocked("Program dispatch admission", () => {
       expect(unavailable.state.activeAttempt).toBeNull();
       expect(unavailable.state.executionBaseUnavailable).toBe(true);
       expect(unavailable.state.revision).toBe(2);
+
+      runtime.observation.value = {
+        status: "complete",
+        base: base(runtime.locked.store.workspaceId, 0, "state-0"),
+      };
+      const recovered = await runtime.service.issueAttempt({
+        programStateId: String(runtime.initial.programStateId),
+        expectedProgramRevision: unavailable.state.revision,
+        workItemId: "work-05",
+        sessionId: runtime.session.sessionId,
+        agentGeneration: 7,
+      });
+      expect(recovered.status).toBe("issued");
+      if (recovered.status === "issued") {
+        expect(recovered.state.executionBaseUnavailable).toBe(false);
+        expect(recovered.state.activeAttempt).not.toBeNull();
+      }
     }
     runtime.locked.close();
   });

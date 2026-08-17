@@ -87,15 +87,6 @@ export function applyProgramTransition(
 
   switch (transition.kind) {
     case "attempt.issue": {
-      const ready = deriveReadyWorkItems(state).some(
-        (work) => work.workItemId === transition.attempt.workItemId,
-      );
-      if (!ready) {
-        throw new ProgramTransitionError(
-          `Work ${String(transition.attempt.workItemId)} is not Program-locally eligible for Attempt issuance`,
-        );
-      }
-
       if (!semanticallyEqual(
         transition.attempt.initialExecutionBase,
         transition.attempt.expectedExecutionBase,
@@ -113,6 +104,7 @@ export function applyProgramTransition(
         coreState = {
           ...state,
           acceptedExecutionBase: transition.attempt.initialExecutionBase,
+          executionBaseUnavailable: false,
         };
         assertValidProgramState(coreState);
       } else if (
@@ -121,6 +113,22 @@ export function applyProgramTransition(
       ) {
         throw new ProgramTransitionError(
           "ProgramAttempt issuance must use the exact current accepted execution base",
+        );
+      } else if (state.executionBaseUnavailable) {
+        // A protected complete observation has re-established the exact
+        // accepted base. Attempt issuance is the canonical cut that consumes
+        // that proof, so stale unavailability cannot survive into an active
+        // current Attempt.
+        coreState = { ...state, executionBaseUnavailable: false };
+        assertValidProgramState(coreState);
+      }
+
+      const ready = deriveReadyWorkItems(coreState).some(
+        (work) => work.workItemId === transition.attempt.workItemId,
+      );
+      if (!ready) {
+        throw new ProgramTransitionError(
+          `Work ${String(transition.attempt.workItemId)} is not Program-locally eligible for Attempt issuance`,
         );
       }
       break;
