@@ -1,0 +1,44 @@
+name: Temporary Phase 1 operation reconciliation
+
+on:
+  push:
+    branches:
+      - automation/phase-1.0-operation-reconciliation
+
+permissions:
+  contents: write
+
+jobs:
+  implement:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: automation/phase-1.0-operation-reconciliation
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.20.0
+          cache: pnpm
+      - name: Create implementation branch
+        run: git switch -c feat/phase-1.0-operation-reconciliation
+      - name: Apply bounded reconciliation slice
+        run: python3 .github/scripts/_temp_phase1_operation_reconciliation.py
+      - name: Remove bootstrap-only files
+        run: |
+          rm .github/scripts/_temp_phase1_operation_reconciliation.py
+          rm .github/workflows/_temp-phase1-operation-reconciliation.yml
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck storage
+        run: pnpm --filter @alcode/storage typecheck
+      - name: Run operation and recovery tests
+        run: pnpm exec vitest run packages/storage/src/operations.test.ts packages/storage/src/recovery.test.ts packages/host-runtime/src/recovery.integration.test.ts
+      - name: Commit and publish implementation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/storage/src/operations.ts packages/storage/src/index.ts packages/storage/src/operations.test.ts
+          git commit -m "feat(1.0): add canonical operation reconciliation facts"
+          git push origin feat/phase-1.0-operation-reconciliation
