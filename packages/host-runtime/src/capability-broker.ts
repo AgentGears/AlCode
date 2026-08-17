@@ -145,6 +145,7 @@ function verificationResultData(execution: HostCapabilityResult, outcome: Execut
 function workspaceAccessClassOf(capability: HostCapability): WorkspaceAccessClassV1 {
   const explicit = capability.workspaceAccessClass;
   if (explicit === "no_workspace_access" || explicit === "read_only" || explicit === "may_write") return explicit;
+  if (explicit !== undefined) return "may_write";
   return capability.isReadOnly === true ? "read_only" : "may_write";
 }
 
