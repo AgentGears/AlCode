@@ -436,8 +436,8 @@ export class CapabilityBroker {
           }
           return this.finish(request, {
             outcome: "denied",
-            errorCode: "program_mutation_settlement_pending",
-            error: "Program-linked may_write execution remains non-admitting until confirmed-effect generation advancement and post-quiescence observation settlement are installed",
+            errorCode: "program_mutation_settlement_invalid",
+            error: "Program-linked may_write routing rejected a capability that declared a supported quiescence contract",
           });
         }
         pre = routed.events;
@@ -502,8 +502,7 @@ export class CapabilityBroker {
     const resultData = verificationResultData(execution, outcome);
     const verification = await this.cognition.evaluateVerification(request.sessionId as string, verificationPlan.match, resultData);
 
-    await this.admission.enqueue(async () => {
-      const head = await this.store.headSequence();
+    const terminalDraftsForHead = (head: number): EventDraft<string, unknown>[] => {
       const completedEventId = mkEventId();
       const evidenceKind = isReadOnly ? "observation" : "action_result";
       const evidenceSequence = head + (quiescenceContract !== undefined ? 3 : 2);
@@ -572,11 +571,26 @@ export class CapabilityBroker {
         });
       }
 
+      return drafts;
+    };
+
+    if (program !== null && workspaceAccessClass === "may_write" && this.programOperationAuthority !== undefined) {
+      await this.programOperationAuthority.settleProgramMutation({
+        sessionId: request.sessionId,
+        operationId: operationId as string,
+        program,
+        buildTerminalDrafts: terminalDraftsForHead,
+      });
+    } else {
+      await this.admission.enqueue(async () => {
+        const head = await this.store.headSequence();
+        const drafts = terminalDraftsForHead(head);
       const persisted = await this.store.append(drafts);
       for (let i = 0; i < persisted.length; i++) {
         if (persisted[i]?.sequence !== head + i + 1) throw new Error("capability terminal batch interleaved during canonical admission");
       }
-    });
+      });
+    }
 
     this.catchUpBarriers();
     return this.finish(request, { operationId, outcome, result: execution.result });
