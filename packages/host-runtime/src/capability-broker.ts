@@ -33,16 +33,36 @@ import {
   type ProgramRootOperationAuthorityV1,
 } from "./program-dispatch.ts";
 
+export interface HostCapabilityQuiescenceProofV1 {
+  containmentInstanceId: string;
+  proofContractId: string;
+  proofContractVersion: number;
+  proofKind: "operation_containment_ended";
+  evidence: unknown;
+}
+
+export interface HostCapabilityExecutionQuiescenceContractV1 {
+  containment: "operation_scoped_containment";
+  proofContractId: string;
+  proofContractVersion: number;
+  containmentInstanceId: string;
+  providerBindingRevision?: string;
+}
+
 export interface HostCapabilityResult {
   result: unknown;
   outcome?: ExecutionOutcome;
   stdout?: string;
   stderr?: string;
   exitCode?: number | null;
+  /** Host-authorized adapter evidence; never inferred from return/outcome alone. */
+  quiescenceProof?: HostCapabilityQuiescenceProofV1;
 }
 
 export interface HostCapabilityContext {
   signal?: AbortSignal;
+  /** Exact persisted operation-local contract the adapter must prove ended. */
+  quiescenceContract?: HostCapabilityExecutionQuiescenceContractV1;
 }
 
 export type WorkspaceAccessClassV1 = "no_workspace_access" | "read_only" | "may_write";
@@ -151,11 +171,49 @@ function workspaceAccessClassOf(capability: HostCapability): WorkspaceAccessClas
   return capability.isReadOnly === true ? "read_only" : "may_write";
 }
 
-function operationScopedQuiescence(capability: HostCapability): HostCapabilityQuiescenceV1 | undefined {
+const OPERATION_SCOPE_PROOF_CONTRACT_ID = "host-capability-promise-v1";
+const OPERATION_SCOPE_PROOF_CONTRACT_VERSION = 1;
+
+function operationScopedQuiescence(capability: HostCapability): (HostCapabilityQuiescenceV1 & { containmentKind: "operation_scoped_containment" }) | undefined {
   const contract = capability.quiescence;
   if (contract?.containmentKind !== "operation_scoped_containment") return undefined;
-  if (!contract.proofContractId || !Number.isSafeInteger(contract.proofContractVersion) || contract.proofContractVersion <= 0) return undefined;
-  return contract;
+  if (contract.proofContractId !== OPERATION_SCOPE_PROOF_CONTRACT_ID ||
+      contract.proofContractVersion !== OPERATION_SCOPE_PROOF_CONTRACT_VERSION) return undefined;
+  return { ...contract, containmentKind: "operation_scoped_containment" };
+}
+
+function validateOperationScopedQuiescenceProof(
+  contract: HostCapabilityExecutionQuiescenceContractV1 | undefined,
+  proof: HostCapabilityQuiescenceProofV1 | undefined,
+): {
+  containmentInstanceId: string;
+  proofContractId: string;
+  proofContractVersion: number;
+  proofKind: "operation_containment_ended";
+  proofEvidenceDigest: string;
+} | undefined {
+  if (contract === undefined || proof === undefined) return undefined;
+  if (contract.proofContractId !== OPERATION_SCOPE_PROOF_CONTRACT_ID ||
+      contract.proofContractVersion !== OPERATION_SCOPE_PROOF_CONTRACT_VERSION) return undefined;
+  if (proof.containmentInstanceId !== contract.containmentInstanceId ||
+      proof.proofContractId !== contract.proofContractId ||
+      proof.proofContractVersion !== contract.proofContractVersion ||
+      proof.proofKind !== "operation_containment_ended") return undefined;
+
+  // Versioned Host proof evaluator v1: the Host-authorized adapter must attest
+  // that the exact operation-scoped containment instance ended. A caller return,
+  // timeout, cancellation, or terminal outcome never synthesizes this evidence.
+  const evidence = record(proof.evidence);
+  if (evidence.kind !== "operation_scope_ended" ||
+      String(evidence.containmentInstanceId ?? "") !== contract.containmentInstanceId) return undefined;
+
+  return {
+    containmentInstanceId: contract.containmentInstanceId,
+    proofContractId: contract.proofContractId,
+    proofContractVersion: contract.proofContractVersion,
+    proofKind: "operation_containment_ended",
+    proofEvidenceDigest: canonicalDigestOf(proof.evidence),
+  };
 }
 
 function definitionOf(capability: HostCapability): ModelToolDefinition {
@@ -384,7 +442,7 @@ export class CapabilityBroker {
       proofContractVersion: quiescenceBinding.proofContractVersion,
       containmentInstanceId: uuidv7(),
       ...(registration.binding.kind === "dynamic" ? { providerBindingRevision: registration.binding.revision } : {}),
-    };
+    } satisfies HostCapabilityExecutionQuiescenceContractV1 & { version: 1 };
     const preDrafts: EventDraft<string, unknown>[] = [
       {
         eventId: mkEventId(), workspaceId, sessionId: request.sessionId, operationId,
@@ -491,13 +549,20 @@ export class CapabilityBroker {
     let execution: HostCapabilityResult;
     let outcome: ExecutionOutcome;
     try {
-      const context = request.signal ? { signal: request.signal } : {};
+      const context: HostCapabilityContext = {
+        ...(request.signal ? { signal: request.signal } : {}),
+        ...(quiescenceContract !== undefined ? { quiescenceContract } : {}),
+      };
       execution = await capability.execute(frozenArgs, context);
       outcome = execution.outcome ?? "succeeded";
     } catch (error) {
       outcome = "failed";
       execution = { result: { error: error instanceof Error ? error.message : String(error) }, outcome };
     }
+    const validatedQuiescenceProof = validateOperationScopedQuiescenceProof(
+      quiescenceContract,
+      execution.quiescenceProof,
+    );
 
     const resultData = verificationResultData(execution, outcome);
     const verification = await this.cognition.evaluateVerification(request.sessionId as string, verificationPlan.match, resultData);
@@ -505,7 +570,7 @@ export class CapabilityBroker {
     const terminalDraftsForHead = (head: number): EventDraft<string, unknown>[] => {
       const completedEventId = mkEventId();
       const evidenceKind = isReadOnly ? "observation" : "action_result";
-      const evidenceSequence = head + (quiescenceContract !== undefined ? 3 : 2);
+      const evidenceSequence = head + (validatedQuiescenceProof !== undefined ? 3 : 2);
       const evidenceId = `event:${request.sessionId as string}:${evidenceSequence}:${evidenceKind}`;
       const drafts: EventDraft<string, unknown>[] = [
         {
@@ -515,17 +580,19 @@ export class CapabilityBroker {
           producer: { kind: "runtime", component: "host-capability-broker" },
         },
       ];
-      if (quiescenceContract !== undefined) {
+      if (validatedQuiescenceProof !== undefined && quiescenceContract !== undefined) {
         drafts.push({
           eventId: mkEventId(), workspaceId, sessionId: request.sessionId, operationId, ...programEnvelope,
           causationEventId: completedEventId,
           occurredAt: new Date().toISOString(), type: "operation.mutation_quiesced",
           payload: {
             operationId: operationId as string,
-            containmentInstanceId: quiescenceContract.containmentInstanceId,
+            containmentInstanceId: validatedQuiescenceProof.containmentInstanceId,
             containment: quiescenceContract.containment,
-            proofContractId: quiescenceContract.proofContractId,
-            proofContractVersion: quiescenceContract.proofContractVersion,
+            proofContractId: validatedQuiescenceProof.proofContractId,
+            proofContractVersion: validatedQuiescenceProof.proofContractVersion,
+            proofKind: validatedQuiescenceProof.proofKind,
+            proofEvidenceDigest: validatedQuiescenceProof.proofEvidenceDigest,
             ...(quiescenceContract.providerBindingRevision !== undefined ? { providerBindingRevision: quiescenceContract.providerBindingRevision } : {}),
           },
           payloadSchemaVersion: 1, producer: { kind: "runtime", component: "host-capability-broker" },
@@ -579,6 +646,7 @@ export class CapabilityBroker {
         sessionId: request.sessionId,
         operationId: operationId as string,
         program,
+        quiescenceProven: validatedQuiescenceProof !== undefined,
         buildTerminalDrafts: terminalDraftsForHead,
       });
     } else {
