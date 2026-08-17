@@ -207,3 +207,16 @@ export {
   ProgramAgentControlError,
   PROGRAM_ATTEMPT_PROJECTION_MAX_BYTES,
 } from "./program-agent.ts";
+
+export {
+  HostProgramApplicationControlV1,
+  ProgramApplicationStaleError,
+  APPLICATION_PROGRAM_PROJECTION_MAX_BYTES,
+  type ProgramCreationApplicationAuthorityV1,
+  type ProgramRebaseApplicationAuthorityV1,
+  type ProgramCancellationApplicationAuthorityV1,
+  type ProgramApplicationSnapshotV1,
+  type ProgramApplicationCommandResultV1,
+  type ProgramApplicationPortV1,
+  type HostProgramApplicationControlOptionsV1,
+} from "./program-application.ts";

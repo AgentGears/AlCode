@@ -31,6 +31,20 @@ function requestedDisposition(value: unknown): RequestedDisposition {
   throw new ApplicationProtocolValidationError("requestedDisposition is invalid");
 }
 
+function positiveRevision(value: unknown): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
+    throw new ApplicationProtocolValidationError("expectedProgramRevision must be a positive safe integer");
+  }
+  return value;
+}
+
+function optionalBoundedReason(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  const reason = requiredString(value, "reason");
+  if (reason.length > 4096) throw new ApplicationProtocolValidationError("reason exceeds 4096 characters");
+  return reason;
+}
+
 function permissionDecision(value: unknown): PermissionDecision {
   if (value === "allow_once" || value === "allow_always" || value === "deny") return value;
   throw new ApplicationProtocolValidationError("permission decision is invalid");
@@ -75,6 +89,45 @@ export function parseApplicationCommand(value: unknown): ApplicationCommand {
         type: "permission.respond",
         interactionId: requiredString(input.interactionId, "interactionId"),
         decision: permissionDecision(input.decision),
+      };
+    case "program.creation.accept":
+      return {
+        ...common,
+        type: "program.creation.accept",
+        draftId: requiredString(input.draftId, "draftId"),
+        draftDigest: requiredString(input.draftDigest, "draftDigest"),
+      };
+    case "program.rebase.accept":
+      return {
+        ...common,
+        type: "program.rebase.accept",
+        programStateId: requiredString(input.programStateId, "programStateId"),
+        expectedProgramRevision: positiveRevision(input.expectedProgramRevision),
+        mismatchReceiptId: requiredString(input.mismatchReceiptId, "mismatchReceiptId"),
+      };
+    case "program.cancel": {
+      const reason = optionalBoundedReason(input.reason);
+      return {
+        ...common,
+        type: "program.cancel",
+        programStateId: requiredString(input.programStateId, "programStateId"),
+        expectedProgramRevision: positiveRevision(input.expectedProgramRevision),
+        ...(reason !== undefined ? { reason } : {}),
+      };
+    }
+    case "program.session.attach":
+      return {
+        ...common,
+        type: "program.session.attach",
+        programStateId: requiredString(input.programStateId, "programStateId"),
+        expectedProgramRevision: positiveRevision(input.expectedProgramRevision),
+      };
+    case "program.session.detach":
+      return {
+        ...common,
+        type: "program.session.detach",
+        programStateId: requiredString(input.programStateId, "programStateId"),
+        expectedProgramRevision: positiveRevision(input.expectedProgramRevision),
       };
     default:
       throw new ApplicationProtocolValidationError(`unknown application command type: ${String(input.type)}`);

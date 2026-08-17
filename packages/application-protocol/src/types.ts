@@ -15,7 +15,15 @@ export interface ExecutionCancelCommand extends ApplicationCommandBase { type: "
 export interface QueuePromoteCommand extends ApplicationCommandBase { type: "queue.promote"; queueItemId: string; }
 export type PermissionDecision = "allow_once" | "allow_always" | "deny";
 export interface PermissionRespondCommand extends ApplicationCommandBase { type: "permission.respond"; interactionId: string; decision: PermissionDecision; }
-export type ApplicationCommand = InputSubmitCommand | ExecutionCancelCommand | QueuePromoteCommand | PermissionRespondCommand;
+
+export interface ProgramCreationAcceptCommand extends ApplicationCommandBase { type: "program.creation.accept"; draftId: string; draftDigest: string; }
+export interface ProgramRebaseAcceptCommand extends ApplicationCommandBase { type: "program.rebase.accept"; programStateId: string; expectedProgramRevision: number; mismatchReceiptId: string; }
+export interface ProgramCancelCommand extends ApplicationCommandBase { type: "program.cancel"; programStateId: string; expectedProgramRevision: number; reason?: string; }
+export interface ProgramSessionAttachCommand extends ApplicationCommandBase { type: "program.session.attach"; programStateId: string; expectedProgramRevision: number; }
+export interface ProgramSessionDetachCommand extends ApplicationCommandBase { type: "program.session.detach"; programStateId: string; expectedProgramRevision: number; }
+export type ProgramCommand = ProgramCreationAcceptCommand | ProgramRebaseAcceptCommand | ProgramCancelCommand | ProgramSessionAttachCommand | ProgramSessionDetachCommand;
+
+export type ApplicationCommand = InputSubmitCommand | ExecutionCancelCommand | QueuePromoteCommand | PermissionRespondCommand | ProgramCommand;
 
 export interface PluginCommandBase extends ApplicationCommandBase { registrationId?: string; }
 export interface PluginRegisterCommand extends PluginCommandBase { type: "plugin.register"; sourceRoot: string; scope: "user" | "workspace"; }
@@ -25,7 +33,7 @@ export interface PluginRefreshCommand extends PluginCommandBase { type: "plugin.
 export interface PluginUnregisterCommand extends PluginCommandBase { type: "plugin.unregister"; registrationId: string; }
 export type PluginCommand = PluginRegisterCommand | PluginEnableCommand | PluginDisableCommand | PluginRefreshCommand | PluginUnregisterCommand;
 
-export interface CommandDecision { protocolVersion: ApplicationProtocolVersion; commandId: ApplicationCommandId; sessionId: string; decision: CommandDecisionKind; cursor: ApplicationCursor; reasonCode?: string; admittedDisposition?: AdmittedDisposition; queueItemId?: string; targetExecutionId?: string; }
+export interface CommandDecision { protocolVersion: ApplicationProtocolVersion; commandId: ApplicationCommandId; sessionId: string; decision: CommandDecisionKind; cursor: ApplicationCursor; reasonCode?: string; admittedDisposition?: AdmittedDisposition; queueItemId?: string; targetExecutionId?: string; programStateId?: string; programRevision?: number; draftId?: string; }
 export type PublicTranscriptRole = "user" | "assistant" | "tool_result";
 export interface PublicTranscriptMessage { eventId: string; sequence: number; role: PublicTranscriptRole; text: string; }
 export type PublicOperationLifecycle = "requested" | "started" | "terminal";
@@ -38,9 +46,26 @@ export interface PublicQueueItem { queueItemId: string; sourceCommandId: string;
 export interface PublicPermissionInteraction { interactionId: string; kind: "permission"; status: "pending" | "resolved"; operationId?: string; toolName: string; description: string; resolvedDecision?: PermissionDecision; }
 export interface PublicSessionState { sessionId: string; status: "active" | "stopped"; activeExecutionId?: string; }
 
+export type PublicProgramLifecycle = "active" | "completed" | "cancelled";
+export interface PublicProgramWorkItem { workItemId: string; lifecycle: "pending" | "in_progress" | "awaiting_verification" | "blocked" | "completed"; description: string; }
+export interface PublicProgramBlocker { blockerId: string; workItemId: string | null; reason: string; }
+export interface PublicProgramVerification { obligationId: string; kind: "operation_result" | "workspace_path_state" | "artifact_present"; subjectGeneration: number; status: "current" | "waived" | "stale"; }
+export interface PublicProgramAttempt { programAttemptId: string; workItemId: string; sessionId: string; agentGeneration: number; }
+export interface PublicProgramObservationIdentity { kind: "workspace-observation-v1"; providerKind: string; workspaceIdentity: string; coverageDigest: string; stateDigest: string; }
+export interface PublicProgramMismatch { receiptId: string; currentWorkspaceEffectGeneration: number; currentObservationIdentity: PublicProgramObservationIdentity; }
+export interface PublicProgram {
+  programStateId: string; revision: number; objective: string; lifecycle: PublicProgramLifecycle; attachedSessionIds: string[];
+  workItems: PublicProgramWorkItem[]; currentWorkItemId?: string; blockers: PublicProgramBlocker[]; verification: PublicProgramVerification[]; activeAttempt?: PublicProgramAttempt;
+  control: { rebaseRequired: boolean; executionBaseUnavailable: boolean; mismatch?: PublicProgramMismatch };
+  uncertainty: { outstandingOperations: number; indeterminateEffects: number; unresolvedReconciliation: number };
+  omissions: { workItems: number; blockers: number; verification: number; attachedSessions: number };
+}
+export interface PublicProgramCreation { draftId: string; draftDigest: string; objective: string; sourceSessionId: string; status: "pending"; }
+export interface PublicProgramOmissions { programs: number; pendingCreations: number; }
+
 export interface PublicPlugin { registrationId: string; name: string; scope: "user" | "workspace"; sourceRoot: string; packageDigest: string; status: "registered" | "enabled" | "changed" | "disabled" | "invalid"; diagnostics: Array<{ code: string; severity: "info" | "warning" | "error"; message: string; component?: string }>; components: { skills: string[]; mcpServers: string[]; hooks: string[] }; }
 
-export interface ApplicationSnapshot { protocolVersion: ApplicationProtocolVersion; sessionId: string; cursor: ApplicationCursor; session: PublicSessionState; transcript: PublicTranscriptMessage[]; executions: PublicForegroundExecution[]; operations: PublicOperation[]; queue: PublicQueueItem[]; pendingInteractions: PublicPermissionInteraction[]; plugins?: PublicPlugin[]; }
+export interface ApplicationSnapshot { protocolVersion: ApplicationProtocolVersion; sessionId: string; cursor: ApplicationCursor; session: PublicSessionState; transcript: PublicTranscriptMessage[]; executions: PublicForegroundExecution[]; operations: PublicOperation[]; queue: PublicQueueItem[]; pendingInteractions: PublicPermissionInteraction[]; plugins?: PublicPlugin[]; programs?: PublicProgram[]; pendingProgramCreations?: PublicProgramCreation[]; programOmissions?: PublicProgramOmissions; }
 
 export interface ApplicationEventBase { protocolVersion: ApplicationProtocolVersion; sessionId: string; fromCursor: ApplicationCursor; sequence: ApplicationCursor; occurredAt: string; cause: "user" | "host" | "agent" | "capability" | "recovery"; }
 export interface TranscriptMessageAppendedEvent extends ApplicationEventBase { type: "transcript.message.appended"; message: PublicTranscriptMessage; }

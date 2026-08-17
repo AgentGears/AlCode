@@ -10,6 +10,7 @@ import {
   type ApplicationSnapshot,
   type CommandDecision,
   type PermissionDecision,
+  type ProgramCommand,
   type PublicForegroundExecution,
   type PublicOperation,
   type PublicPermissionInteraction,
@@ -32,6 +33,7 @@ import {
   type WorkspaceEventStore,
 } from "@alcode/storage";
 import { CanonicalAdmissionQueue } from "./admission-queue.ts";
+import type { ProgramApplicationPortV1 } from "./program-application.ts";
 
 export interface ApplicationAgentControl {
   start(sessionId: SessionId, text: string): Promise<boolean>;
@@ -44,6 +46,7 @@ export interface HostApplicationServiceOptions {
   admission: CanonicalAdmissionQueue;
   agent: ApplicationAgentControl;
   maxReplayEvents?: number;
+  program?: ProgramApplicationPortV1;
 }
 
 interface Subscription {
@@ -153,6 +156,9 @@ function commandDecisionPayload(decision: Omit<CommandDecision, "protocolVersion
     ...(decision.admittedDisposition !== undefined ? { admittedDisposition: decision.admittedDisposition } : {}),
     ...(decision.queueItemId !== undefined ? { queueItemId: decision.queueItemId } : {}),
     ...(decision.targetExecutionId !== undefined ? { targetExecutionId: decision.targetExecutionId } : {}),
+    ...(decision.programStateId !== undefined ? { programStateId: decision.programStateId } : {}),
+    ...(decision.programRevision !== undefined ? { programRevision: decision.programRevision } : {}),
+    ...(decision.draftId !== undefined ? { draftId: decision.draftId } : {}),
   };
 }
 
@@ -187,12 +193,22 @@ export class HostApplicationService implements ApplicationServicePort {
       queue: [],
       pendingInteractions: [],
     };
-    return reduceApplicationEvents(initial, events);
+    const snapshot = reduceApplicationEvents(initial, events);
+    if (this.options.program === undefined) return snapshot;
+    const program = await this.options.program.getSnapshot(sessionId);
+    return { ...snapshot, ...program };
   }
 
   async recover(sessionId: string, cursor?: ApplicationCursor): Promise<ApplicationRecoveryResult> {
     const snapshot = await this.getSnapshot(sessionId);
     if (cursor === undefined) return { mode: "snapshot", snapshot, reason: "initial" };
+    // ProgramState may advance under another attached Session. Until the public
+    // stream carries a dedicated cross-session Program delta cursor, a reconnect
+    // with Program projection enabled returns the bounded current snapshot rather
+    // than pretending a session-local event resume is authoritative.
+    if (this.options.program !== undefined) {
+      return { mode: "snapshot", snapshot, reason: "history_unavailable" };
+    }
     if (cursor === snapshot.cursor) return { mode: "resume", fromCursor: cursor, toCursor: cursor, events: [] };
 
     const events = await this.getPublicEvents(sessionId);
@@ -293,6 +309,9 @@ export class HostApplicationService implements ApplicationServicePort {
       const admittedDisposition = optionalString(payload.admittedDisposition);
       const queueItemId = optionalString(payload.queueItemId);
       const targetExecutionId = optionalString(payload.targetExecutionId);
+      const programStateId = optionalString(payload.programStateId);
+      const programRevision = typeof payload.programRevision === "number" ? payload.programRevision : undefined;
+      const draftId = optionalString(payload.draftId);
       return {
         protocolVersion: APPLICATION_PROTOCOL_VERSION,
         commandId: command.commandId,
@@ -302,6 +321,9 @@ export class HostApplicationService implements ApplicationServicePort {
         ...(admittedDisposition !== undefined ? { admittedDisposition: admittedDisposition as AdmittedDisposition } : {}),
         ...(queueItemId !== undefined ? { queueItemId } : {}),
         ...(targetExecutionId !== undefined ? { targetExecutionId } : {}),
+        ...(programStateId !== undefined ? { programStateId } : {}),
+        ...(programRevision !== undefined ? { programRevision } : {}),
+        ...(draftId !== undefined ? { draftId } : {}),
       };
     }
 
@@ -314,7 +336,26 @@ export class HostApplicationService implements ApplicationServicePort {
         return this.handleQueuePromote(command);
       case "permission.respond":
         return this.handlePermissionResponse(command);
+      case "program.creation.accept":
+      case "program.rebase.accept":
+      case "program.cancel":
+      case "program.session.attach":
+      case "program.session.detach":
+        return this.handleProgramCommand(command);
     }
+  }
+
+  private async handleProgramCommand(command: ProgramCommand): Promise<CommandDecision> {
+    if (this.options.program === undefined) {
+      return this.finishDecision(command, "rejected", { reasonCode: "program_not_supported" });
+    }
+    const result = await this.options.program.execute(command);
+    return this.finishDecision(command, result.decision, {
+      ...(result.reasonCode !== undefined ? { reasonCode: result.reasonCode } : {}),
+      ...(result.programStateId !== undefined ? { programStateId: result.programStateId } : {}),
+      ...(result.programRevision !== undefined ? { programRevision: result.programRevision } : {}),
+      ...(result.draftId !== undefined ? { draftId: result.draftId } : {}),
+    });
   }
 
   private async handleInput(command: Extract<ApplicationCommand, { type: "input.submit" }>): Promise<CommandDecision> {
