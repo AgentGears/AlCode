@@ -11,6 +11,10 @@ export {
   type HostCapabilityContext,
   type WorkspaceAccessClassV1,
   type HostCapabilityQuiescenceV1,
+  type HostCapabilityQuiescenceRecoveryInputV1,
+  type HostCapabilityReconciliationInputV1,
+  type HostCapabilityReconciliationResultV1,
+  type HostCapabilityReconciliationV1,
   type ProgramCapabilityOperationContextV1,
   type CapabilityBrokerRequest,
   type CapabilityBrokerResult,
@@ -18,6 +22,7 @@ export {
   type CapabilityApprovalHandler,
   type CapabilityPolicyHookResult,
   type CapabilityHookCoordinator,
+  validateHostCapabilityOperationScopedQuiescenceProofV1,
 } from "./capability-broker.ts";
 export {
   HostApplicationService,
@@ -161,3 +166,12 @@ export {
   type ProgramRootOperationAuthorityV1,
   resolveCurrentProgramOperationContext,
 } from "./program-dispatch.ts";
+
+export {
+  Phase1RecoveryControllerV1,
+  type Phase1RecoveryControllerOptionsV1,
+  type Phase1RecoveryLifecycleV1,
+  type Phase1RecoveryResultV1,
+  type WorkspaceMutationAdmissionAuthorityV1,
+  type WorkspaceMutationAdmissionStatusV1,
+} from "./program-recovery.ts";
