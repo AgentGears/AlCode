@@ -186,5 +186,7 @@ export {
   type ProgramWorkspacePathObservationSourceV1,
   type ProgramVerificationServiceOptionsV1,
   type ProgramVerificationCommandV1,
+  type ProgramProductionStepCommandV1,
+  type ProgramProductionStepResultV1,
   type ProgramVerificationResultV1,
 } from "./program-verification.ts";

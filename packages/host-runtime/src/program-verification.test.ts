@@ -12,7 +12,9 @@ import {
 } from "@alcode/events";
 import {
   applyProgramTransition,
+  asProgramArtifactProductionStepId,
   asProgramAttemptId,
+  asProgramOutputSlotId,
   asProgramStateId,
   asProgramWorkItemId,
   asSessionId,
@@ -26,6 +28,7 @@ import { openLockedWorkspaceStore, type LockedWorkspaceStore } from "@alcode/sto
 import { CanonicalAdmissionQueue } from "./admission-queue.ts";
 import { CognitionGateway } from "./cognition-gateway.ts";
 import { CapabilityBroker, type HostCapability } from "./capability-broker.ts";
+import { HostArtifactStore } from "./artifact-store.ts";
 import { DefaultHostPolicy } from "./policy.ts";
 import { planningCanonicalDigest } from "./planning-read.ts";
 import { ProgramDispatchServiceV1 } from "./program-dispatch.ts";
@@ -72,7 +75,7 @@ async function latestState(store: LockedWorkspaceStore, programStateId: string):
 
 async function setup(
   makeCapability: (observations: ObservationSource) => HostCapability,
-  verificationKind: "operation" | "path" = "operation",
+  verificationKind: "operation" | "path" | "artifact" = "operation",
 ) {
   const dir = mkdtempSync(join(tmpdir(), "alcode-program-verification-"));
   dirs.push(dir);
@@ -92,6 +95,8 @@ async function setup(
   const args = { command: "verify" } as const;
   const obligationId = asVerificationObligationId("verify-1");
   const workItemId = asProgramWorkItemId("work-1");
+  const outputSlotId = asProgramOutputSlotId("slot-1");
+  const productionStepId = asProgramArtifactProductionStepId("produce-1");
   const initial = createProgramState({
     programStateId: asProgramStateId(String(mkProgramStateId())), sourceSessionId: asSessionId(String(sessionId)), objective: "verify",
     workItems: [{ workItemId, creationOrder: 0, description: "verify", dependencyIds: [], affectedPaths: ["src/value.ts"] }],
@@ -99,12 +104,18 @@ async function setup(
       obligationId,
       predicate: verificationKind === "operation"
         ? { kind: "operation_result", specId: "verify-spec", specVersion: 1, canonicalArgs: args, canonicalArgsDigest: planningCanonicalDigest(args) }
-        : { kind: "workspace_path_state", path: "src/value.ts", requiredState: "file" },
-      freshnessScope: verificationKind === "operation"
-        ? { kind: "workspace" }
-        : { kind: "paths", entries: [{ path: "src/value.ts", mode: "exact" }] },
+        : verificationKind === "path"
+          ? { kind: "workspace_path_state", path: "src/value.ts", requiredState: "file" }
+          : { kind: "artifact_present", outputSlotId },
+      freshnessScope: verificationKind === "path"
+        ? { kind: "paths", entries: [{ path: "src/value.ts", mode: "exact" }] }
+        : { kind: "workspace" },
     }],
-    outputSlots: [], productionSteps: [],
+    outputSlots: verificationKind === "artifact" ? [{ outputSlotId, productionStepId }] : [],
+    productionSteps: verificationKind === "artifact" ? [{
+      productionStepId, producerWorkItemId: workItemId, outputChannel: "stdout",
+      specId: "verify-spec", specVersion: 1, canonicalArgs: args, canonicalArgsDigest: planningCanonicalDigest(args),
+    }] : [],
   });
   const withAttempt = applyProgramTransition(initial, {
     kind: "attempt.issue", expectedProgramRevision: initial.revision,
@@ -139,13 +150,17 @@ async function setup(
   const registry = new HostVerificationOperationRegistryV1([{
     specId: "verify-spec", specVersion: 1, capabilityName: capability.name,
     workspaceAccessClass: capability.workspaceAccessClass ?? (capability.isReadOnly ? "read_only" : "may_write"),
-    isSuccessful: (result) => result.outcome === "succeeded" && result.result === "verified",
+    isSuccessful: (result) => result.outcome === "succeeded" && typeof result.result === "string",
+    extractOutput: (result, channel) => channel === "stdout" && typeof result.result === "string" ? result.result : undefined,
   }]);
   const pathObservations = new PathObservationSource(observations);
+  const artifactStore = new HostArtifactStore({ root: join(dir, "artifacts") });
+  await artifactStore.initialize();
   const service = new ProgramVerificationServiceV1({
-    store: locked.store, admission, workspaceCoordinator: coordinator, observations, pathObservations, recovery, capabilityBroker: broker, operationSpecs: registry,
+    store: locked.store, admission, workspaceCoordinator: coordinator, observations, pathObservations, recovery,
+    capabilityBroker: broker, operationSpecs: registry, artifactStore,
   });
-  return { locked, admission, sessionId, initial, withAttempt, obligationId, observations, pathObservations, service };
+  return { locked, admission, sessionId, initial, withAttempt, obligationId, outputSlotId, observations, pathObservations, service, artifactStore };
 }
 
 describeLocked("Program operation_result verification", () => {
@@ -243,5 +258,61 @@ describeLocked("Program workspace_path_state verification", () => {
     expect(result.status).toBe("not_satisfied");
     const state = await latestState(f.locked, String(f.initial.programStateId));
     expect(state.verification[0]!.satisfaction).toBeNull();
+  });
+});
+
+
+describeLocked("Program artifact production and artifact_present verification", () => {
+  it("binds an exact production invocation to one output slot and verifies retained integrity", async () => {
+    let executions = 0;
+    const f = await setup(() => ({
+      name: "verify", workspaceAccessClass: "read_only", async execute() { executions += 1; return { result: "artifact-bytes", outcome: "succeeded" }; },
+    }), "artifact");
+    const produced = await f.service.executeProductionStep({
+      programStateId: String(f.initial.programStateId), expectedProgramRevision: f.withAttempt.revision,
+      outputSlotId: String(f.outputSlotId), sessionId: f.sessionId,
+    });
+    expect(produced.status).toBe("bound");
+    if (produced.status !== "bound") throw new Error("artifact not bound");
+    expect((await f.artifactStore.verify(produced.artifact.handle)).digest).toBe(produced.artifact.digest);
+    await expect(f.service.executeProductionStep({
+      programStateId: String(f.initial.programStateId), expectedProgramRevision: produced.state.revision,
+      outputSlotId: String(f.outputSlotId), sessionId: f.sessionId,
+    })).rejects.toThrow("already bound");
+    expect(executions).toBe(1);
+  });
+
+  it("requires fresh artifact_present evidence at each subjectGeneration even for the same retained ArtifactRef", async () => {
+    const f = await setup(() => ({
+      name: "verify", workspaceAccessClass: "read_only", async execute() { return { result: "artifact-bytes", outcome: "succeeded" }; },
+    }), "artifact");
+    const produced = await f.service.executeProductionStep({
+      programStateId: String(f.initial.programStateId), expectedProgramRevision: f.withAttempt.revision,
+      outputSlotId: String(f.outputSlotId), sessionId: f.sessionId,
+    });
+    if (produced.status !== "bound") throw new Error("artifact not bound");
+    const first = await f.service.satisfyArtifactPresent({
+      programStateId: String(f.initial.programStateId), expectedProgramRevision: produced.state.revision,
+      verificationObligationId: String(f.obligationId), sessionId: f.sessionId,
+    });
+    if (first.status !== "satisfied") throw new Error("G1 artifact verification failed");
+    const invalidated = applyProgramTransition(first.state, {
+      kind: "verification.invalidate", expectedProgramRevision: first.state.revision, obligationIds: [f.obligationId],
+    });
+    await f.admission.append([{
+      eventId: mkEventId(), workspaceId: asWorkspaceId(f.locked.store.workspaceId), sessionId: f.sessionId,
+      programStateId: asEventProgramStateId(String(f.initial.programStateId)), occurredAt: new Date().toISOString(), type: "program.transitioned",
+      payload: { state: invalidated, transitionKind: "verification.invalidate" }, payloadSchemaVersion: 1,
+      producer: { kind: "runtime", component: "verification-test" },
+    }]);
+    const second = await f.service.satisfyArtifactPresent({
+      programStateId: String(f.initial.programStateId), expectedProgramRevision: invalidated.revision,
+      verificationObligationId: String(f.obligationId), sessionId: f.sessionId,
+    });
+    expect(second.status).toBe("satisfied");
+    if (second.status !== "satisfied") throw new Error("G2 artifact verification failed");
+    expect(second.evidenceRefId).not.toBe(first.evidenceRefId);
+    expect(second.state.verification[0]!.subjectGeneration).toBe(2);
+    expect(second.state.decisiveEvidence.filter((item) => item.artifactRef === produced.artifact.handle)).toHaveLength(2);
   });
 });
