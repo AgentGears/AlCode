@@ -1,0 +1,128 @@
+name: Temporary Phase 1 artifact integrity bound
+
+on:
+  push:
+    branches:
+      - automation/phase-1.0-artifact-integrity-bound-build-v2
+
+permissions:
+  contents: write
+
+jobs:
+  correct:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Create correction branch
+        run: |
+          git fetch origin feat/phase-1.0-artifact-verification
+          git checkout -b fix/phase-1.0-artifact-integrity-bound-v2 origin/feat/phase-1.0-artifact-verification
+      - name: Apply bounded correction
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected one match, got {count}")
+              return text.replace(old, new, 1)
+
+          p = Path('packages/host-runtime/src/artifact-store.ts')
+          s = p.read_text()
+          s = replace_once(s,
+              'import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";\n',
+              'import { createReadStream } from "node:fs";\nimport { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";\n',
+              'stream import')
+          old = '''  async verify(handle: string): Promise<HostArtifactReference> {
+            const digest = this.digestFromHandle(handle);
+            const target = this.pathForDigest(digest);
+            const info = await stat(target);
+            if (!info.isFile()) throw new Error("artifact reference does not resolve to a regular file");
+            const bytes = await readFile(target);
+            if (bytes.byteLength !== info.size || sha256(bytes) !== digest) throw new Error(`artifact digest mismatch: ${digest}`);
+            return { handle, digest, size: bytes.byteLength };
+          }
+'''
+          new = '''  /**
+           * Revalidate bytes behind a Host content-addressed handle.
+           *
+           * This is an integrity/presence check only. Semantic trust remains the
+           * caller's responsibility (for Phase 1, canonical ProgramState binding plus
+           * exact production-operation provenance). Verification is bounded by the
+           * same maximum size that governs Host retention and streams bytes rather
+           * than buffering an artifact into memory.
+           */
+          async verify(handle: string): Promise<HostArtifactReference> {
+            const digest = this.digestFromHandle(handle);
+            const target = this.pathForDigest(digest);
+            const info = await stat(target);
+            if (!info.isFile()) throw new Error("artifact reference does not resolve to a regular file");
+            if (info.size > this.maxArtifactBytes) {
+              throw new Error(`artifact exceeds Host retention bound (${this.maxArtifactBytes} bytes)`);
+            }
+
+            const hash = createHash("sha256");
+            let size = 0;
+            for await (const chunk of createReadStream(target)) {
+              const bytes = chunk as Buffer;
+              size += bytes.byteLength;
+              if (size > this.maxArtifactBytes) {
+                throw new Error(`artifact exceeds Host retention bound (${this.maxArtifactBytes} bytes)`);
+              }
+              hash.update(bytes);
+            }
+            if (size !== info.size || hash.digest("hex") !== digest) {
+              throw new Error(`artifact digest mismatch: ${digest}`);
+            }
+            return { handle, digest, size };
+          }
+'''
+          s = replace_once(s, old, new, 'verify implementation')
+          p.write_text(s)
+
+          p = Path('packages/host-runtime/src/artifact-store.test.ts')
+          s = p.read_text()
+          insert = '''
+
+            it("bounds full integrity verification by the Host retention ceiling", async () => {
+              const root = await tempRoot();
+              const store = new HostArtifactStore({ root, maxArtifactBytes: 8, maxInlineReadBytes: 4 });
+              await store.initialize();
+              const reference = await store.retain("12345678");
+              expect(await store.verify(reference.handle)).toMatchObject({ digest: reference.digest, size: 8 });
+
+              const digest = reference.digest;
+              const target = path.join(root, digest.slice(0, 2), digest.slice(2, 4), digest);
+              await import("node:fs/promises").then(({ writeFile }) => writeFile(target, Buffer.alloc(9, 0x61)));
+              await expect(store.verify(reference.handle)).rejects.toThrow(/retention bound/);
+            });
+'''
+          marker = '\n          });\n'
+          idx = s.rfind(marker)
+          if idx < 0:
+              raise SystemExit('artifact test suite terminator missing')
+          s = s[:idx] + insert + s[idx:]
+          p.write_text(s)
+          PY
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm --filter @alcode/host-runtime typecheck
+      - name: Focused tests
+        run: |
+          pnpm exec vitest run packages/host-runtime/src/artifact-store.test.ts packages/host-runtime/src/program-verification.test.ts
+      - name: Commit and publish correction
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/host-runtime/src/artifact-store.ts packages/host-runtime/src/artifact-store.test.ts
+          git commit -m "fix(1.0): bound artifact integrity verification"
+          git push origin fix/phase-1.0-artifact-integrity-bound-v2
