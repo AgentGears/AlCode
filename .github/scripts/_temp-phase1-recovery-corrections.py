@@ -1,0 +1,316 @@
+from pathlib import Path
+
+
+def replace_once(text: str, old: str, new: str, label: str) -> str:
+    count = text.count(old)
+    if count != 1:
+        raise SystemExit(f"{label}: expected one match, got {count}")
+    return text.replace(old, new, 1)
+
+
+p = Path("packages/host-runtime/src/program-recovery.ts")
+s = p.read_text()
+old = '''function acceptedBaseSessionId(
+  events: readonly PersistedDomainEvent<string, unknown>[],
+  programStateId: string,
+  accepted: ProgramAttemptExecutionBase,
+): EventSessionId | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i]!;
+    if (String(event.programStateId ?? "") !== programStateId) continue;
+    if (event.type !== "program.created" && event.type !== "program.transitioned") continue;
+    const state = record(event.payload).state as ProgramState | undefined;
+    if (state?.acceptedExecutionBase !== null && state?.acceptedExecutionBase !== undefined &&
+        sameBase(state.acceptedExecutionBase, accepted)) {
+      return event.sessionId;
+    }
+  }
+  return null;
+}
+'''
+new = '''function acceptedBaseSessionId(
+  events: readonly PersistedDomainEvent<string, unknown>[],
+  programStateId: string,
+  accepted: ProgramAttemptExecutionBase,
+): EventSessionId | null {
+  let previous: ProgramAttemptExecutionBase | null | undefined;
+  let source: EventSessionId | null = null;
+  for (const event of events) {
+    if (String(event.programStateId ?? "") !== programStateId) continue;
+    if (event.type !== "program.created" && event.type !== "program.transitioned") continue;
+    const state = record(event.payload).state as ProgramState | undefined;
+    if (state === undefined) continue;
+    const current = state.acceptedExecutionBase;
+    const changed = previous === undefined
+      ? current !== null
+      : previous === null
+        ? current !== null
+        : current === null || !sameBase(previous, current);
+    if (changed && current !== null && sameBase(current, accepted)) source = event.sessionId;
+    previous = current;
+  }
+  return source;
+}
+'''
+s = replace_once(s, old, new, "accepted-base source attribution")
+old = '''      if (state.executionBaseMismatch !== null) {
+        const receiptCandidate: ProgramAttemptExecutionBase = {
+          workspaceEffectGeneration: state.executionBaseMismatch.currentWorkspaceEffectGeneration,
+          observation: state.executionBaseMismatch.currentObservationIdentity,
+        };
+        if (!sameBase(receiptCandidate, currentBase)) {
+          return { clear: false, reason: `Execution base changed after mismatch receipt: ${programStateId}` } as const;
+        }
+        continue;
+      }
+'''
+new = '''      if (state.executionBaseMismatch !== null) {
+        const receiptCandidate: ProgramAttemptExecutionBase = {
+          workspaceEffectGeneration: state.executionBaseMismatch.currentWorkspaceEffectGeneration,
+          observation: state.executionBaseMismatch.currentObservationIdentity,
+        };
+        if (sameBase(receiptCandidate, currentBase)) continue;
+
+        // A mismatch receipt is a candidate, not a lease on a stale base.
+        // If the Workspace changed again while the Host was down, refresh
+        // the receipt at this recovery cut and conservatively invalidate
+        // verification for the new unknown-impact change before recovery clears.
+        const receiptId = asExecutionBaseMismatchReceiptId(randomUUID());
+        const receipt = {
+          receiptId,
+          programStateId: state.programStateId,
+          expectedProgramRevision: state.revision,
+          acceptedWorkspaceEffectGeneration: state.acceptedExecutionBase.workspaceEffectGeneration,
+          acceptedObservationIdentity: state.acceptedExecutionBase.observation,
+          currentWorkspaceEffectGeneration: currentBase.workspaceEffectGeneration,
+          currentObservationIdentity: currentBase.observation,
+          kind: mismatchKind(state.acceptedExecutionBase, currentBase),
+          verificationImpactComplete: true,
+        } as const;
+        const next = applyProgramTransition(state, {
+          kind: "execution_base.mismatch",
+          expectedProgramRevision: state.revision,
+          receipt,
+          invalidateVerificationObligationIds: state.verification.map((item) => item.obligationId),
+        });
+        drafts.push(transitionEvent(
+          this.options.store,
+          sourceSessionId,
+          next,
+          "execution_base.mismatch.recovery",
+          String(receiptId),
+        ));
+        continue;
+      }
+'''
+s = replace_once(s, old, new, "refresh stale mismatch receipt")
+p.write_text(s)
+
+p = Path("packages/host-runtime/src/capability-broker.ts")
+s = p.read_text()
+old = '''        const routed = await this.admission.enqueue(async () => {
+          const currentProgram = await resolveCurrentProgramOperationContext(this.store, request.sessionId);
+          if (currentProgram !== null) return { status: "program_authority_required" as const };
+          return { status: "appended" as const, events: await this.store.append(preDrafts) };
+        });
+        if (routed.status === "program_authority_required") {
+          return this.finish(request, {
+            outcome: "denied",
+            errorCode: "program_operation_authority_unavailable",
+            error: "An active ProgramAttempt requires protected Program operation authority",
+          });
+        }
+        pre = routed.events;
+'''
+new = '''        const routed = await this.admission.enqueue(async () => {
+          const currentProgram = await resolveCurrentProgramOperationContext(this.store, request.sessionId);
+          if (currentProgram !== null) return { status: "program_authority_required" as const };
+          if (workspaceAccessClass === "may_write" && this.workspaceMutationAdmissionAuthority !== undefined) {
+            const recoveryStatus = await this.workspaceMutationAdmissionAuthority.mayWriteAdmissionStatus();
+            if (recoveryStatus.status !== "clear") {
+              return { status: "workspace_mutation_blocked" as const, recoveryStatus };
+            }
+          }
+          return { status: "appended" as const, events: await this.store.append(preDrafts) };
+        });
+        if (routed.status === "program_authority_required") {
+          return this.finish(request, {
+            outcome: "denied",
+            errorCode: "program_operation_authority_unavailable",
+            error: "An active ProgramAttempt requires protected Program operation authority",
+          });
+        }
+        if (routed.status === "workspace_mutation_blocked") {
+          return this.finish(request, routed.recoveryStatus.status === "writer_barrier"
+            ? {
+                outcome: "denied",
+                errorCode: "workspace_writer_barrier",
+                error: `Outstanding Workspace writer barrier: ${routed.recoveryStatus.operationIds.join(",")}`,
+              }
+            : {
+                outcome: "denied",
+                errorCode: "workspace_recovery_blocked",
+                error: routed.recoveryStatus.reason,
+              });
+        }
+        pre = routed.events;
+'''
+s = replace_once(s, old, new, "atomic ordinary may_write recovery recheck")
+p.write_text(s)
+
+p = Path("packages/host-runtime/src/program-recovery.test.ts")
+s = p.read_text()
+s = replace_once(
+    s,
+    "  asProgramAttemptId,\n",
+    "  asExecutionBaseMismatchReceiptId,\n  asProgramAttemptId,\n",
+    "test mismatch id import",
+)
+s += r'''
+
+describeLocked("Phase 1 recovery race and attribution corrections", () => {
+  it("refreshes a stale mismatch receipt using the session that established the accepted base", async () => {
+    const runtime = await setup("06");
+    const secondSession = asEventSessionId(uuidv7());
+    const initial = createProgramState({
+      programStateId: asProgramStateId(String(mkProgramStateId())),
+      sourceSessionId: asSessionId(String(runtime.sessionId)),
+      objective: "refresh recovery mismatch",
+      workItems: [{
+        workItemId: asProgramWorkItemId("work-refresh"),
+        creationOrder: 0,
+        description: "refresh",
+        dependencyIds: [],
+        affectedPaths: ["src/refresh.ts"],
+      }],
+      verification: [],
+      outputSlots: [],
+      productionSteps: [],
+    });
+    const accepted = applyProgramTransition(initial, {
+      kind: "execution_base.adopt",
+      expectedProgramRevision: initial.revision,
+      executionBase: base(runtime.locked.store.workspaceId, 0, "accepted"),
+    });
+    const attached = applyProgramTransition(accepted, {
+      kind: "session.attach",
+      expectedProgramRevision: accepted.revision,
+      sessionId: asSessionId(String(secondSession)),
+    });
+    const oldReceiptId = asExecutionBaseMismatchReceiptId(uuidv7());
+    const mismatched = applyProgramTransition(attached, {
+      kind: "execution_base.mismatch",
+      expectedProgramRevision: attached.revision,
+      receipt: {
+        receiptId: oldReceiptId,
+        programStateId: attached.programStateId,
+        expectedProgramRevision: attached.revision,
+        acceptedWorkspaceEffectGeneration: 0,
+        acceptedObservationIdentity: base(runtime.locked.store.workspaceId, 0, "accepted").observation,
+        currentWorkspaceEffectGeneration: 0,
+        currentObservationIdentity: base(runtime.locked.store.workspaceId, 0, "candidate-1").observation,
+        kind: "observation_mismatch",
+        verificationImpactComplete: true,
+      },
+      invalidateVerificationObligationIds: [],
+    });
+    const envelope = asEventProgramStateId(String(initial.programStateId));
+    await runtime.admission.append([
+      {
+        eventId: mkEventId(), workspaceId: asWorkspaceId(runtime.locked.store.workspaceId), sessionId: runtime.sessionId,
+        programStateId: envelope, occurredAt: new Date().toISOString(), type: "program.created",
+        payload: { state: initial }, payloadSchemaVersion: 1, producer: { kind: "runtime", component: "recovery-test" },
+      },
+      {
+        eventId: mkEventId(), workspaceId: asWorkspaceId(runtime.locked.store.workspaceId), sessionId: runtime.sessionId,
+        programStateId: envelope, occurredAt: new Date().toISOString(), type: "program.transitioned",
+        payload: { state: accepted, transitionKind: "execution_base.adopt" }, payloadSchemaVersion: 1,
+        producer: { kind: "runtime", component: "recovery-test" },
+      },
+      {
+        eventId: mkEventId(), workspaceId: asWorkspaceId(runtime.locked.store.workspaceId), sessionId: secondSession,
+        programStateId: envelope, occurredAt: new Date().toISOString(), type: "program.transitioned",
+        payload: { state: attached, transitionKind: "session.attach" }, payloadSchemaVersion: 1,
+        producer: { kind: "runtime", component: "recovery-test" },
+      },
+      {
+        eventId: mkEventId(), workspaceId: asWorkspaceId(runtime.locked.store.workspaceId), sessionId: secondSession,
+        programStateId: envelope, occurredAt: new Date().toISOString(), type: "program.transitioned",
+        payload: { state: mismatched, transitionKind: "execution_base.mismatch" }, payloadSchemaVersion: 1,
+        producer: { kind: "runtime", component: "recovery-test" },
+      },
+    ]);
+
+    const controller = new Phase1RecoveryControllerV1({
+      store: runtime.locked.store,
+      admission: runtime.admission,
+      workspaceCoordinator: { runExclusive: (work) => work() },
+      observations: new MutableObservation({
+        status: "complete",
+        base: base(runtime.locked.store.workspaceId, 0, "candidate-2"),
+      }),
+      capabilities: [],
+    });
+    const result = await controller.recover();
+    expect(result.clear).toBe(true);
+    const events = await allEvents(runtime.locked);
+    const refresh = [...events].reverse().find((event) =>
+      event.type === "program.transitioned" &&
+      String(event.programStateId ?? "") === String(initial.programStateId) &&
+      (event.payload as Record<string, unknown>).transitionKind === "execution_base.mismatch.recovery",
+    );
+    expect(refresh).toBeDefined();
+    expect(String(refresh!.sessionId)).toBe(String(runtime.sessionId));
+    const latest = (refresh!.payload as { state: ProgramState }).state;
+    expect(String(latest.executionBaseMismatch?.receiptId)).not.toBe(String(oldReceiptId));
+    expect(latest.executionBaseMismatch?.currentObservationIdentity.stateDigest).toBe("candidate-2");
+  });
+
+  it("rechecks ordinary may_write admission inside the canonical lane after concurrent prechecks", async () => {
+    const runtime = await setup("07");
+    const capability = recoveryCapability("confirmed");
+    const host = new HostRuntime({
+      store: runtime.locked,
+      capabilities: [capability],
+      policy: new DefaultHostPolicy({ knownTools: ["mutate"], allowMutations: true }),
+    });
+
+    let calls = 0;
+    let releaseTop!: () => void;
+    const topReleased = new Promise<void>((resolve) => { releaseTop = resolve; });
+    const authority = {
+      async mayWriteAdmissionStatus() {
+        calls += 1;
+        if (calls <= 2) {
+          if (calls === 2) releaseTop();
+          await topReleased;
+          return { status: "clear" as const };
+        }
+        if (calls === 3) return { status: "clear" as const };
+        return { status: "writer_barrier" as const, operationIds: ["concurrent-writer"] };
+      },
+    };
+    host.capabilityBroker.setWorkspaceMutationAdmissionAuthority(authority);
+
+    const [first, second] = await Promise.all([
+      host.capabilityBroker.execute({
+        sessionId: runtime.sessionId,
+        toolCallId: "race-a",
+        toolName: "mutate",
+        args: { path: "a.txt" },
+      }),
+      host.capabilityBroker.execute({
+        sessionId: runtime.sessionId,
+        toolCallId: "race-b",
+        toolName: "mutate",
+        args: { path: "b.txt" },
+      }),
+    ]);
+    const outcomes = [first, second];
+    expect(outcomes.filter((result) => result.outcome === "succeeded")).toHaveLength(1);
+    expect(outcomes.find((result) => result.errorCode === "workspace_writer_barrier")).toBeDefined();
+    expect(calls).toBeGreaterThanOrEqual(4);
+  });
+});
+'''
+p.write_text(s)
