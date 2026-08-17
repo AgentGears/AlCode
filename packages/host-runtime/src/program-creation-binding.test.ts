@@ -158,4 +158,52 @@ describeLocked("Program creation source-session binding", () => {
     expect(types).toContain("runtime.session.stopped");
     locked.close();
   });
+
+  it("rejects Program creation for a session attached by a later Program transition", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "alcode-program-transition-binding-"));
+    const locked = await openLockedWorkspaceStore({
+      databasePath: join(dir, "workspace.sqlite"),
+      lockPath: join(dir, "workspace.lock"),
+      workspaceId: "018f0000-0000-7000-8000-000000000305",
+      repositoryId: "program-transition-binding-test",
+    });
+    const admission = new CanonicalAdmissionQueue(locked.store);
+    const sessions = new HostSessionManager(locked, admission);
+    const session = await sessions.openOrResume();
+    const registry = new PlanningReadRegistry("planning-empty-v1", 1, []);
+    const service = new ProgramCreationServiceV1({
+      store: locked.store,
+      admission,
+      planningReads: registry,
+      planningBarrier: barrier,
+      policy,
+      executionObservationProfiles: executionProfiles,
+    });
+
+    await admission.append([{
+      eventId: mkEventId(),
+      workspaceId: asWorkspaceId(locked.store.workspaceId),
+      sessionId: session.sessionId,
+      occurredAt: new Date().toISOString(),
+      type: "program.transitioned",
+      payload: { state: { attachedSessionIds: [String(session.sessionId)] } },
+      payloadSchemaVersion: 1,
+      producer: { kind: "runtime", component: "program-transition-binding-test" },
+    }]);
+
+    const programProposal = proposal();
+    const sourceObjectiveEventId = await appendObjectiveEvent(
+      admission, locked.store.workspaceId, session.sessionId, programProposal.objective,
+    );
+    const tracker = registry.track(locked.store.workspaceId);
+    await expect(service.sealDraft({
+      sourceSessionId: session.sessionId,
+      proposal: programProposal,
+      planningReads: tracker,
+      sourceObjectiveEventId,
+    })).rejects.toBeInstanceOf(ProgramCreationControlError);
+
+    locked.close();
+  });
+
 });

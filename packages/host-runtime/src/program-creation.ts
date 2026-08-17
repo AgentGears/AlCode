@@ -337,7 +337,7 @@ function sessionHasCreationBinding(
   }
 
   for (const event of events) {
-    if (event.type !== "program.created") continue;
+    if (event.type !== "program.created" && event.type !== "program.transitioned") continue;
     const state = record(record(event.payload).state);
     const attached = state.attachedSessionIds;
     if (Array.isArray(attached) && attached.some((value) => String(value) === sessionId)) {
