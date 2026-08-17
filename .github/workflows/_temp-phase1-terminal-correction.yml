@@ -1,0 +1,50 @@
+name: Temporary Phase 1 terminal correction
+on:
+  push:
+    branches: [automation/phase-1.0-terminal-correction-build]
+permissions:
+  contents: write
+jobs:
+  correct:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.17.0
+          cache: pnpm
+      - name: Create correction branch
+        run: |
+          git switch -c fix/phase-1.0-terminal-predicate-narrowing 4ac103a164fc181438b620dd9f35358af6148fcc
+      - name: Apply bounded correction
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('packages/host-runtime/src/program-terminal.ts')
+          s = p.read_text()
+          old = '''    if (obligation.predicate.kind !== "artifact_present") continue;\n    if (obligation.waiver?.subjectGeneration === obligation.subjectGeneration) continue;'''
+          new = '''    if (obligation.predicate.kind !== "artifact_present") continue;\n    const outputSlotId = obligation.predicate.outputSlotId;\n    if (obligation.waiver?.subjectGeneration === obligation.subjectGeneration) continue;'''
+          if old not in s:
+              raise SystemExit('narrowing anchor not found')
+          s = s.replace(old, new, 1)
+          s = s.replace('artifact.outputSlotId === obligation.predicate.outputSlotId,', 'artifact.outputSlotId === outputSlotId,', 1)
+          p.write_text(s)
+          PY
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm --filter @alcode/host-runtime typecheck
+      - name: Focused tests
+        run: pnpm --filter @alcode/host-runtime test -- program-terminal.test.ts
+      - name: Publish correction
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/host-runtime/src/program-terminal.ts
+          git commit -m "fix(1.0): preserve artifact predicate narrowing"
+          git push origin HEAD:fix/phase-1.0-terminal-predicate-narrowing
