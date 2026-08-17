@@ -124,13 +124,22 @@ function hasEffectGeneration(events: readonly PersistedDomainEvent<string, unkno
 
 function durableWorkspaceEffectGeneration(events: readonly PersistedDomainEvent<string, unknown>[]): number {
   let current = 0;
+  const operationIds = new Set<string>();
   for (const event of events) {
     if (event.type !== "workspace.effect_generation.advanced") continue;
-    const generation = Number(record(event.payload).workspaceEffectGeneration);
-    if (!Number.isSafeInteger(generation) || generation < 0) {
-      throw new Error("Invalid durable WorkspaceEffectGeneration event during recovery");
+    const payload = record(event.payload);
+    const previous = Number(payload.previousWorkspaceEffectGeneration);
+    const generation = Number(payload.workspaceEffectGeneration);
+    const operationId = String(payload.operationId ?? event.operationId ?? "");
+    if (!Number.isSafeInteger(previous) || previous < 0 ||
+        !Number.isSafeInteger(generation) || generation <= 0 ||
+        previous !== current || generation !== current + 1 ||
+        operationId.length === 0 || operationIds.has(operationId) ||
+        payload.effectStatus !== "confirmed") {
+      throw new Error("Invalid WorkspaceEffectGeneration continuity");
     }
-    current = Math.max(current, generation);
+    operationIds.add(operationId);
+    current = generation;
   }
   return current;
 }
