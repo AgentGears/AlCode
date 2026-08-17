@@ -1,0 +1,138 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  asProgramStateId as asEventProgramStateId,
+  asWorkspaceId,
+  mkEventId,
+  mkOperationId,
+  mkProgramStateId,
+  type EventDraft,
+  type PersistedDomainEvent,
+  type SessionId,
+} from "@alcode/events";
+import {
+  asProgramStateId,
+  asProgramWorkItemId,
+  asSessionId,
+  createProgramState,
+  type ProgramAttemptExecutionBase,
+  type ProgramState,
+} from "@alcode/program-state";
+import { openLockedWorkspaceStore, type LockedWorkspaceStore } from "@alcode/storage";
+import { CanonicalAdmissionQueue } from "./admission-queue.ts";
+import { CapabilityBroker, type HostCapability } from "./capability-broker.ts";
+import { CognitionGateway } from "./cognition-gateway.ts";
+import { DefaultHostPolicy } from "./policy.ts";
+import { ProgramDispatchServiceV1, ProgramDispatchStaleError } from "./program-dispatch.ts";
+import { HostSessionManager } from "./session-manager.ts";
+
+const describeLocked = process.platform === "win32" ? describe.skip : describe;
+const dirs: string[] = [];
+afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+
+function base(workspaceIdentity: string): ProgramAttemptExecutionBase {
+  return { workspaceEffectGeneration: 0, observation: { kind: "workspace-observation-v1", providerKind: "program-operation-test", workspaceIdentity, coverageDigest: "coverage-v1", stateDigest: "state-v1" } };
+}
+
+function program(sessionId: SessionId, suffix: string): ProgramState {
+  return createProgramState({
+    programStateId: asProgramStateId(String(mkProgramStateId())),
+    sourceSessionId: asSessionId(String(sessionId)),
+    objective: `Operation ${suffix}`,
+    workItems: [{ workItemId: asProgramWorkItemId(`work-${suffix}`), creationOrder: 0, description: `Do ${suffix}`, dependencyIds: [], affectedPaths: [`src/${suffix}.ts`] }],
+    verification: [], outputSlots: [], productionSteps: [],
+  });
+}
+
+async function replay(locked: LockedWorkspaceStore): Promise<PersistedDomainEvent<string, unknown>[]> {
+  const events: PersistedDomainEvent<string, unknown>[] = [];
+  for await (const event of locked.store.replay()) events.push(event);
+  return events;
+}
+
+async function setup(suffix: string, capability: HostCapability) {
+  const dir = mkdtempSync(join(tmpdir(), `alcode-program-operation-${suffix}-`));
+  dirs.push(dir);
+  const locked = await openLockedWorkspaceStore({ databasePath: join(dir, "workspace.sqlite"), lockPath: join(dir, "workspace.lock"), workspaceId: `018f0000-0000-7000-8000-0000000005${suffix.padStart(2, "0")}`, repositoryId: `program-operation-${suffix}` });
+  const admission = new CanonicalAdmissionQueue(locked.store);
+  const sessions = new HostSessionManager(locked, admission);
+  const session = await sessions.openOrResume();
+  const initial = program(session.sessionId, suffix);
+  await admission.append([{ eventId: mkEventId(), workspaceId: asWorkspaceId(locked.store.workspaceId), sessionId: session.sessionId, programStateId: asEventProgramStateId(String(initial.programStateId)), occurredAt: new Date().toISOString(), type: "program.created", payload: { state: initial }, payloadSchemaVersion: 1, producer: { kind: "runtime", component: "program-operation-test" } }]);
+  const current = base(locked.store.workspaceId);
+  const dispatch = new ProgramDispatchServiceV1({ store: locked.store, admission, workspaceCoordinator: { runExclusive: (work) => work() }, observations: { observe: async () => ({ status: "complete" as const, base: current }) }, agentGenerations: { isCurrent: (_sessionId, generation) => generation === 7 }, recovery: { isClear: () => true }, firstDispatchPlanning: { recheckAcceptedPlanningBase: async () => {} } });
+  const issued = await dispatch.issueAttempt({ programStateId: String(initial.programStateId), expectedProgramRevision: initial.revision, workItemId: `work-${suffix}`, sessionId: session.sessionId, agentGeneration: 7 });
+  if (issued.status !== "issued") throw new Error(`expected Attempt issuance, got ${issued.status}`);
+  const broker = new CapabilityBroker(locked.store, admission, new CognitionGateway(locked), new DefaultHostPolicy({ knownTools: [capability.name], allowMutations: true }), [capability]);
+  broker.setProgramOperationAuthority(dispatch);
+  return { locked, admission, session, initial, issued, dispatch, broker };
+}
+
+function programContext(runtime: Awaited<ReturnType<typeof setup>>, suffix: string) {
+  return { programStateId: String(runtime.initial.programStateId), expectedProgramRevision: runtime.issued.state.revision, programAttemptId: runtime.issued.programAttemptId, workItemId: `work-${suffix}`, agentGeneration: 7 };
+}
+
+describeLocked("Program root operation correlation", () => {
+  it("binds a read-only root operation to the exact current ProgramAttempt", async () => {
+    let executed = 0;
+    const runtime = await setup("11", { name: "inspect", workspaceAccessClass: "read_only", async execute() { executed += 1; return { result: { ok: true }, outcome: "succeeded" }; } });
+    const result = await runtime.broker.execute({ sessionId: runtime.session.sessionId, toolCallId: "tc-program-read", toolName: "inspect", args: { path: "src/11.ts" }, program: programContext(runtime, "11") });
+    expect(result.outcome).toBe("succeeded");
+    expect(executed).toBe(1);
+    const events = await replay(runtime.locked);
+    const requested = events.find((event) => event.type === "operation.requested");
+    expect(String(requested?.programStateId)).toBe(String(runtime.initial.programStateId));
+    expect(requested?.payload).toMatchObject({ programStateId: String(runtime.initial.programStateId), expectedProgramRevision: runtime.issued.state.revision, programAttemptId: runtime.issued.programAttemptId, workItemId: "work-11", agentGeneration: 7, workspaceAccessClass: "read_only", workspaceAccessClassifier: { id: "host-capability-workspace-access-v1", version: 1 } });
+    expect(events.some((event) => event.type === "operation.mutation_quiesced")).toBe(false);
+    runtime.locked.close();
+  });
+
+  it("rejects stale Attempt authority before operation.requested or environmental execution", async () => {
+    let executed = 0;
+    const runtime = await setup("12", { name: "inspect", workspaceAccessClass: "read_only", async execute() { executed += 1; return { result: {}, outcome: "succeeded" }; } });
+    const before = (await replay(runtime.locked)).filter((event) => event.type === "operation.requested").length;
+    await expect(runtime.broker.execute({ sessionId: runtime.session.sessionId, toolCallId: "tc-stale", toolName: "inspect", args: {}, program: { ...programContext(runtime, "12"), programAttemptId: `${runtime.issued.programAttemptId}-stale` } })).rejects.toBeInstanceOf(ProgramDispatchStaleError);
+    expect(executed).toBe(0);
+    expect((await replay(runtime.locked)).filter((event) => event.type === "operation.requested")).toHaveLength(before);
+    runtime.locked.close();
+  });
+
+  it("rejects Program may_write without supported containment before operation.requested", async () => {
+    let executed = 0;
+    const runtime = await setup("13", { name: "mutate", workspaceAccessClass: "may_write", async execute() { executed += 1; return { result: {}, outcome: "succeeded" }; } });
+    const result = await runtime.broker.execute({ sessionId: runtime.session.sessionId, toolCallId: "tc-no-quiescence", toolName: "mutate", args: {}, program: programContext(runtime, "13") });
+    expect(result).toMatchObject({ outcome: "denied", errorCode: "program_quiescence_unsupported" });
+    expect(executed).toBe(0);
+    expect((await replay(runtime.locked)).some((event) => event.type === "operation.requested")).toBe(false);
+    runtime.locked.close();
+  });
+
+  it("persists request-time containment and canonical mutation quiescence proof", async () => {
+    const runtime = await setup("14", { name: "mutate", workspaceAccessClass: "may_write", quiescence: { containmentKind: "operation_scoped_containment", proofContractId: "host-capability-promise-v1", proofContractVersion: 1 }, async execute() { return { result: { ok: true }, outcome: "succeeded" }; } });
+    const result = await runtime.broker.execute({ sessionId: runtime.session.sessionId, toolCallId: "tc-quiesced", toolName: "mutate", args: { path: "src/14.ts" }, program: programContext(runtime, "14") });
+    expect(result.outcome).toBe("succeeded");
+    const events = await replay(runtime.locked);
+    const requested = events.find((event) => event.type === "operation.requested");
+    const quiesced = events.find((event) => event.type === "operation.mutation_quiesced");
+    const contract = (requested?.payload as Record<string, unknown>).quiescenceContract as Record<string, unknown>;
+    expect(contract).toMatchObject({ version: 1, containment: "operation_scoped_containment", proofContractId: "host-capability-promise-v1", proofContractVersion: 1 });
+    expect(typeof contract.containmentInstanceId).toBe("string");
+    expect(quiesced?.payload).toMatchObject({ operationId: result.operationId as string, containmentInstanceId: contract.containmentInstanceId, containment: "operation_scoped_containment", proofContractId: "host-capability-promise-v1", proofContractVersion: 1 });
+    expect(String(quiesced?.programStateId)).toBe(String(runtime.initial.programStateId));
+    runtime.locked.close();
+  });
+
+  it("does not turn a completed legacy pre-baseline writer into a permanent barrier", async () => {
+    const runtime = await setup("15", { name: "inspect", workspaceAccessClass: "read_only", async execute() { return { result: {}, outcome: "succeeded" }; } });
+    const legacyOperationId = mkOperationId();
+    const drafts: EventDraft<string, unknown>[] = [
+      { eventId: mkEventId(), workspaceId: asWorkspaceId(runtime.locked.store.workspaceId), sessionId: runtime.session.sessionId, operationId: legacyOperationId, occurredAt: new Date().toISOString(), type: "operation.requested", payload: { operationId: legacyOperationId as string, toolName: "legacy", args: {}, isReadOnly: false }, payloadSchemaVersion: 1, producer: { kind: "runtime", component: "legacy-test" } },
+      { eventId: mkEventId(), workspaceId: asWorkspaceId(runtime.locked.store.workspaceId), sessionId: runtime.session.sessionId, operationId: legacyOperationId, occurredAt: new Date().toISOString(), type: "operation.completed", payload: { operationId: legacyOperationId as string, outcome: "succeeded", isReadOnly: false }, payloadSchemaVersion: 1, producer: { kind: "runtime", component: "legacy-test" } },
+    ];
+    await runtime.admission.append(drafts);
+    await expect(runtime.dispatch.assertCurrentAttempt({ programStateId: String(runtime.initial.programStateId), expectedProgramRevision: runtime.issued.state.revision, programAttemptId: runtime.issued.programAttemptId, workItemId: "work-15", sessionId: runtime.session.sessionId, agentGeneration: 7 })).resolves.toBeDefined();
+    runtime.locked.close();
+  });
+});

@@ -1,4 +1,5 @@
 import {
+  asOperationId,
   asProgramStateId as asEventProgramStateId,
   asWorkspaceId,
   mkEventId,
@@ -56,6 +57,23 @@ export interface ProgramDispatchServiceOptionsV1 {
   agentGenerations: ProgramAgentGenerationAuthorityV1;
   recovery: ProgramRecoveryAuthorityV1;
   firstDispatchPlanning: ProgramFirstDispatchPlanningBridgeV1;
+}
+
+export interface ProgramRootOperationInputV1 {
+  programStateId: string;
+  expectedProgramRevision: number;
+  programAttemptId: string;
+  workItemId: string;
+  sessionId: EventSessionId;
+  agentGeneration: number;
+  operationId: string;
+}
+
+export interface ProgramRootOperationAuthorityV1 {
+  appendRootOperation(
+    input: ProgramRootOperationInputV1,
+    drafts: readonly EventDraft<string, unknown>[],
+  ): Promise<PersistedDomainEvent<string, unknown>[]>;
 }
 
 export type ProgramDispatchResult =
@@ -141,26 +159,27 @@ function sessionIsActive(
   return started && !stopped;
 }
 
-function outstandingWriterOperations(
-  events: readonly PersistedDomainEvent<string, unknown>[],
-): string[] {
-  const outstanding = new Set<string>();
+function outstandingWriterOperations(events: readonly PersistedDomainEvent<string, unknown>[]): string[] {
+  const writers = new Map<string, { legacy: boolean }>();
   for (const event of events) {
-    const payload = record(event.payload);
-    const operationId = String(event.operationId ?? payload.operationId ?? "");
-    if (operationId.length === 0) continue;
-    const accessClass = payload.workspaceAccessClass;
-    const isMayWrite = accessClass === "may_write" ||
-      (accessClass === undefined && payload.isReadOnly === false);
-    if (event.type === "operation.requested" && isMayWrite) {
-      outstanding.add(operationId);
-      continue;
-    }
-    if (event.type === "operation.mutation_quiesced") {
-      outstanding.delete(operationId);
+    if (event.type === "operation.requested") {
+      const payload = record(event.payload);
+      const operationId = String(payload.operationId ?? event.operationId ?? "");
+      const workspaceAccessClass = payload.workspaceAccessClass;
+      const legacyMayWrite = workspaceAccessClass === undefined && payload.isReadOnly === false;
+      if (operationId && workspaceAccessClass === "may_write") writers.set(operationId, { legacy: false });
+      else if (operationId && legacyMayWrite) writers.set(operationId, { legacy: true });
+    } else if (event.type === "operation.completed") {
+      const payload = record(event.payload);
+      const operationId = String(payload.operationId ?? event.operationId ?? "");
+      if (operationId && writers.get(operationId)?.legacy) writers.delete(operationId);
+    } else if (event.type === "operation.mutation_quiesced") {
+      const payload = record(event.payload);
+      const operationId = String(payload.operationId ?? event.operationId ?? "");
+      if (operationId) writers.delete(operationId);
     }
   }
-  return [...outstanding].sort();
+  return [...writers.keys()].sort((a, b) => a.localeCompare(b, "en"));
 }
 
 function activeWorkspaceAttempt(
@@ -408,6 +427,91 @@ export class ProgramDispatchServiceV1 {
           transitionEvent(this.options.store, input.sessionId, next, "execution_base.rebase_accept", input.mismatchReceiptId),
         ]);
         return next;
+      });
+    });
+  }
+
+  async appendRootOperation(
+    input: ProgramRootOperationInputV1,
+    drafts: readonly EventDraft<string, unknown>[],
+  ): Promise<PersistedDomainEvent<string, unknown>[]> {
+    const programStateId = String(asProgramStateId(input.programStateId));
+    const programAttemptId = String(asProgramAttemptId(input.programAttemptId));
+    const workItemId = String(asProgramWorkItemId(input.workItemId));
+    const operationId = String(asOperationId(input.operationId));
+    const sessionId = String(input.sessionId);
+    if (!Number.isSafeInteger(input.agentGeneration) || input.agentGeneration <= 0) {
+      throw new ProgramDispatchControlError("agentGeneration must be a positive safe integer");
+    }
+    if (drafts.length === 0 || drafts[0]?.type !== "operation.requested") {
+      throw new ProgramDispatchControlError("Program root operation must begin with operation.requested");
+    }
+
+    return this.options.workspaceCoordinator.runExclusive(async () => {
+      const observation = await this.options.observations.observe();
+      if (observation.status === "unknown") {
+        throw new ProgramDispatchStaleError(`Current execution base is unavailable: ${observation.reason}`);
+      }
+      requireObservationWorkspace(this.options.store, observation.base);
+
+      return this.options.admission.enqueue(async () => {
+        const events = await replayAll(this.options.store);
+        const state = requireProgramState(events, programStateId);
+        requireExactRevision(state, input.expectedProgramRevision);
+        if (!sessionIsActive(events, sessionId) ||
+            !state.attachedSessionIds.some((id) => String(id) === sessionId)) {
+          throw new ProgramDispatchStaleError("ProgramAttempt session is stopped or detached");
+        }
+        const attempt = state.activeAttempt;
+        if (attempt === null || String(attempt.programAttemptId) !== programAttemptId) {
+          throw new ProgramDispatchStaleError("ProgramAttempt authority is stale");
+        }
+        if (String(attempt.workItemId) !== workItemId || String(attempt.sessionId) !== sessionId) {
+          throw new ProgramDispatchStaleError("ProgramAttempt work/session authority is stale");
+        }
+        if (attempt.agentGeneration !== input.agentGeneration ||
+            !await this.options.agentGenerations.isCurrent(sessionId, input.agentGeneration)) {
+          throw new ProgramDispatchStaleError("ProgramAttempt Agent generation is stale");
+        }
+        if (!await this.options.recovery.isClear()) {
+          throw new ProgramDispatchStaleError("Program recovery barrier is not clear");
+        }
+        const writers = outstandingWriterOperations(events);
+        if (writers.length > 0) {
+          throw new ProgramDispatchStaleError(`Outstanding Workspace writer barrier: ${writers.join(",")}`);
+        }
+        if (state.executionBaseMismatch !== null || state.executionBaseUnavailable) {
+          throw new ProgramDispatchStaleError("Program execution base is not current");
+        }
+        if (!sameBase(attempt.expectedExecutionBase, observation.base)) {
+          throw new ProgramDispatchStaleError("ProgramAttempt execution base no longer matches the protected current base");
+        }
+
+        const rootPayload = record(drafts[0]!.payload);
+        if (String(rootPayload.programStateId ?? "") !== programStateId ||
+            Number(rootPayload.expectedProgramRevision) !== input.expectedProgramRevision ||
+            String(rootPayload.programAttemptId ?? "") !== programAttemptId ||
+            String(rootPayload.workItemId ?? "") !== workItemId ||
+            Number(rootPayload.agentGeneration) !== input.agentGeneration) {
+          throw new ProgramDispatchControlError("operation.requested payload does not match protected ProgramAttempt authority");
+        }
+
+        const stamped = drafts.map((draft) => {
+          if (String(draft.workspaceId) !== this.options.store.workspaceId) {
+            throw new ProgramDispatchControlError("Program operation draft belongs to another Workspace");
+          }
+          if (String(draft.sessionId) !== sessionId) {
+            throw new ProgramDispatchControlError("Program operation draft session does not match Attempt authority");
+          }
+          if (draft.operationId === undefined || String(draft.operationId) !== operationId) {
+            throw new ProgramDispatchControlError("Program operation draft operationId does not match root operation");
+          }
+          if (draft.programStateId !== undefined && String(draft.programStateId) !== programStateId) {
+            throw new ProgramDispatchControlError("Program operation draft ProgramStateId does not match Attempt authority");
+          }
+          return { ...draft, programStateId: asEventProgramStateId(programStateId) };
+        });
+        return this.options.store.append(stamped);
       });
     });
   }

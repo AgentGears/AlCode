@@ -9,6 +9,9 @@ export {
   type HostCapability,
   type HostCapabilityResult,
   type HostCapabilityContext,
+  type WorkspaceAccessClassV1,
+  type HostCapabilityQuiescenceV1,
+  type ProgramCapabilityOperationContextV1,
   type CapabilityBrokerRequest,
   type CapabilityBrokerResult,
   type CapabilityApprovalDecision,
@@ -151,4 +154,6 @@ export {
   type ProgramRecoveryAuthorityV1,
   type ProgramFirstDispatchPlanningBridgeV1,
   type ProgramDispatchServiceOptionsV1,
+  type ProgramRootOperationInputV1,
+  type ProgramRootOperationAuthorityV1,
 } from "./program-dispatch.ts";
