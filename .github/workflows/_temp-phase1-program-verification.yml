@@ -1,0 +1,43 @@
+name: Temporary Phase 1 Program verification
+
+on:
+  push:
+    branches:
+      - automation/phase-1.0-program-verification-build-v2
+
+permissions:
+  contents: write
+
+jobs:
+  implement:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Preserve builder and create clean branch
+        run: |
+          cp .github/scripts/_temp-phase1-program-verification.py /tmp/program-verification.py
+          git fetch origin main
+          git checkout -b feat/phase-1.0-program-verification origin/main
+      - name: Apply bounded verification slice
+        run: python /tmp/program-verification.py
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm --filter @alcode/host-runtime typecheck
+      - name: Focused tests
+        run: |
+          pnpm exec vitest run packages/host-runtime/src/program-verification.test.ts packages/host-runtime/src/program-dispatch.test.ts packages/host-runtime/src/program-operation-correlation.test.ts packages/host-runtime/src/program-recovery.test.ts packages/host-runtime/src/host-runtime.integration.test.ts
+      - name: Commit and publish
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/host-runtime/src/program-verification.ts packages/host-runtime/src/program-verification.test.ts packages/host-runtime/src/capability-broker.ts packages/host-runtime/src/index.ts
+          git commit -m "feat(1.0): admit Host-owned verification evidence"
+          git push origin feat/phase-1.0-program-verification
