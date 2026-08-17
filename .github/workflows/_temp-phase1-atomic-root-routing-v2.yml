@@ -1,0 +1,57 @@
+name: Temporary Phase 1 atomic root routing correction v2
+
+on:
+  push:
+    branches:
+      - automation/phase-1.0-atomic-root-routing-correction-v2
+
+permissions:
+  contents: write
+
+jobs:
+  correct:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: automation/phase-1.0-atomic-root-routing-correction-v2
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.20.0'
+          cache: pnpm
+      - name: Create corrected implementation branch
+        run: git switch -c feat/phase-1.0-program-operation-atomic-routing-v2
+      - name: Apply bounded atomic-routing correction
+        run: python3 .github/scripts/_temp_phase1_atomic_root_routing.py
+      - name: Add required persisted-event type import
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          path = Path('packages/host-runtime/src/capability-broker.ts')
+          text = path.read_text()
+          old = '  type OperationId,\n  type SessionId,\n'
+          new = '  type OperationId,\n  type PersistedDomainEvent,\n  type SessionId,\n'
+          if text.count(old) != 1:
+              raise SystemExit(f'PersistedDomainEvent import insertion expected one match, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1))
+          PY
+      - name: Remove bootstrap-only files
+        run: |
+          rm .github/scripts/_temp_phase1_atomic_root_routing.py
+          rm .github/workflows/_temp-phase1-atomic-root-routing-v2.yml
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck Host runtime
+        run: pnpm --filter @alcode/host-runtime typecheck
+      - name: Run targeted Program operation and dispatch tests
+        run: pnpm exec vitest run packages/host-runtime/src/program-operation-correlation.test.ts packages/host-runtime/src/program-dispatch.test.ts packages/host-runtime/src/host-runtime.integration.test.ts
+      - name: Commit and publish corrected implementation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix(1.0): make Program root routing atomic"
+          git push origin HEAD:refs/heads/feat/phase-1.0-program-operation-atomic-routing-v2
