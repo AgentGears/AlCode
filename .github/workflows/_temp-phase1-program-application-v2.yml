@@ -1,0 +1,45 @@
+name: Temporary Phase 1 Program Application slice v2
+on:
+  push:
+    branches: [automation/phase-1.0-program-application-build-v2]
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.17.0
+          cache: pnpm
+      - name: Preserve builder and create feature branch
+        run: |
+          cp .github/builders/_temp_program_application.py /tmp/program-application.py
+          cp .github/builders/_temp_program_application_correction.py /tmp/program-application-correction.py
+          git switch -c feat/phase-1.0-program-application 7fcd77e3db49bde0229c1bf2a1a47eeccaef04a0
+      - name: Apply Program Application slice
+        run: |
+          python /tmp/program-application.py
+          python /tmp/program-application-correction.py
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: |
+          pnpm --filter @alcode/application-protocol typecheck
+          pnpm --filter @alcode/host-runtime typecheck
+      - name: Focused tests
+        run: |
+          pnpm exec vitest run packages/application-protocol/src/program-validation.test.ts packages/application-protocol/src/reducer.test.ts packages/host-runtime/src/program-application.test.ts packages/host-runtime/src/application-service.test.ts
+      - name: Commit and publish
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/application-protocol/src packages/host-runtime/src/application-service.ts packages/host-runtime/src/index.ts packages/host-runtime/src/program-application.ts packages/host-runtime/src/program-application.test.ts
+          git commit -m "feat(1.0): expose Program Application control"
+          git push origin HEAD:feat/phase-1.0-program-application
