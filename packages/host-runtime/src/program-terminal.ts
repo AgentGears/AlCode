@@ -277,6 +277,7 @@ function hasRetryableProgramWork(
 async function artifactIntegrityCurrent(state: ProgramState, store: HostArtifactStore): Promise<boolean> {
   for (const obligation of state.verification) {
     if (obligation.predicate.kind !== "artifact_present") continue;
+    const outputSlotId = obligation.predicate.outputSlotId;
     if (obligation.waiver?.subjectGeneration === obligation.subjectGeneration) continue;
     if (!isVerificationCurrent(obligation) || obligation.satisfaction === null) continue;
 
@@ -286,7 +287,7 @@ async function artifactIntegrityCurrent(state: ProgramState, store: HostArtifact
       if (evidence === undefined || evidence.verificationObligationId !== obligation.obligationId ||
           evidence.subjectGeneration !== obligation.subjectGeneration || evidence.artifactRef === null) continue;
       const binding = state.artifacts.find((artifact) =>
-        artifact.artifactRef === evidence.artifactRef && artifact.outputSlotId === obligation.predicate.outputSlotId,
+        artifact.artifactRef === evidence.artifactRef && artifact.outputSlotId === outputSlotId,
       );
       if (binding === undefined) return false;
       foundArtifactEvidence = true;
