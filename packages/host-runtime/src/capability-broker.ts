@@ -127,14 +127,23 @@ export interface HostCapability {
   execute(args: unknown, context: HostCapabilityContext): Promise<HostCapabilityResult>;
 }
 
-export interface HostProgramVerificationInvocationV1 {
-  kind: "operation_result";
-  specId: string;
-  specVersion: number;
-  canonicalArgsDigest: string;
-  verificationObligationId: string;
-  subjectGeneration: number;
-}
+export type HostProgramVerificationInvocationV1 =
+  | {
+      kind: "operation_result";
+      specId: string;
+      specVersion: number;
+      canonicalArgsDigest: string;
+      verificationObligationId: string;
+      subjectGeneration: number;
+    }
+  | {
+      kind: "artifact_production";
+      specId: string;
+      specVersion: number;
+      canonicalArgsDigest: string;
+      productionStepId: string;
+      outputSlotId: string;
+    };
 
 export interface CapabilityBrokerRequest {
   sessionId: SessionId;

@@ -94,6 +94,16 @@ export class HostArtifactStore {
     return { handle, digest, size: info.size };
   }
 
+  async verify(handle: string): Promise<HostArtifactReference> {
+    const digest = this.digestFromHandle(handle);
+    const target = this.pathForDigest(digest);
+    const info = await stat(target);
+    if (!info.isFile()) throw new Error("artifact reference does not resolve to a regular file");
+    const bytes = await readFile(target);
+    if (bytes.byteLength !== info.size || sha256(bytes) !== digest) throw new Error(`artifact digest mismatch: ${digest}`);
+    return { handle, digest, size: bytes.byteLength };
+  }
+
   async read(handle: string, maxBytes = this.maxInlineReadBytes): Promise<Uint8Array> {
     if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) throw new Error("artifact read bound must be a positive integer");
     const digest = this.digestFromHandle(handle);
