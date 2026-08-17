@@ -88,11 +88,22 @@ export type ProgramRoutedRootOperationResultV1 =
     }
   | { status: "program_may_write_blocked"; program: ProgramRootOperationContextV1 };
 
+export interface ProgramMutationSettlementInputV1 {
+  sessionId: EventSessionId;
+  operationId: string;
+  program: ProgramRootOperationContextV1;
+  quiescenceProven: boolean;
+  buildTerminalDrafts(headSequence: number): readonly EventDraft<string, unknown>[];
+}
+
 export interface ProgramRootOperationAuthorityV1 {
   resolveCurrentOperation(sessionId: EventSessionId): Promise<ProgramRootOperationContextV1 | null>;
   appendRoutedRootOperation(
     input: ProgramRoutedRootOperationInputV1,
   ): Promise<ProgramRoutedRootOperationResultV1>;
+  settleProgramMutation(
+    input: ProgramMutationSettlementInputV1,
+  ): Promise<{ state: ProgramState | null; events: PersistedDomainEvent<string, unknown>[] }>;
   appendRootOperation(
     input: ProgramRootOperationInputV1,
     drafts: readonly EventDraft<string, unknown>[],
@@ -267,6 +278,30 @@ function sameBase(left: ProgramAttemptExecutionBase, right: ProgramAttemptExecut
   return canonicalStringify(left) === canonicalStringify(right);
 }
 
+function durableWorkspaceEffectGeneration(
+  events: readonly PersistedDomainEvent<string, unknown>[],
+): number | null {
+  let current: number | null = null;
+  for (const event of events) {
+    if (event.type !== "workspace.effect_generation.advanced") continue;
+    const generation = Number(record(event.payload).workspaceEffectGeneration);
+    if (!Number.isSafeInteger(generation) || generation < 0) {
+      throw new ProgramDispatchControlError("Invalid durable WorkspaceEffectGeneration event");
+    }
+    current = current === null ? generation : Math.max(current, generation);
+  }
+  return current;
+}
+
+function effectiveObservedBase(
+  events: readonly PersistedDomainEvent<string, unknown>[],
+  base: ProgramAttemptExecutionBase,
+): ProgramAttemptExecutionBase {
+  const durable = durableWorkspaceEffectGeneration(events);
+  if (durable === null || durable <= base.workspaceEffectGeneration) return base;
+  return { ...base, workspaceEffectGeneration: durable };
+}
+
 function mismatchKind(
   accepted: ProgramAttemptExecutionBase,
   current: ProgramAttemptExecutionBase,
@@ -386,7 +421,7 @@ export class ProgramDispatchServiceV1 {
           return { status: "execution_base_unavailable", state: next, reason: observation.reason } as const;
         }
 
-        const currentBase = observation.base;
+        const currentBase = effectiveObservedBase(events, observation.base);
         requireObservationWorkspace(this.options.store, currentBase);
         if (state.acceptedExecutionBase !== null && !sameBase(state.acceptedExecutionBase, currentBase)) {
           const receiptId = asExecutionBaseMismatchReceiptId(uuidv7());
@@ -469,7 +504,8 @@ export class ProgramDispatchServiceV1 {
           workspaceEffectGeneration: receipt.currentWorkspaceEffectGeneration,
           observation: receipt.currentObservationIdentity,
         };
-        if (!sameBase(observation.base, candidate)) {
+        const currentBase = effectiveObservedBase(events, observation.base);
+        if (!sameBase(currentBase, candidate)) {
           throw new ProgramDispatchStaleError("Execution base changed again after mismatch receipt creation");
         }
         const next = applyProgramTransition(state, {
@@ -504,14 +540,13 @@ export class ProgramDispatchServiceV1 {
       const preliminaryProgram = input.program ??
         currentProgramOperationContextFromEvents(preliminaryEvents, input.sessionId);
       let protectedObservation: ProgramAttemptExecutionBase | null = null;
-      if (preliminaryProgram !== null && preliminaryProgram !== undefined &&
-          input.workspaceAccessClass !== "may_write") {
+      if (preliminaryProgram !== null && preliminaryProgram !== undefined) {
         const observation = await this.options.observations.observe();
         if (observation.status === "unknown") {
           throw new ProgramDispatchStaleError(`Current execution base is unavailable: ${observation.reason}`);
         }
         requireObservationWorkspace(this.options.store, observation.base);
-        protectedObservation = observation.base;
+        protectedObservation = effectiveObservedBase(preliminaryEvents, observation.base);
       }
 
       return this.options.admission.enqueue(async () => {
@@ -520,6 +555,12 @@ export class ProgramDispatchServiceV1 {
         const program = input.program ?? canonicalProgram;
 
         if (program === null || program === undefined) {
+          if (input.workspaceAccessClass === "may_write") {
+            const writers = outstandingWriterOperations(events);
+            if (writers.length > 0) {
+              throw new ProgramDispatchStaleError(`Outstanding Workspace writer barrier: ${writers.join(",")}`);
+            }
+          }
           const ordinary = input.drafts.map((draft) => {
             if (String(draft.workspaceId) !== this.options.store.workspaceId) {
               throw new ProgramDispatchControlError("Root operation draft belongs to another Workspace");
@@ -543,7 +584,14 @@ export class ProgramDispatchServiceV1 {
         }
 
         if (input.workspaceAccessClass === "may_write") {
-          return { status: "program_may_write_blocked", program } as const;
+          const requested = record(input.drafts[0]!.payload);
+          const quiescence = record(requested.quiescenceContract);
+          if (quiescence.containment !== "operation_scoped_containment" ||
+              typeof quiescence.proofContractId !== "string" || quiescence.proofContractId.length === 0 ||
+              !Number.isSafeInteger(Number(quiescence.proofContractVersion)) || Number(quiescence.proofContractVersion) <= 0 ||
+              typeof quiescence.containmentInstanceId !== "string" || quiescence.containmentInstanceId.length === 0) {
+            return { status: "program_may_write_blocked", program } as const;
+          }
         }
         if (protectedObservation === null) {
           throw new ProgramDispatchStaleError(
@@ -625,6 +673,191 @@ export class ProgramDispatchServiceV1 {
     });
   }
 
+  async settleProgramMutation(
+    input: ProgramMutationSettlementInputV1,
+  ): Promise<{ state: ProgramState | null; events: PersistedDomainEvent<string, unknown>[] }> {
+    const operationId = String(asOperationId(input.operationId));
+    const programStateId = String(asProgramStateId(input.program.programStateId));
+    const programAttemptId = String(asProgramAttemptId(input.program.programAttemptId));
+    const sessionId = String(input.sessionId);
+
+    return this.options.workspaceCoordinator.runExclusive(async () => {
+      const postObservation = input.quiescenceProven
+        ? await this.options.observations.observe()
+        : null;
+      if (postObservation?.status === "complete") {
+        requireObservationWorkspace(this.options.store, postObservation.base);
+      }
+
+      return this.options.admission.enqueue(async () => {
+        const events = await replayAll(this.options.store);
+        const state = requireProgramState(events, programStateId);
+        const requestedEvent = events.find((event) =>
+          event.type === "operation.requested" && String(event.operationId ?? record(event.payload).operationId ?? "") === operationId,
+        );
+        if (requestedEvent === undefined || String(requestedEvent.programStateId ?? "") !== programStateId) {
+          throw new ProgramDispatchControlError("Program mutation settlement lacks its protected operation.requested event");
+        }
+        const requestedPayload = record(requestedEvent.payload);
+        if (requestedPayload.workspaceAccessClass !== "may_write") {
+          throw new ProgramDispatchControlError("Program mutation settlement targets a non-may_write operation");
+        }
+        const requestQuiescence = record(requestedPayload.quiescenceContract);
+        if (requestQuiescence.containment !== "operation_scoped_containment") {
+          throw new ProgramDispatchControlError("Program mutation settlement lacks a supported request-time quiescence contract");
+        }
+        if (events.some((event) =>
+          event.type === "workspace.effect_generation.advanced" &&
+          String(record(event.payload).operationId ?? event.operationId ?? "") === operationId,
+        )) {
+          throw new ProgramDispatchControlError("Program mutation effect generation was already settled");
+        }
+
+        const head = await this.options.store.headSequence();
+        const terminalDrafts = [...input.buildTerminalDrafts(head)];
+        if (terminalDrafts.length === 0) {
+          throw new ProgramDispatchControlError("Program mutation settlement requires terminal events");
+        }
+        for (const draft of terminalDrafts) {
+          if (String(draft.workspaceId) !== this.options.store.workspaceId ||
+              String(draft.sessionId) !== sessionId ||
+              draft.operationId === undefined || String(draft.operationId) !== operationId ||
+              draft.programStateId === undefined || String(draft.programStateId) !== programStateId) {
+            throw new ProgramDispatchControlError("Program mutation terminal event does not match protected operation ownership");
+          }
+        }
+        const completed = terminalDrafts.find((draft) => draft.type === "operation.completed");
+        const quiesced = terminalDrafts.find((draft) => draft.type === "operation.mutation_quiesced");
+        if (completed === undefined) {
+          throw new ProgramDispatchControlError("Program mutation settlement requires a terminal completion fact");
+        }
+        if (input.quiescenceProven !== (quiesced !== undefined)) {
+          throw new ProgramDispatchControlError("Program mutation settlement quiescence flag does not match canonical proof event");
+        }
+        if (quiesced !== undefined) {
+          const quiescedPayload = record(quiesced.payload);
+          for (const key of ["containmentInstanceId", "containment", "proofContractId", "proofContractVersion", "providerBindingRevision"] as const) {
+            const expected = requestQuiescence[key];
+            const actual = quiescedPayload[key];
+            if (canonicalStringify(expected ?? null) !== canonicalStringify(actual ?? null)) {
+              throw new ProgramDispatchControlError(`Program mutation quiescence proof does not match request-time ${key}`);
+            }
+          }
+          if (quiescedPayload.proofKind !== "operation_containment_ended" ||
+              typeof quiescedPayload.proofEvidenceDigest !== "string" ||
+              quiescedPayload.proofEvidenceDigest.length === 0) {
+            throw new ProgramDispatchControlError("Program mutation quiescence proof lacks validated proof authority");
+          }
+        }
+
+        const outcome = String(record(completed.payload).outcome ?? "failed");
+        const effectConfirmed = outcome === "succeeded";
+        const settlementDrafts: EventDraft<string, unknown>[] = [...terminalDrafts];
+        let nextState: ProgramState | null = state;
+
+        if (effectConfirmed) {
+          const durableGeneration = durableWorkspaceEffectGeneration(events);
+          const attempt = state.lifecycle === "active" ? state.activeAttempt : null;
+          const attemptGeneration = attempt?.expectedExecutionBase.workspaceEffectGeneration ??
+            state.acceptedExecutionBase?.workspaceEffectGeneration ?? 0;
+          const previousGeneration = Math.max(attemptGeneration, durableGeneration ?? attemptGeneration);
+          const nextGeneration = previousGeneration + 1;
+          if (!Number.isSafeInteger(nextGeneration)) {
+            throw new ProgramDispatchControlError("WorkspaceEffectGeneration overflow");
+          }
+          settlementDrafts.push({
+            eventId: mkEventId(),
+            idempotencyKey: `workspace.effect_generation.advanced:${operationId}`,
+            correlationId: operationId,
+            workspaceId: asWorkspaceId(this.options.store.workspaceId),
+            sessionId: input.sessionId,
+            operationId: asOperationId(operationId),
+            occurredAt: new Date().toISOString(),
+            type: "workspace.effect_generation.advanced",
+            payload: {
+              operationId,
+              previousWorkspaceEffectGeneration: previousGeneration,
+              workspaceEffectGeneration: nextGeneration,
+              effectStatus: "confirmed",
+            },
+            payloadSchemaVersion: 1,
+            producer: { kind: "runtime", component: "program-dispatch" },
+          });
+
+          const currentAttempt = state.lifecycle === "active" ? state.activeAttempt : null;
+          const attemptStillCurrent = currentAttempt !== null &&
+            String(currentAttempt.programAttemptId) === programAttemptId &&
+            String(currentAttempt.sessionId) === sessionId &&
+            currentAttempt.agentGeneration === input.program.agentGeneration &&
+            (durableGeneration === null || durableGeneration <= currentAttempt.expectedExecutionBase.workspaceEffectGeneration);
+
+          if (state.lifecycle === "active") {
+            if (attemptStillCurrent && quiesced !== undefined && postObservation?.status === "complete") {
+              const settledBase: ProgramAttemptExecutionBase = {
+                workspaceEffectGeneration: nextGeneration,
+                observation: postObservation.base.observation,
+              };
+              nextState = applyProgramTransition(state, {
+                kind: "attempt.execution_base.advance",
+                expectedProgramRevision: state.revision,
+                programAttemptId,
+                executionBase: settledBase,
+                // Until bounded path-impact admission lands, self-mutation impact is
+                // conservatively unknown and invalidates every current obligation.
+                invalidateVerificationObligationIds: state.verification.map((item) => item.obligationId),
+              });
+              settlementDrafts.push(transitionEvent(
+                this.options.store,
+                input.sessionId,
+                nextState,
+                "attempt.execution_base.advance",
+                operationId,
+              ));
+            } else {
+              nextState = applyProgramTransition(state, {
+                kind: "execution_base.unavailable",
+                expectedProgramRevision: state.revision,
+              });
+              if (nextState !== state) {
+                settlementDrafts.push(transitionEvent(
+                  this.options.store,
+                  input.sessionId,
+                  nextState,
+                  "execution_base.unavailable",
+                  operationId,
+                ));
+              }
+            }
+          }
+        } else if (state.lifecycle === "active") {
+          // A failed may_write has indeterminate effect certainty. Whether or not
+          // quiescence is proven, no trusted execution base may be adopted.
+          nextState = applyProgramTransition(state, {
+            kind: "execution_base.unavailable",
+            expectedProgramRevision: state.revision,
+          });
+          if (nextState !== state) {
+            settlementDrafts.push(transitionEvent(
+              this.options.store,
+              input.sessionId,
+              nextState,
+              "execution_base.unavailable",
+              operationId,
+            ));
+          }
+        }
+
+        const persisted = await this.options.store.append(settlementDrafts);
+        for (let i = 0; i < persisted.length; i++) {
+          if (persisted[i]?.sequence !== head + i + 1) {
+            throw new ProgramDispatchControlError("Program mutation settlement interleaved during canonical admission");
+          }
+        }
+        return { state: nextState, events: persisted };
+      });
+    });
+  }
+
   async appendRootOperation(
     input: ProgramRootOperationInputV1,
     drafts: readonly EventDraft<string, unknown>[],
@@ -651,6 +884,7 @@ export class ProgramDispatchServiceV1 {
       return this.options.admission.enqueue(async () => {
         const events = await replayAll(this.options.store);
         const state = requireProgramState(events, programStateId);
+        const currentBase = effectiveObservedBase(events, observation.base);
         requireExactRevision(state, input.expectedProgramRevision);
         if (!sessionIsActive(events, sessionId) ||
             !state.attachedSessionIds.some((id) => String(id) === sessionId)) {
@@ -677,7 +911,7 @@ export class ProgramDispatchServiceV1 {
         if (state.executionBaseMismatch !== null || state.executionBaseUnavailable) {
           throw new ProgramDispatchStaleError("Program execution base is not current");
         }
-        if (!sameBase(attempt.expectedExecutionBase, observation.base)) {
+        if (!sameBase(attempt.expectedExecutionBase, currentBase)) {
           throw new ProgramDispatchStaleError("ProgramAttempt execution base no longer matches the protected current base");
         }
 
@@ -728,6 +962,7 @@ export class ProgramDispatchServiceV1 {
       return this.options.admission.enqueue(async () => {
         const events = await replayAll(this.options.store);
         const state = requireProgramState(events, programStateId);
+        const currentBase = effectiveObservedBase(events, observation.base);
         requireExactRevision(state, input.expectedProgramRevision);
         if (!sessionIsActive(events, String(input.sessionId)) ||
             !state.attachedSessionIds.some((id) => String(id) === String(input.sessionId))) {
@@ -754,10 +989,10 @@ export class ProgramDispatchServiceV1 {
         if (state.executionBaseMismatch !== null || state.executionBaseUnavailable) {
           throw new ProgramDispatchStaleError("Program execution base is not current");
         }
-        if (!sameBase(attempt.expectedExecutionBase, observation.base)) {
+        if (!sameBase(attempt.expectedExecutionBase, currentBase)) {
           throw new ProgramDispatchStaleError("ProgramAttempt execution base no longer matches the protected current base");
         }
-        return { state, executionBase: observation.base };
+        return { state, executionBase: currentBase };
       });
     });
   }

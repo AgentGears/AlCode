@@ -57,6 +57,7 @@ export type ProgramTransition =
       kind: "attempt.execution_base.advance";
       programAttemptId: string;
       executionBase: ProgramAttemptExecutionBase;
+      invalidateVerificationObligationIds?: VerificationObligationId[];
     })
   | (RevisionedTransition & {
       kind: "execution_base.adopt";
@@ -263,6 +264,7 @@ export function applyProgramTransition(
         ...state,
         acceptedExecutionBase: transition.executionBase,
         activeAttempt: { ...attempt, expectedExecutionBase: transition.executionBase },
+        verification: invalidateVerification(state, transition.invalidateVerificationObligationIds ?? []),
       });
     }
 
