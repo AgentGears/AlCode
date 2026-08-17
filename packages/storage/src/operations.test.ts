@@ -258,6 +258,56 @@ describeLocked("operations model — projection + state machine", () => {
     expect(defaultReconciliationStatus("not_applicable")).toBe("not_required");
     expect(defaultReconciliationStatus("indeterminate")).toBe("pending");
   });
+
+  it("13: reconciliation can prove an indeterminate effect confirmed", async () => {
+    const opId = mkOperationId() as string;
+    await appendAndCatchUp([
+      makeOperationDraft(opId, "operation.requested", { operationId: opId, toolName: "bash", args: {}, isReadOnly: false }),
+      makeOperationDraft(opId, "operation.completed", { operationId: opId, outcome: "failed", isReadOnly: false }),
+      makeOperationDraft(opId, "operation.reconciliation.resolved", {
+        operationId: opId, effectStatus: "confirmed", evidenceDigest: "sha256:confirmed",
+        reconciliationContractId: "bash-reconcile-v1", reconciliationContractVersion: 1,
+      }),
+    ]);
+    const op = createOperationQuery(db).getById(opId)!;
+    expect(op.effectStatus).toBe("confirmed");
+    expect(op.reconciliationStatus).toBe("resolved");
+  });
+
+  it("14: insufficient reconciliation preserves indeterminate effect as unresolved", async () => {
+    const opId = mkOperationId() as string;
+    await appendAndCatchUp([
+      makeOperationDraft(opId, "operation.requested", { operationId: opId, toolName: "bash", args: {}, isReadOnly: false }),
+      makeOperationDraft(opId, "operation.started", { operationId: opId }),
+      makeOperationDraft(opId, "operation.interrupted", { operationId: opId }),
+      makeOperationDraft(opId, "operation.reconciliation.unresolved", {
+        operationId: opId, evidenceDigest: "sha256:insufficient",
+        reconciliationContractId: "bash-reconcile-v1", reconciliationContractVersion: 1,
+      }),
+    ]);
+    const op = createOperationQuery(db).getById(opId)!;
+    expect(op.effectStatus).toBe("indeterminate");
+    expect(op.reconciliationStatus).toBe("unresolved");
+  });
+
+  it("15: unresolved reconciliation may later resolve from stronger evidence", async () => {
+    const opId = mkOperationId() as string;
+    await appendAndCatchUp([
+      makeOperationDraft(opId, "operation.requested", { operationId: opId, toolName: "bash", args: {}, isReadOnly: false }),
+      makeOperationDraft(opId, "operation.completed", { operationId: opId, outcome: "timed_out", isReadOnly: false }),
+      makeOperationDraft(opId, "operation.reconciliation.unresolved", {
+        operationId: opId, evidenceDigest: "sha256:first",
+        reconciliationContractId: "bash-reconcile-v1", reconciliationContractVersion: 1,
+      }),
+      makeOperationDraft(opId, "operation.reconciliation.resolved", {
+        operationId: opId, effectStatus: "absent", evidenceDigest: "sha256:stronger",
+        reconciliationContractId: "bash-reconcile-v1", reconciliationContractVersion: 1,
+      }),
+    ]);
+    const op = createOperationQuery(db).getById(opId)!;
+    expect(op.effectStatus).toBe("absent");
+    expect(op.reconciliationStatus).toBe("resolved");
+  });
 });
 
 describeLocked("operations model — invalid transition rejection", () => {
@@ -349,5 +399,33 @@ describeLocked("operations model — invalid transition rejection", () => {
     await expect(appendAndCatchUp([
       makeOperationDraft(opId, "operation.requested", { operationId: opId, toolName: "bash", args: {}, isReadOnly: false }),
     ])).rejects.toThrow();
+  });
+
+  it("reconciliation cannot rewrite an already certain effect", async () => {
+    const opId = mkOperationId() as string;
+    await appendAndCatchUp([
+      makeOperationDraft(opId, "operation.requested", { operationId: opId, toolName: "bash", args: {}, isReadOnly: false }),
+      makeOperationDraft(opId, "operation.completed", { operationId: opId, outcome: "succeeded", isReadOnly: false }),
+    ]);
+    await expect(appendAndCatchUp([
+      makeOperationDraft(opId, "operation.reconciliation.resolved", {
+        operationId: opId, effectStatus: "absent", evidenceDigest: "sha256:nope",
+        reconciliationContractId: "bash-reconcile-v1", reconciliationContractVersion: 1,
+      }),
+    ])).rejects.toThrow();
+    expect(createOperationQuery(db).getById(opId)?.effectStatus).toBe("confirmed");
+  });
+
+  it("reconciliation rejects missing versioned evidence authority", async () => {
+    const opId = mkOperationId() as string;
+    await appendAndCatchUp([
+      makeOperationDraft(opId, "operation.requested", { operationId: opId, toolName: "bash", args: {}, isReadOnly: false }),
+      makeOperationDraft(opId, "operation.completed", { operationId: opId, outcome: "failed", isReadOnly: false }),
+    ]);
+    await expect(appendAndCatchUp([
+      makeOperationDraft(opId, "operation.reconciliation.unresolved", {
+        operationId: opId, evidenceDigest: "", reconciliationContractId: "", reconciliationContractVersion: 0,
+      }),
+    ])).rejects.toThrow("versioned Host evidence authority");
   });
 });
