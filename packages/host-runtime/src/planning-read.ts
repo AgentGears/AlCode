@@ -106,6 +106,7 @@ function identityBody(
 
 export class PlanningReadRegistry {
   private readonly contracts = new Map<string, PlanningReadContractV1>();
+  private readonly issuedTrackers = new WeakSet<TrackedPlanningReads>();
 
   constructor(
     public readonly planningCoverageProfileId: string,
@@ -131,6 +132,16 @@ export class PlanningReadRegistry {
       throw new PlanningReadError(`Duplicate planning read contract ${contract.readContractId}@${contract.readContractVersion}`);
     }
     this.contracts.set(key, contract);
+  }
+
+  track(workspaceIdentity: string): TrackedPlanningReads {
+    const tracker = new TrackedPlanningReads(this, workspaceIdentity);
+    this.issuedTrackers.add(tracker);
+    return tracker;
+  }
+
+  isIssuedTracker(tracker: TrackedPlanningReads): boolean {
+    return this.issuedTrackers.has(tracker);
   }
 
   get(readContractId: string, readContractVersion: number): PlanningReadContractV1 {
@@ -226,6 +237,7 @@ export class PlanningReadRegistry {
 export class TrackedPlanningReads {
   private readonly dependencies: PlanningReadDependencyV1[] = [];
   private sealed = false;
+  private inFlight = 0;
 
   constructor(
     private readonly registry: PlanningReadRegistry,
@@ -240,18 +252,29 @@ export class TrackedPlanningReads {
     input: Json,
   ): Promise<Json> {
     if (this.sealed) throw new PlanningReadError("Planning dependency set is already sealed");
-    const delivery = await this.registry.read(readContractId, readContractVersion, input);
-    this.dependencies.push(delivery.dependency);
-    if (this.dependencies.length > PLANNING_PROVENANCE_LIMITS.dependencies) {
-      throw new PlanningReadError(
-        `Planning dependency count exceeds ${PLANNING_PROVENANCE_LIMITS.dependencies}`,
-      );
+    this.inFlight += 1;
+    try {
+      const delivery = await this.registry.read(readContractId, readContractVersion, input);
+      if (this.sealed) {
+        throw new PlanningReadError("Planning dependency set was sealed while a semantic read was in flight");
+      }
+      this.dependencies.push(delivery.dependency);
+      if (this.dependencies.length > PLANNING_PROVENANCE_LIMITS.dependencies) {
+        throw new PlanningReadError(
+          `Planning dependency count exceeds ${PLANNING_PROVENANCE_LIMITS.dependencies}`,
+        );
+      }
+      return delivery.result;
+    } finally {
+      this.inFlight -= 1;
     }
-    return delivery.result;
   }
 
   seal(): PlanningObservationIdentityV1 {
     if (this.sealed) throw new PlanningReadError("Planning dependency set is already sealed");
+    if (this.inFlight != 0) {
+      throw new PlanningReadError("Cannot seal planning dependencies while semantic reads are in flight");
+    }
     this.sealed = true;
 
     const byKey = new Map<string, PlanningReadDependencyV1>();

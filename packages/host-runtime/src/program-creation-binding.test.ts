@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { asWorkspaceId, mkEventId, type SessionId } from "@alcode/events";
 import {
   asProgramWorkItemId,
   asVerificationObligationId,
@@ -11,6 +12,7 @@ import { CanonicalAdmissionQueue } from "./admission-queue.ts";
 import {
   ProgramCreationControlError,
   ProgramCreationServiceV1,
+  ProgramCreationStaleError,
   type ExecutionObservationProfileAuthorityV1,
   type PlanningReadBarrierV1,
   type ProgramCreationPolicySourceV1,
@@ -57,6 +59,27 @@ function proposal(): ProgramCreationProposalV1 {
   };
 }
 
+async function appendObjectiveEvent(
+  admission: CanonicalAdmissionQueue,
+  workspaceId: string,
+  sessionId: SessionId,
+  objective: string,
+): Promise<string> {
+  const eventId = mkEventId();
+  const timestamp = Date.now();
+  await admission.append([{
+    eventId,
+    workspaceId: asWorkspaceId(workspaceId),
+    sessionId,
+    occurredAt: new Date(timestamp).toISOString(),
+    type: "user.message.appended",
+    payload: { text: objective, timestamp },
+    payloadSchemaVersion: 1,
+    producer: { kind: "user" },
+  }]);
+  return String(eventId);
+}
+
 async function replayTypes(store: { replay(): AsyncIterable<{ type: string }> }): Promise<string[]> {
   const result: string[] = [];
   for await (const event of store.replay()) result.push(event.type);
@@ -78,7 +101,6 @@ describeLocked("Program creation source-session binding", () => {
     const sessions = new HostSessionManager(locked, admission);
     const session = await sessions.openOrResume();
     const registry = new PlanningReadRegistry("planning-empty-v1", 1, []);
-    const identity = new TrackedPlanningReads(registry, locked.store.workspaceId).seal();
     const service = new ProgramCreationServiceV1({
       store: locked.store,
       admission,
@@ -87,17 +109,41 @@ describeLocked("Program creation source-session binding", () => {
       policy,
       executionObservationProfiles: executionProfiles,
     });
+    const programProposal = proposal();
+    const sourceObjectiveEventId = await appendObjectiveEvent(
+      admission, locked.store.workspaceId, session.sessionId, programProposal.objective,
+    );
 
-    await service.sealDraft({
-      sourceSessionId: session.sessionId,
-      proposal: proposal(),
-      planningObservationIdentity: identity,
-    });
-
+    const unissued = new TrackedPlanningReads(registry, locked.store.workspaceId);
     await expect(service.sealDraft({
       sourceSessionId: session.sessionId,
-      proposal: proposal(),
-      planningObservationIdentity: identity,
+      proposal: programProposal,
+      planningReads: unissued,
+      sourceObjectiveEventId,
+    })).rejects.toBeInstanceOf(ProgramCreationControlError);
+
+    const alteredTracker = registry.track(locked.store.workspaceId);
+    await expect(service.sealDraft({
+      sourceSessionId: session.sessionId,
+      proposal: { ...programProposal, objective: "Agent-altered objective" },
+      planningReads: alteredTracker,
+      sourceObjectiveEventId,
+    })).rejects.toBeInstanceOf(ProgramCreationStaleError);
+
+    const tracker = registry.track(locked.store.workspaceId);
+    await service.sealDraft({
+      sourceSessionId: session.sessionId,
+      proposal: programProposal,
+      planningReads: tracker,
+      sourceObjectiveEventId,
+    });
+
+    const secondTracker = registry.track(locked.store.workspaceId);
+    await expect(service.sealDraft({
+      sourceSessionId: session.sessionId,
+      proposal: programProposal,
+      planningReads: secondTracker,
+      sourceObjectiveEventId,
     })).rejects.toBeInstanceOf(ProgramCreationControlError);
 
     await expect(sessions.stop(session.sessionId, "completed")).rejects.toBeInstanceOf(HostSessionStateError);

@@ -23,6 +23,7 @@ import { CanonicalAdmissionQueue } from "./admission-queue.ts";
 import {
   PlanningBaseStaleError,
   PlanningReadRegistry,
+  TrackedPlanningReads,
   assertPlanningObservationIdentity,
   planningCanonicalDigest,
   type PlanningObservationIdentityV1,
@@ -54,7 +55,7 @@ export interface ProgramCreationProposalV1 {
 export interface ProgramObjectiveProvenanceV1 {
   kind: "application-objective-v1";
   sourceSessionId: string;
-  sourceEventId?: string;
+  sourceEventId: string;
   objectiveDigest: string;
 }
 
@@ -171,6 +172,7 @@ export function assertProgramCreationDraft(draft: ProgramCreationDraftV1): void 
   if (draft.objectiveProvenance.sourceSessionId !== draft.sourceSessionId) {
     throw new ProgramCreationControlError("Objective provenance source session does not match draft source session");
   }
+  requireNonEmpty("objectiveProvenance.sourceEventId", draft.objectiveProvenance.sourceEventId);
   if (draft.objectiveProvenance.objectiveDigest !== planningCanonicalDigest(draft.proposal.objective)) {
     throw new ProgramCreationControlError("Objective provenance digest mismatch");
   }
@@ -238,6 +240,47 @@ function sessionIsActive(events: readonly PersistedDomainEvent<string, unknown>[
     if (event.type === "runtime.session.stopped") stopped = true;
   }
   return started && !stopped;
+}
+
+function resolveObjectiveProvenance(
+  events: readonly PersistedDomainEvent<string, unknown>[],
+  sourceSessionId: string,
+  objective: string,
+  requestedEventId?: string,
+): ProgramObjectiveProvenanceV1 {
+  let source: PersistedDomainEvent<string, unknown> | undefined;
+  if (requestedEventId !== undefined) {
+    source = events.find((event) => String(event.eventId) === requestedEventId);
+    if (source === undefined) {
+      throw new ProgramCreationStaleError(`Unknown source objective event ${requestedEventId}`);
+    }
+  } else {
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const candidate = events[index]!;
+      if (candidate.type !== "user.message.appended") continue;
+      if (String(candidate.sessionId) !== sourceSessionId) continue;
+      if (record(candidate.payload).text !== objective) continue;
+      source = candidate;
+      break;
+    }
+    if (source === undefined) {
+      throw new ProgramCreationStaleError("No caller-authored source objective event matches the Program objective");
+    }
+  }
+
+  if (source.type !== "user.message.appended" || String(source.sessionId) !== sourceSessionId) {
+    throw new ProgramCreationStaleError("Source objective event is not a caller message for the source session");
+  }
+  if (record(source.payload).text !== objective) {
+    throw new ProgramCreationStaleError("Program objective does not match the caller-authored source objective event");
+  }
+
+  return {
+    kind: "application-objective-v1",
+    sourceSessionId,
+    sourceEventId: String(source.eventId),
+    objectiveDigest: planningCanonicalDigest(objective),
+  };
 }
 
 function reduceDraftControls(
@@ -346,11 +389,15 @@ export class ProgramCreationServiceV1 {
   async sealDraft(input: {
     sourceSessionId: SessionId;
     proposal: ProgramCreationProposalV1;
-    planningObservationIdentity: PlanningObservationIdentityV1;
+    planningReads: TrackedPlanningReads;
     sourceObjectiveEventId?: string;
   }): Promise<ProgramCreationDraftV1> {
-    assertPlanningObservationIdentity(input.planningObservationIdentity);
-    if (input.planningObservationIdentity.workspaceIdentity !== this.options.store.workspaceId) {
+    if (!this.options.planningReads.isIssuedTracker(input.planningReads)) {
+      throw new ProgramCreationControlError("Planning tracker was not issued by the Host planning-read registry");
+    }
+    const planningObservationIdentity = input.planningReads.seal();
+    assertPlanningObservationIdentity(planningObservationIdentity);
+    if (planningObservationIdentity.workspaceIdentity !== this.options.store.workspaceId) {
       throw new ProgramCreationControlError("Planning identity belongs to another Workspace");
     }
 
@@ -374,19 +421,19 @@ export class ProgramCreationServiceV1 {
 
       const draftId = uuidv7();
       const reservedProgramStateId = String(mkProgramStateId());
-      const objectiveProvenance: ProgramObjectiveProvenanceV1 = {
-        kind: "application-objective-v1",
+      const objectiveProvenance = resolveObjectiveProvenance(
+        events,
         sourceSessionId,
-        ...(input.sourceObjectiveEventId !== undefined ? { sourceEventId: input.sourceObjectiveEventId } : {}),
-        objectiveDigest: planningCanonicalDigest(input.proposal.objective),
-      };
+        input.proposal.objective,
+        input.sourceObjectiveEventId,
+      );
       const body: Omit<ProgramCreationDraftV1, "draftDigest"> = {
         profile: PROGRAM_CREATION_DRAFT_PROFILE,
         draftId,
         reservedProgramStateId,
         sourceSessionId,
         objectiveProvenance,
-        planningObservationIdentity: input.planningObservationIdentity,
+        planningObservationIdentity,
         proposal: input.proposal,
         executionObservationProfile,
         policy,

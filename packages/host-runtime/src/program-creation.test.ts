@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { asWorkspaceId, mkEventId, type SessionId } from "@alcode/events";
 import {
   asProgramWorkItemId,
   asVerificationObligationId,
@@ -20,7 +21,6 @@ import {
 } from "./program-creation.ts";
 import {
   PlanningReadRegistry,
-  TrackedPlanningReads,
   type PlanningReadContractV1,
 } from "./planning-read.ts";
 
@@ -107,6 +107,27 @@ function proposal(): ProgramCreationProposalV1 {
   };
 }
 
+async function appendObjectiveEvent(
+  admission: CanonicalAdmissionQueue,
+  workspaceId: string,
+  sessionId: SessionId,
+  objective: string,
+): Promise<string> {
+  const eventId = mkEventId();
+  const timestamp = Date.now();
+  await admission.append([{
+    eventId,
+    workspaceId: asWorkspaceId(workspaceId),
+    sessionId,
+    occurredAt: new Date(timestamp).toISOString(),
+    type: "user.message.appended",
+    payload: { text: objective, timestamp },
+    payloadSchemaVersion: 1,
+    producer: { kind: "user" },
+  }]);
+  return String(eventId);
+}
+
 async function allEvents(store: { replay(): AsyncIterable<any> }): Promise<any[]> {
   const events: any[] = [];
   for await (const event of store.replay()) events.push(event);
@@ -129,10 +150,8 @@ describeLocked("Program creation control", () => {
     const session = await sessions.openOrResume();
     const files = new Map([["src/a.ts", "before"]]);
     const registry = new PlanningReadRegistry("planning-files-v1", 1, [fileContract(files)]);
-    const tracker = new TrackedPlanningReads(registry, locked.store.workspaceId);
+    const tracker = registry.track(locked.store.workspaceId);
     expect(await tracker.read("file.read.v1", 1, { path: "src/a.ts" })).toEqual({ kind: "file", text: "before" });
-    const planningIdentity = tracker.seal();
-
     const service = new ProgramCreationServiceV1({
       store: locked.store,
       admission,
@@ -141,10 +160,15 @@ describeLocked("Program creation control", () => {
       policy,
       executionObservationProfiles: executionProfiles,
     });
+    const programProposal = proposal();
+    const sourceObjectiveEventId = await appendObjectiveEvent(
+      admission, locked.store.workspaceId, session.sessionId, programProposal.objective,
+    );
     const draft = await service.sealDraft({
       sourceSessionId: session.sessionId,
-      proposal: proposal(),
-      planningObservationIdentity: planningIdentity,
+      proposal: programProposal,
+      planningReads: tracker,
+      sourceObjectiveEventId,
     });
     expect(draft.planningObservationIdentity.dependencies[0]!.canonicalArgs).toEqual({ path: "src/a.ts" });
 
@@ -200,7 +224,7 @@ describeLocked("Program creation control", () => {
     const session = await new HostSessionManager(locked, admission).openOrResume();
     const files = new Map([["src/a.ts", "one"]]);
     const registry = new PlanningReadRegistry("planning-files-v1", 1, [fileContract(files)]);
-    const tracker = new TrackedPlanningReads(registry, locked.store.workspaceId);
+    const tracker = registry.track(locked.store.workspaceId);
     await tracker.read("file.read.v1", 1, { path: "src/a.ts" });
     const service = new ProgramCreationServiceV1({
       store: locked.store,
@@ -210,10 +234,15 @@ describeLocked("Program creation control", () => {
       policy,
       executionObservationProfiles: executionProfiles,
     });
+    const programProposal = proposal();
+    const sourceObjectiveEventId = await appendObjectiveEvent(
+      admission, locked.store.workspaceId, session.sessionId, programProposal.objective,
+    );
     const draft = await service.sealDraft({
       sourceSessionId: session.sessionId,
-      proposal: proposal(),
-      planningObservationIdentity: tracker.seal(),
+      proposal: programProposal,
+      planningReads: tracker,
+      sourceObjectiveEventId,
     });
 
     files.set("src/a.ts", "two");
@@ -239,7 +268,7 @@ describeLocked("Program creation control", () => {
     const session = await sessions.openOrResume();
     const files = new Map([["src/a.ts", "one"]]);
     const registry = new PlanningReadRegistry("planning-files-v1", 1, [fileContract(files)]);
-    const tracker = new TrackedPlanningReads(registry, locked.store.workspaceId);
+    const tracker = registry.track(locked.store.workspaceId);
     await tracker.read("file.read.v1", 1, { path: "src/a.ts" });
     const barrier = new ControlledBarrier();
     const service = new ProgramCreationServiceV1({
@@ -250,10 +279,15 @@ describeLocked("Program creation control", () => {
       policy,
       executionObservationProfiles: executionProfiles,
     });
+    const programProposal = proposal();
+    const sourceObjectiveEventId = await appendObjectiveEvent(
+      admission, locked.store.workspaceId, session.sessionId, programProposal.objective,
+    );
     const draft = await service.sealDraft({
       sourceSessionId: session.sessionId,
-      proposal: proposal(),
-      planningObservationIdentity: tracker.seal(),
+      proposal: programProposal,
+      planningReads: tracker,
+      sourceObjectiveEventId,
     });
 
     const acceptance = service.acceptDraft({

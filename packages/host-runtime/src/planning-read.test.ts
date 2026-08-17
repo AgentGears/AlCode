@@ -86,4 +86,29 @@ describe("tracked planning reads", () => {
     const tracker = new TrackedPlanningReads(registry, "workspace-1");
     await expect(tracker.read("search.v1", 1, { query: "needle" })).rejects.toBeInstanceOf(PlanningReadError);
   });
+
+  it("refuses to seal while a semantic planning read is in flight", async () => {
+    let release!: () => void;
+    const wait = new Promise<void>((resolve) => { release = resolve; });
+    const contract: PlanningReadContractV1 = {
+      readContractId: "deferred.read.v1",
+      readContractVersion: 1,
+      maxCanonicalArgsBytes: 1024,
+      maxCanonicalResultBytes: 1024,
+      normalizeArgs: (input) => input,
+      execute: async () => {
+        await wait;
+        return { result: { value: "observed" }, complete: true, coverageIdentity: "deferred-v1" };
+      },
+    };
+    const registry = new PlanningReadRegistry("planning-local-v1", 1, [contract]);
+    const tracker = registry.track("workspace-1");
+    const pending = tracker.read("deferred.read.v1", 1, { key: "value" });
+
+    expect(() => tracker.seal()).toThrow(/in flight/);
+    release();
+    await expect(pending).resolves.toEqual({ value: "observed" });
+    expect(tracker.seal().dependencies).toHaveLength(1);
+  });
+
 });
