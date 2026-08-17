@@ -183,6 +183,7 @@ export {
   ProgramVerificationControlError,
   ProgramVerificationStaleError,
   type HostVerificationOperationSpecV1,
+  type ProgramWorkspacePathObservationSourceV1,
   type ProgramVerificationServiceOptionsV1,
   type ProgramVerificationCommandV1,
   type ProgramVerificationResultV1,

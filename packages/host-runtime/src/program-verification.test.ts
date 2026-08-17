@@ -52,6 +52,14 @@ class ObservationSource {
   observe() { return Promise.resolve({ status: "complete" as const, base: this.current }); }
 }
 
+class PathObservationSource {
+  state: "file" | "directory" | "symlink" | "absent" = "file";
+  constructor(private readonly observations: ObservationSource) {}
+  observePath(_path: string) {
+    return Promise.resolve({ status: "complete" as const, base: this.observations.current, pathState: this.state });
+  }
+}
+
 async function latestState(store: LockedWorkspaceStore, programStateId: string): Promise<ProgramState> {
   let latest: ProgramState | undefined;
   for await (const event of store.store.replay()) {
@@ -62,7 +70,10 @@ async function latestState(store: LockedWorkspaceStore, programStateId: string):
   return latest;
 }
 
-async function setup(makeCapability: (observations: ObservationSource) => HostCapability) {
+async function setup(
+  makeCapability: (observations: ObservationSource) => HostCapability,
+  verificationKind: "operation" | "path" = "operation",
+) {
   const dir = mkdtempSync(join(tmpdir(), "alcode-program-verification-"));
   dirs.push(dir);
   const workspaceId = asWorkspaceId(uuidv7());
@@ -86,8 +97,12 @@ async function setup(makeCapability: (observations: ObservationSource) => HostCa
     workItems: [{ workItemId, creationOrder: 0, description: "verify", dependencyIds: [], affectedPaths: ["src/value.ts"] }],
     verification: [{
       obligationId,
-      predicate: { kind: "operation_result", specId: "verify-spec", specVersion: 1, canonicalArgs: args, canonicalArgsDigest: planningCanonicalDigest(args) },
-      freshnessScope: { kind: "workspace" },
+      predicate: verificationKind === "operation"
+        ? { kind: "operation_result", specId: "verify-spec", specVersion: 1, canonicalArgs: args, canonicalArgsDigest: planningCanonicalDigest(args) }
+        : { kind: "workspace_path_state", path: "src/value.ts", requiredState: "file" },
+      freshnessScope: verificationKind === "operation"
+        ? { kind: "workspace" }
+        : { kind: "paths", entries: [{ path: "src/value.ts", mode: "exact" }] },
     }],
     outputSlots: [], productionSteps: [],
   });
@@ -126,10 +141,11 @@ async function setup(makeCapability: (observations: ObservationSource) => HostCa
     workspaceAccessClass: capability.workspaceAccessClass ?? (capability.isReadOnly ? "read_only" : "may_write"),
     isSuccessful: (result) => result.outcome === "succeeded" && result.result === "verified",
   }]);
+  const pathObservations = new PathObservationSource(observations);
   const service = new ProgramVerificationServiceV1({
-    store: locked.store, admission, workspaceCoordinator: coordinator, observations, recovery, capabilityBroker: broker, operationSpecs: registry,
+    store: locked.store, admission, workspaceCoordinator: coordinator, observations, pathObservations, recovery, capabilityBroker: broker, operationSpecs: registry,
   });
-  return { locked, admission, sessionId, initial, withAttempt, obligationId, observations, service };
+  return { locked, admission, sessionId, initial, withAttempt, obligationId, observations, pathObservations, service };
 }
 
 describeLocked("Program operation_result verification", () => {
@@ -192,5 +208,40 @@ describeLocked("Program operation_result verification", () => {
     expect(state.verification[0]!.waiver).toMatchObject({ subjectGeneration: 1, actor: "application:user", source: "application-command" });
     expect(state.verification[0]!.satisfaction).toBeNull();
     expect(state.decisiveEvidence).toHaveLength(0);
+  });
+});
+
+
+describeLocked("Program workspace_path_state verification", () => {
+  it("satisfies exact path state only at the protected current execution-base cut", async () => {
+    const f = await setup(() => ({
+      name: "verify", workspaceAccessClass: "read_only", async execute() { return { result: "verified" }; },
+    }), "path");
+    const result = await f.service.satisfyWorkspacePathState({
+      programStateId: String(f.initial.programStateId),
+      expectedProgramRevision: f.withAttempt.revision,
+      verificationObligationId: String(f.obligationId),
+      sessionId: f.sessionId,
+    });
+    expect(result.status).toBe("satisfied");
+    const state = await latestState(f.locked, String(f.initial.programStateId));
+    expect(isVerificationCurrent(state.verification[0]!)).toBe(true);
+    expect(state.decisiveEvidence[0]!.sourceOperationId).toBeNull();
+  });
+
+  it("treats mismatched or unknown path observation as non-satisfaction rather than absence", async () => {
+    const f = await setup(() => ({
+      name: "verify", workspaceAccessClass: "read_only", async execute() { return { result: "verified" }; },
+    }), "path");
+    f.pathObservations.state = "absent";
+    const result = await f.service.satisfyWorkspacePathState({
+      programStateId: String(f.initial.programStateId),
+      expectedProgramRevision: f.withAttempt.revision,
+      verificationObligationId: String(f.obligationId),
+      sessionId: f.sessionId,
+    });
+    expect(result.status).toBe("not_satisfied");
+    const state = await latestState(f.locked, String(f.initial.programStateId));
+    expect(state.verification[0]!.satisfaction).toBeNull();
   });
 });
