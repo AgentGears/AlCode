@@ -1,10 +1,13 @@
 import {
+  asProgramStateId,
   asWorkspaceId,
   canonicalStringify,
   mkEventId,
   mkOperationId,
+  uuidv7,
   type EventDraft,
   type OperationId,
+  type PersistedDomainEvent,
   type SessionId,
 } from "@alcode/events";
 import type { AuthorizedToolDescriptor, ModelToolDefinition } from "@alcode/agent-protocol";
@@ -23,6 +26,12 @@ import {
 import { CanonicalAdmissionQueue } from "./admission-queue.ts";
 import { CognitionGateway } from "./cognition-gateway.ts";
 import type { HostPolicy } from "./policy.ts";
+import {
+  ProgramDispatchControlError,
+  ProgramDispatchStaleError,
+  resolveCurrentProgramOperationContext,
+  type ProgramRootOperationAuthorityV1,
+} from "./program-dispatch.ts";
 
 export interface HostCapabilityResult {
   result: unknown;
@@ -36,11 +45,31 @@ export interface HostCapabilityContext {
   signal?: AbortSignal;
 }
 
+export type WorkspaceAccessClassV1 = "no_workspace_access" | "read_only" | "may_write";
+
+export interface HostCapabilityQuiescenceV1 {
+  containmentKind: "operation_scoped_containment" | "host_lifetime_containment";
+  proofContractId: string;
+  proofContractVersion: number;
+}
+
+export interface ProgramCapabilityOperationContextV1 {
+  programStateId: string;
+  expectedProgramRevision: number;
+  programAttemptId: string;
+  workItemId: string;
+  agentGeneration: number;
+}
+
 export interface HostCapability {
   name: string;
   description?: string;
   inputSchema?: ModelToolDefinition["inputSchema"];
+  /** Legacy trusted metadata; explicit workspaceAccessClass is authoritative. */
   isReadOnly?: boolean;
+  workspaceAccessClass?: WorkspaceAccessClassV1;
+  /** Host-owned containment proof contract for Program-linked may_write execution. */
+  quiescence?: HostCapabilityQuiescenceV1;
   execute(args: unknown, context: HostCapabilityContext): Promise<HostCapabilityResult>;
 }
 
@@ -50,6 +79,7 @@ export interface CapabilityBrokerRequest {
   toolName: string;
   args: unknown;
   expectedCapabilityRevision?: string;
+  program?: ProgramCapabilityOperationContextV1;
   signal?: AbortSignal;
 }
 
@@ -114,6 +144,20 @@ function verificationResultData(execution: HostCapabilityResult, outcome: Execut
   };
 }
 
+function workspaceAccessClassOf(capability: HostCapability): WorkspaceAccessClassV1 {
+  const explicit = capability.workspaceAccessClass;
+  if (explicit === "no_workspace_access" || explicit === "read_only" || explicit === "may_write") return explicit;
+  if (explicit !== undefined) return "may_write";
+  return capability.isReadOnly === true ? "read_only" : "may_write";
+}
+
+function operationScopedQuiescence(capability: HostCapability): HostCapabilityQuiescenceV1 | undefined {
+  const contract = capability.quiescence;
+  if (contract?.containmentKind !== "operation_scoped_containment") return undefined;
+  if (!contract.proofContractId || !Number.isSafeInteger(contract.proofContractVersion) || contract.proofContractVersion <= 0) return undefined;
+  return contract;
+}
+
 function definitionOf(capability: HostCapability): ModelToolDefinition {
   return {
     name: capability.name,
@@ -133,6 +177,7 @@ export class CapabilityBroker {
   private readonly alwaysApproved = new Set<string>();
   private approvalHandler: CapabilityApprovalHandler | undefined;
   private hookCoordinator: CapabilityHookCoordinator | undefined;
+  private programOperationAuthority: ProgramRootOperationAuthorityV1 | undefined;
 
   constructor(
     private readonly store: WorkspaceEventStore,
@@ -200,7 +245,7 @@ export class CapabilityBroker {
       result.push({
         definition: definitionOf(registration.capability),
         binding: registration.binding.kind === "static" ? { kind: "static" } : { kind: "dynamic", revision: registration.binding.revision },
-        isReadOnly: registration.capability.isReadOnly ?? false,
+        isReadOnly: workspaceAccessClassOf(registration.capability) !== "may_write",
       });
     }
     return result.sort((a, b) => a.definition.name.localeCompare(b.definition.name, "en"));
@@ -212,6 +257,10 @@ export class CapabilityBroker {
 
   setHookCoordinator(coordinator: CapabilityHookCoordinator | undefined): void {
     this.hookCoordinator = coordinator;
+  }
+
+  setProgramOperationAuthority(authority: ProgramRootOperationAuthorityV1 | undefined): void {
+    this.programOperationAuthority = authority;
   }
 
   private approvalKey(sessionId: SessionId, toolName: string): string {
@@ -254,7 +303,8 @@ export class CapabilityBroker {
 
     const capability = registration.capability;
     const frozenArgs = freezeCanonical(request.args);
-    const isReadOnly = capability.isReadOnly ?? false;
+    const workspaceAccessClass = workspaceAccessClassOf(capability);
+    const isReadOnly = workspaceAccessClass !== "may_write";
     const approvalKey = this.approvalKey(request.sessionId, request.toolName);
     const alreadyApproved = this.alwaysApproved.has(approvalKey);
 
@@ -310,6 +360,15 @@ export class CapabilityBroker {
       baselineNeedsApproval = false;
     }
 
+    const quiescenceBinding = workspaceAccessClass === "may_write" ? operationScopedQuiescence(capability) : undefined;
+    // Existing uncontained ordinary writers remain pre-baseline/legacy until their
+    // adapter declares a supported containment contract. Program may_write still
+    // routes as may_write and is rejected before operation.requested below.
+    const persistedWorkspaceAccessClass =
+      workspaceAccessClass !== "may_write" || quiescenceBinding !== undefined
+        ? workspaceAccessClass
+        : undefined;
+
     const verificationPlan = await this.cognition.matchVerification(
       request.sessionId as string,
       request.toolName,
@@ -318,11 +377,29 @@ export class CapabilityBroker {
 
     const operationId = mkOperationId();
     const workspaceId = asWorkspaceId(this.store.workspaceId);
-    const pre = await this.admission.append([
+    const quiescenceContract = quiescenceBinding === undefined ? undefined : {
+      version: 1 as const,
+      containment: quiescenceBinding.containmentKind,
+      proofContractId: quiescenceBinding.proofContractId,
+      proofContractVersion: quiescenceBinding.proofContractVersion,
+      containmentInstanceId: uuidv7(),
+      ...(registration.binding.kind === "dynamic" ? { providerBindingRevision: registration.binding.revision } : {}),
+    };
+    const preDrafts: EventDraft<string, unknown>[] = [
       {
         eventId: mkEventId(), workspaceId, sessionId: request.sessionId, operationId,
         occurredAt: new Date().toISOString(), type: "operation.requested",
-        payload: { operationId: operationId as string, toolName: request.toolName, args: frozenArgs, isReadOnly },
+        payload: {
+          operationId: operationId as string,
+          toolName: request.toolName,
+          args: frozenArgs,
+          isReadOnly,
+          ...(persistedWorkspaceAccessClass !== undefined ? {
+            workspaceAccessClass: persistedWorkspaceAccessClass,
+            workspaceAccessClassifier: { id: "host-capability-workspace-access-v1", version: 1 },
+          } : {}),
+          ...(quiescenceContract !== undefined ? { quiescenceContract } : {}),
+        },
         payloadSchemaVersion: 1, producer: { kind: "runtime", component: "host-capability-broker" },
       },
       {
@@ -337,7 +414,74 @@ export class CapabilityBroker {
         payload: { operationId: operationId as string, toolName: request.toolName, inputDigest: verificationPlan.inputDigest, argsSummary: frozenArgs },
         payloadSchemaVersion: 1, producer: { kind: "runtime", component: "host-cognition" },
       },
-    ]);
+    ];
+    let pre: PersistedDomainEvent<string, unknown>[];
+    let program: ProgramCapabilityOperationContextV1 | null = null;
+    try {
+      if (this.programOperationAuthority !== undefined) {
+        const routed = await this.programOperationAuthority.appendRoutedRootOperation({
+          sessionId: request.sessionId,
+          operationId: operationId as string,
+          workspaceAccessClass,
+          ...(request.program !== undefined ? { program: request.program } : {}),
+          drafts: preDrafts,
+        });
+        if (routed.status === "program_may_write_blocked") {
+          if (quiescenceBinding === undefined) {
+            return this.finish(request, {
+              outcome: "denied",
+              errorCode: "program_quiescence_unsupported",
+              error: `Program-linked may_write capability lacks a supported operation-scoped quiescence contract: ${request.toolName}`,
+            });
+          }
+          return this.finish(request, {
+            outcome: "denied",
+            errorCode: "program_mutation_settlement_pending",
+            error: "Program-linked may_write execution remains non-admitting until confirmed-effect generation advancement and post-quiescence observation settlement are installed",
+          });
+        }
+        pre = routed.events;
+        program = routed.program;
+      } else {
+        if (request.program !== undefined) {
+          return this.finish(request, {
+            outcome: "denied",
+            errorCode: "program_operation_authority_unavailable",
+            error: "Explicit Program operation context requires protected Program operation authority",
+          });
+        }
+        const routed = await this.admission.enqueue(async () => {
+          const currentProgram = await resolveCurrentProgramOperationContext(this.store, request.sessionId);
+          if (currentProgram !== null) return { status: "program_authority_required" as const };
+          return { status: "appended" as const, events: await this.store.append(preDrafts) };
+        });
+        if (routed.status === "program_authority_required") {
+          return this.finish(request, {
+            outcome: "denied",
+            errorCode: "program_operation_authority_unavailable",
+            error: "An active ProgramAttempt requires protected Program operation authority",
+          });
+        }
+        pre = routed.events;
+      }
+    } catch (error) {
+      if (error instanceof ProgramDispatchStaleError) {
+        return this.finish(request, {
+          outcome: "stale",
+          errorCode: "program_execution_stale",
+          error: error.message,
+        });
+      }
+      if (error instanceof ProgramDispatchControlError) {
+        return this.finish(request, {
+          outcome: "denied",
+          errorCode: "program_operation_invalid",
+          error: error.message,
+        });
+      }
+      throw error;
+    }
+    const programEnvelope = program ? { programStateId: asProgramStateId(program.programStateId) } : {};
 
     const actionEvent = pre[2];
     if (!actionEvent) throw new Error("action.recorded was not persisted");
@@ -362,17 +506,34 @@ export class CapabilityBroker {
       const head = await this.store.headSequence();
       const completedEventId = mkEventId();
       const evidenceKind = isReadOnly ? "observation" : "action_result";
-      const evidenceSequence = head + 2;
+      const evidenceSequence = head + (quiescenceContract !== undefined ? 3 : 2);
       const evidenceId = `event:${request.sessionId as string}:${evidenceSequence}:${evidenceKind}`;
       const drafts: EventDraft<string, unknown>[] = [
         {
-          eventId: completedEventId, workspaceId, sessionId: request.sessionId, operationId,
+          eventId: completedEventId, workspaceId, sessionId: request.sessionId, operationId, ...programEnvelope,
           occurredAt: new Date().toISOString(), type: "operation.completed",
-          payload: { operationId: operationId as string, outcome, isReadOnly }, payloadSchemaVersion: 1,
+          payload: { operationId: operationId as string, outcome, isReadOnly, workspaceAccessClass }, payloadSchemaVersion: 1,
           producer: { kind: "runtime", component: "host-capability-broker" },
         },
-        {
-          eventId: mkEventId(), workspaceId, sessionId: request.sessionId, operationId, causationEventId: completedEventId,
+      ];
+      if (quiescenceContract !== undefined) {
+        drafts.push({
+          eventId: mkEventId(), workspaceId, sessionId: request.sessionId, operationId, ...programEnvelope,
+          causationEventId: completedEventId,
+          occurredAt: new Date().toISOString(), type: "operation.mutation_quiesced",
+          payload: {
+            operationId: operationId as string,
+            containmentInstanceId: quiescenceContract.containmentInstanceId,
+            containment: quiescenceContract.containment,
+            proofContractId: quiescenceContract.proofContractId,
+            proofContractVersion: quiescenceContract.proofContractVersion,
+            ...(quiescenceContract.providerBindingRevision !== undefined ? { providerBindingRevision: quiescenceContract.providerBindingRevision } : {}),
+          },
+          payloadSchemaVersion: 1, producer: { kind: "runtime", component: "host-capability-broker" },
+        });
+      }
+      drafts.push({
+          eventId: mkEventId(), workspaceId, sessionId: request.sessionId, operationId, ...programEnvelope, causationEventId: completedEventId,
           occurredAt: new Date().toISOString(), type: "evidence.recorded",
           payload: {
             operationId: operationId as string,
@@ -388,8 +549,7 @@ export class CapabilityBroker {
             actionId,
           },
           payloadSchemaVersion: 1, producer: { kind: "runtime", component: "host-cognition" },
-        },
-      ];
+      });
 
       if (
         verification && verification.match.contractId &&
@@ -406,7 +566,7 @@ export class CapabilityBroker {
           outcome: verification.outcome,
         };
         drafts.push({
-          eventId: mkEventId(), workspaceId, sessionId: request.sessionId, operationId,
+          eventId: mkEventId(), workspaceId, sessionId: request.sessionId, operationId, ...programEnvelope,
           occurredAt: new Date().toISOString(), type: "verification.result.correlated", payload,
           payloadSchemaVersion: 1, producer: { kind: "runtime", component: "host-cognition" },
         });
