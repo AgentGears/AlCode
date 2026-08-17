@@ -22,7 +22,7 @@ import {
 } from "@alcode/program-state";
 import { openLockedWorkspaceStore, type LockedWorkspaceStore } from "@alcode/storage";
 import { CanonicalAdmissionQueue } from "./admission-queue.ts";
-import { CapabilityBroker, type HostCapability } from "./capability-broker.ts";
+import { CapabilityBroker, type HostCapability, type HostCapabilityContext } from "./capability-broker.ts";
 import { CognitionGateway } from "./cognition-gateway.ts";
 import { DefaultHostPolicy } from "./policy.ts";
 import { ProgramDispatchServiceV1 } from "./program-dispatch.ts";
@@ -34,6 +34,18 @@ afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: tru
 
 function base(workspaceIdentity: string): ProgramAttemptExecutionBase {
   return { workspaceEffectGeneration: 0, observation: { kind: "workspace-observation-v1", providerKind: "program-operation-test", workspaceIdentity, coverageDigest: "coverage-v1", stateDigest: "state-v1" } };
+}
+
+function quiescenceProof(context: HostCapabilityContext) {
+  const contract = context.quiescenceContract;
+  if (contract === undefined) throw new Error("expected operation-scoped quiescence contract");
+  return {
+    containmentInstanceId: contract.containmentInstanceId,
+    proofContractId: contract.proofContractId,
+    proofContractVersion: contract.proofContractVersion,
+    proofKind: "operation_containment_ended" as const,
+    evidence: { kind: "operation_scope_ended", containmentInstanceId: contract.containmentInstanceId },
+  };
 }
 
 function program(sessionId: SessionId, suffix: string): ProgramState {
@@ -177,7 +189,7 @@ describeLocked("Program root operation correlation", () => {
 
   it("settles supported Program may_write through confirmed G advancement and post-quiescence observation", async () => {
     let executed = 0;
-    const runtime = await setup("14", { name: "mutate", workspaceAccessClass: "may_write", quiescence: { containmentKind: "operation_scoped_containment", proofContractId: "host-capability-promise-v1", proofContractVersion: 1 }, async execute() { executed += 1; return { result: { ok: true }, outcome: "succeeded" }; } });
+    const runtime = await setup("14", { name: "mutate", workspaceAccessClass: "may_write", quiescence: { containmentKind: "operation_scoped_containment", proofContractId: "host-capability-promise-v1", proofContractVersion: 1 }, async execute(_args, context) { executed += 1; return { result: { ok: true }, outcome: "succeeded", quiescenceProof: quiescenceProof(context) }; } });
     const result = await runtime.broker.execute({ sessionId: runtime.session.sessionId, toolCallId: "tc-settled-mutation", toolName: "mutate", args: { path: "src/14.ts" } });
     expect(result).toMatchObject({ outcome: "succeeded", result: { ok: true } });
     expect(executed).toBe(1);
@@ -193,7 +205,11 @@ describeLocked("Program root operation correlation", () => {
       },
     });
     expect(events.some((event) => event.type === "operation.completed")).toBe(true);
-    expect(events.some((event) => event.type === "operation.mutation_quiesced")).toBe(true);
+    const quiesced = events.find((event) => event.type === "operation.mutation_quiesced");
+    expect(quiesced?.payload).toMatchObject({
+      proofKind: "operation_containment_ended",
+      proofEvidenceDigest: expect.any(String),
+    });
     const generation = events.find((event) => event.type === "workspace.effect_generation.advanced");
     expect(generation?.payload).toMatchObject({ previousWorkspaceEffectGeneration: 0, workspaceEffectGeneration: 1, effectStatus: "confirmed" });
     const transition = [...events].reverse().find((event) => event.type === "program.transitioned");
@@ -214,7 +230,7 @@ describeLocked("Program root operation correlation", () => {
   });
 
   it("keeps failed Program may_write effect certainty unavailable after quiescence", async () => {
-    const runtime = await setup("19", { name: "mutate", workspaceAccessClass: "may_write", quiescence: { containmentKind: "operation_scoped_containment", proofContractId: "host-capability-promise-v1", proofContractVersion: 1 }, async execute() { return { result: { ok: false }, outcome: "failed" }; } });
+    const runtime = await setup("19", { name: "mutate", workspaceAccessClass: "may_write", quiescence: { containmentKind: "operation_scoped_containment", proofContractId: "host-capability-promise-v1", proofContractVersion: 1 }, async execute(_args, context) { return { result: { ok: false }, outcome: "failed", quiescenceProof: quiescenceProof(context) }; } });
     const result = await runtime.broker.execute({ sessionId: runtime.session.sessionId, toolCallId: "tc-indeterminate-mutation", toolName: "mutate", args: {} });
     expect(result).toMatchObject({ outcome: "failed", result: { ok: false } });
     const events = await replay(runtime.locked);
@@ -222,6 +238,31 @@ describeLocked("Program root operation correlation", () => {
     expect(events.some((event) => event.type === "workspace.effect_generation.advanced")).toBe(false);
     const transition = [...events].reverse().find((event) => event.type === "program.transitioned");
     expect(transition?.payload).toMatchObject({ transitionKind: "execution_base.unavailable", state: { executionBaseUnavailable: true, activeAttempt: null } });
+    runtime.locked.close();
+  });
+
+  it("does not infer Program mutation quiescence from successful adapter return", async () => {
+    const runtime = await setup("21", {
+      name: "mutate",
+      workspaceAccessClass: "may_write",
+      quiescence: { containmentKind: "operation_scoped_containment", proofContractId: "host-capability-promise-v1", proofContractVersion: 1 },
+      async execute() { return { result: { ok: true }, outcome: "succeeded" }; },
+    });
+    const result = await runtime.broker.execute({ sessionId: runtime.session.sessionId, toolCallId: "tc-no-quiescence-proof", toolName: "mutate", args: {} });
+    expect(result).toMatchObject({ outcome: "succeeded", result: { ok: true } });
+    const events = await replay(runtime.locked);
+    expect(events.some((event) => event.type === "operation.mutation_quiesced")).toBe(false);
+    expect(events.some((event) => event.type === "workspace.effect_generation.advanced")).toBe(true);
+    const transition = [...events].reverse().find((event) => event.type === "program.transitioned");
+    expect(transition?.payload).toMatchObject({ transitionKind: "execution_base.unavailable", state: { executionBaseUnavailable: true, activeAttempt: null } });
+    const dispatch = await runtime.dispatch.issueAttempt({
+      programStateId: String(runtime.initial.programStateId),
+      expectedProgramRevision: 3,
+      workItemId: "work-21",
+      sessionId: runtime.session.sessionId,
+      agentGeneration: 7,
+    });
+    expect(dispatch).toEqual({ status: "writer_barrier", operationIds: [String(result.operationId)] });
     runtime.locked.close();
   });
 
