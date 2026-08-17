@@ -26,6 +26,7 @@ import {
 import { CanonicalAdmissionQueue } from "./admission-queue.ts";
 import { CognitionGateway } from "./cognition-gateway.ts";
 import type { HostPolicy } from "./policy.ts";
+import type { WorkspaceMutationAdmissionAuthorityV1 } from "./program-recovery.ts";
 import {
   ProgramDispatchControlError,
   ProgramDispatchStaleError,
@@ -67,10 +68,41 @@ export interface HostCapabilityContext {
 
 export type WorkspaceAccessClassV1 = "no_workspace_access" | "read_only" | "may_write";
 
+export interface HostCapabilityQuiescenceRecoveryInputV1 {
+  operationId: string;
+  sessionId: string;
+  args: unknown;
+  containmentInstanceId: string;
+}
+
 export interface HostCapabilityQuiescenceV1 {
   containmentKind: "operation_scoped_containment" | "host_lifetime_containment";
   proofContractId: string;
   proofContractVersion: number;
+  recover?(input: HostCapabilityQuiescenceRecoveryInputV1): Promise<HostCapabilityQuiescenceProofV1 | undefined>;
+}
+
+export interface HostCapabilityReconciliationInputV1 {
+  operationId: string;
+  sessionId: string;
+  args: unknown;
+  executionOutcome: ExecutionOutcome | null;
+}
+
+export type HostCapabilityReconciliationResultV1 =
+  | {
+      status: "resolved";
+      effectStatus: "confirmed" | "absent";
+      evidence: unknown;
+      executionOutcome?: ExecutionOutcome;
+    }
+  | { status: "unresolved"; evidence: unknown; executionOutcome?: ExecutionOutcome }
+  | { status: "unavailable"; reason: string };
+
+export interface HostCapabilityReconciliationV1 {
+  contractId: string;
+  contractVersion: number;
+  recover(input: HostCapabilityReconciliationInputV1): Promise<HostCapabilityReconciliationResultV1>;
 }
 
 export interface ProgramCapabilityOperationContextV1 {
@@ -90,6 +122,8 @@ export interface HostCapability {
   workspaceAccessClass?: WorkspaceAccessClassV1;
   /** Host-owned containment proof contract for Program-linked may_write execution. */
   quiescence?: HostCapabilityQuiescenceV1;
+  /** Optional stable Host-owned historical effect reconciliation contract. */
+  reconciliation?: HostCapabilityReconciliationV1;
   execute(args: unknown, context: HostCapabilityContext): Promise<HostCapabilityResult>;
 }
 
@@ -151,6 +185,42 @@ function record(value: unknown): Record<string, unknown> {
     : { value };
 }
 
+async function replayAllEvents(store: WorkspaceEventStore): Promise<PersistedDomainEvent<string, unknown>[]> {
+  const events: PersistedDomainEvent<string, unknown>[] = [];
+  for await (const event of store.replay()) events.push(event);
+  return events;
+}
+
+function durableWorkspaceEffectGeneration(events: readonly PersistedDomainEvent<string, unknown>[]): number {
+  let current = 0;
+  const operationIds = new Set<string>();
+  for (const event of events) {
+    if (event.type !== "workspace.effect_generation.advanced") continue;
+    const payload = record(event.payload);
+    const previous = Number(payload.previousWorkspaceEffectGeneration);
+    const generation = Number(payload.workspaceEffectGeneration);
+    const operationId = String(payload.operationId ?? event.operationId ?? "");
+    if (!Number.isSafeInteger(previous) || previous < 0 ||
+        !Number.isSafeInteger(generation) || generation <= 0 ||
+        previous !== current || generation !== current + 1 ||
+        operationId.length === 0 || operationIds.has(operationId) ||
+        payload.effectStatus !== "confirmed") {
+      throw new Error("Invalid WorkspaceEffectGeneration continuity");
+    }
+    operationIds.add(operationId);
+    current = generation;
+  }
+  return current;
+}
+
+function hasOperationEffectGeneration(
+  events: readonly PersistedDomainEvent<string, unknown>[],
+  operationId: string,
+): boolean {
+  return events.some((event) => event.type === "workspace.effect_generation.advanced" &&
+    String(record(event.payload).operationId ?? event.operationId ?? "") === operationId);
+}
+
 function verificationResultData(execution: HostCapabilityResult, outcome: ExecutionOutcome): Record<string, unknown> {
   const stdout = execution.stdout ?? "";
   const stderr = execution.stderr ?? "";
@@ -182,7 +252,7 @@ function operationScopedQuiescence(capability: HostCapability): (HostCapabilityQ
   return { ...contract, containmentKind: "operation_scoped_containment" };
 }
 
-function validateOperationScopedQuiescenceProof(
+export function validateHostCapabilityOperationScopedQuiescenceProofV1(
   contract: HostCapabilityExecutionQuiescenceContractV1 | undefined,
   proof: HostCapabilityQuiescenceProofV1 | undefined,
 ): {
@@ -236,6 +306,7 @@ export class CapabilityBroker {
   private approvalHandler: CapabilityApprovalHandler | undefined;
   private hookCoordinator: CapabilityHookCoordinator | undefined;
   private programOperationAuthority: ProgramRootOperationAuthorityV1 | undefined;
+  private workspaceMutationAdmissionAuthority: WorkspaceMutationAdmissionAuthorityV1 | undefined;
 
   constructor(
     private readonly store: WorkspaceEventStore,
@@ -319,6 +390,10 @@ export class CapabilityBroker {
 
   setProgramOperationAuthority(authority: ProgramRootOperationAuthorityV1 | undefined): void {
     this.programOperationAuthority = authority;
+  }
+
+  setWorkspaceMutationAdmissionAuthority(authority: WorkspaceMutationAdmissionAuthorityV1 | undefined): void {
+    this.workspaceMutationAdmissionAuthority = authority;
   }
 
   private approvalKey(sessionId: SessionId, toolName: string): string {
@@ -418,6 +493,24 @@ export class CapabilityBroker {
       baselineNeedsApproval = false;
     }
 
+    if (workspaceAccessClass === "may_write" && this.workspaceMutationAdmissionAuthority !== undefined) {
+      const recoveryStatus = await this.workspaceMutationAdmissionAuthority.mayWriteAdmissionStatus();
+      if (recoveryStatus.status === "recovery_blocked") {
+        return this.finish(request, {
+          outcome: "denied",
+          errorCode: "workspace_recovery_blocked",
+          error: recoveryStatus.reason,
+        });
+      }
+      if (recoveryStatus.status === "writer_barrier") {
+        return this.finish(request, {
+          outcome: "denied",
+          errorCode: "workspace_writer_barrier",
+          error: `Outstanding Workspace writer barrier: ${recoveryStatus.operationIds.join(",")}`,
+        });
+      }
+    }
+
     const quiescenceBinding = workspaceAccessClass === "may_write" ? operationScopedQuiescence(capability) : undefined;
     // Existing uncontained ordinary writers remain pre-baseline/legacy until their
     // adapter declares a supported containment contract. Program may_write still
@@ -425,6 +518,15 @@ export class CapabilityBroker {
     const persistedWorkspaceAccessClass =
       workspaceAccessClass !== "may_write" || quiescenceBinding !== undefined
         ? workspaceAccessClass
+        : undefined;
+
+    const reconciliationContract =
+      persistedWorkspaceAccessClass === "may_write" && capability.reconciliation !== undefined
+        ? {
+            id: capability.reconciliation.contractId,
+            version: capability.reconciliation.contractVersion,
+            ...(registration.binding.kind === "dynamic" ? { providerBindingRevision: registration.binding.revision } : {}),
+          }
         : undefined;
 
     const verificationPlan = await this.cognition.matchVerification(
@@ -457,6 +559,7 @@ export class CapabilityBroker {
             workspaceAccessClassifier: { id: "host-capability-workspace-access-v1", version: 1 },
           } : {}),
           ...(quiescenceContract !== undefined ? { quiescenceContract } : {}),
+          ...(reconciliationContract !== undefined ? { reconciliationContract } : {}),
         },
         payloadSchemaVersion: 1, producer: { kind: "runtime", component: "host-capability-broker" },
       },
@@ -511,6 +614,12 @@ export class CapabilityBroker {
         const routed = await this.admission.enqueue(async () => {
           const currentProgram = await resolveCurrentProgramOperationContext(this.store, request.sessionId);
           if (currentProgram !== null) return { status: "program_authority_required" as const };
+          if (workspaceAccessClass === "may_write" && this.workspaceMutationAdmissionAuthority !== undefined) {
+            const recoveryStatus = await this.workspaceMutationAdmissionAuthority.mayWriteAdmissionStatus();
+            if (recoveryStatus.status !== "clear") {
+              return { status: "workspace_mutation_blocked" as const, recoveryStatus };
+            }
+          }
           return { status: "appended" as const, events: await this.store.append(preDrafts) };
         });
         if (routed.status === "program_authority_required") {
@@ -519,6 +628,19 @@ export class CapabilityBroker {
             errorCode: "program_operation_authority_unavailable",
             error: "An active ProgramAttempt requires protected Program operation authority",
           });
+        }
+        if (routed.status === "workspace_mutation_blocked") {
+          return this.finish(request, routed.recoveryStatus.status === "writer_barrier"
+            ? {
+                outcome: "denied",
+                errorCode: "workspace_writer_barrier",
+                error: `Outstanding Workspace writer barrier: ${routed.recoveryStatus.operationIds.join(",")}`,
+              }
+            : {
+                outcome: "denied",
+                errorCode: "workspace_recovery_blocked",
+                error: routed.recoveryStatus.reason,
+              });
         }
         pre = routed.events;
       }
@@ -559,7 +681,7 @@ export class CapabilityBroker {
       outcome = "failed";
       execution = { result: { error: error instanceof Error ? error.message : String(error) }, outcome };
     }
-    const validatedQuiescenceProof = validateOperationScopedQuiescenceProof(
+    const validatedQuiescenceProof = validateHostCapabilityOperationScopedQuiescenceProofV1(
       quiescenceContract,
       execution.quiescenceProof,
     );
@@ -567,11 +689,9 @@ export class CapabilityBroker {
     const resultData = verificationResultData(execution, outcome);
     const verification = await this.cognition.evaluateVerification(request.sessionId as string, verificationPlan.match, resultData);
 
-    const terminalDraftsForHead = (head: number): EventDraft<string, unknown>[] => {
+    const terminalDraftsForHead = (head: number, ordinaryEffectGeneration?: { previous: number; next: number }): EventDraft<string, unknown>[] => {
       const completedEventId = mkEventId();
       const evidenceKind = isReadOnly ? "observation" : "action_result";
-      const evidenceSequence = head + (validatedQuiescenceProof !== undefined ? 3 : 2);
-      const evidenceId = `event:${request.sessionId as string}:${evidenceSequence}:${evidenceKind}`;
       const drafts: EventDraft<string, unknown>[] = [
         {
           eventId: completedEventId, workspaceId, sessionId: request.sessionId, operationId, ...programEnvelope,
@@ -598,6 +718,29 @@ export class CapabilityBroker {
           payloadSchemaVersion: 1, producer: { kind: "runtime", component: "host-capability-broker" },
         });
       }
+      if (ordinaryEffectGeneration !== undefined) {
+        drafts.push({
+          eventId: mkEventId(),
+          idempotencyKey: `workspace.effect_generation.advanced:${operationId as string}`,
+          correlationId: operationId as string,
+          workspaceId,
+          sessionId: request.sessionId,
+          operationId,
+          ...programEnvelope,
+          occurredAt: new Date().toISOString(),
+          type: "workspace.effect_generation.advanced",
+          payload: {
+            operationId: operationId as string,
+            previousWorkspaceEffectGeneration: ordinaryEffectGeneration.previous,
+            workspaceEffectGeneration: ordinaryEffectGeneration.next,
+            effectStatus: "confirmed",
+          },
+          payloadSchemaVersion: 1,
+          producer: { kind: "runtime", component: "host-capability-broker" },
+        });
+      }
+      const evidenceSequence = head + drafts.length + 1;
+      const evidenceId = `event:${request.sessionId as string}:${evidenceSequence}:${evidenceKind}`;
       drafts.push({
           eventId: mkEventId(), workspaceId, sessionId: request.sessionId, operationId, ...programEnvelope, causationEventId: completedEventId,
           occurredAt: new Date().toISOString(), type: "evidence.recorded",
@@ -652,11 +795,20 @@ export class CapabilityBroker {
     } else {
       await this.admission.enqueue(async () => {
         const head = await this.store.headSequence();
-        const drafts = terminalDraftsForHead(head);
-      const persisted = await this.store.append(drafts);
-      for (let i = 0; i < persisted.length; i++) {
-        if (persisted[i]?.sequence !== head + i + 1) throw new Error("capability terminal batch interleaved during canonical admission");
-      }
+        let ordinaryEffectGeneration: { previous: number; next: number } | undefined;
+        if (workspaceAccessClass === "may_write" && persistedWorkspaceAccessClass === "may_write" && outcome === "succeeded") {
+          const history = await replayAllEvents(this.store);
+          if (!hasOperationEffectGeneration(history, operationId as string)) {
+            const previous = durableWorkspaceEffectGeneration(history);
+            if (!Number.isSafeInteger(previous + 1)) throw new Error("WorkspaceEffectGeneration overflow");
+            ordinaryEffectGeneration = { previous, next: previous + 1 };
+          }
+        }
+        const drafts = terminalDraftsForHead(head, ordinaryEffectGeneration);
+        const persisted = await this.store.append(drafts);
+        for (let i = 0; i < persisted.length; i++) {
+          if (persisted[i]?.sequence !== head + i + 1) throw new Error("capability terminal batch interleaved during canonical admission");
+        }
       });
     }
 
