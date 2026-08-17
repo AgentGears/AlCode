@@ -11,6 +11,7 @@ import {
   openLockedWorkspaceStore,
   createOperationsProjection,
   createOperationQuery,
+  reduceOperationsFromEvents,
   defaultEffectStatus,
   defaultReconciliationStatus,
   OperationStateError,
@@ -272,6 +273,10 @@ describeLocked("operations model — projection + state machine", () => {
     const op = createOperationQuery(db).getById(opId)!;
     expect(op.effectStatus).toBe("confirmed");
     expect(op.reconciliationStatus).toBe("resolved");
+    const replayed = [];
+    for await (const event of rt.store.replay()) replayed.push(event);
+    const reduced = reduceOperationsFromEvents(replayed).find((item) => item.operationId === opId);
+    expect(reduced).toMatchObject({ effectStatus: "confirmed", reconciliationStatus: "resolved" });
   });
 
   it("14: insufficient reconciliation preserves indeterminate effect as unresolved", async () => {
@@ -288,6 +293,10 @@ describeLocked("operations model — projection + state machine", () => {
     const op = createOperationQuery(db).getById(opId)!;
     expect(op.effectStatus).toBe("indeterminate");
     expect(op.reconciliationStatus).toBe("unresolved");
+    const replayed = [];
+    for await (const event of rt.store.replay()) replayed.push(event);
+    const reduced = reduceOperationsFromEvents(replayed).find((item) => item.operationId === opId);
+    expect(reduced).toMatchObject({ effectStatus: "indeterminate", reconciliationStatus: "unresolved" });
   });
 
   it("15: unresolved reconciliation may later resolve from stronger evidence", async () => {
