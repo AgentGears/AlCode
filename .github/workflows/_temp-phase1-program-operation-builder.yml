@@ -1,0 +1,44 @@
+name: Temporary Phase 1 Program operation builder
+
+on:
+  push:
+    branches:
+      - automation/phase-1.0-program-operation-bootstrap
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: automation/phase-1.0-program-operation-bootstrap
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.20.0'
+          cache: pnpm
+      - name: Create implementation branch
+        run: git switch -c feat/phase-1.0-program-operation-correlation-final
+      - name: Apply bounded Phase 1 implementation
+        run: python3 .github/scripts/_temp_phase1_program_operation.py
+      - name: Remove bootstrap-only files
+        run: |
+          rm .github/scripts/_temp_phase1_program_operation.py
+          rm .github/workflows/_temp-phase1-program-operation-builder.yml
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck Host runtime
+        run: pnpm --filter @alcode/host-runtime typecheck
+      - name: Run targeted Program operation tests
+        run: pnpm exec vitest run packages/host-runtime/src/program-operation-correlation.test.ts packages/host-runtime/src/program-dispatch.test.ts
+      - name: Commit and publish implementation branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat(1.0): correlate Program root operations"
+          git push origin HEAD:refs/heads/feat/phase-1.0-program-operation-correlation-final
