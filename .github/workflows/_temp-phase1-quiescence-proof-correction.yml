@@ -1,0 +1,47 @@
+name: Temporary Phase 1 quiescence proof correction
+
+on:
+  push:
+    branches:
+      - automation/phase-1.0-quiescence-proof-correction
+
+permissions:
+  contents: write
+
+jobs:
+  correct:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: automation/phase-1.0-quiescence-proof-correction
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.20.0
+          cache: pnpm
+      - name: Create correction branch
+        run: git switch -c fix/phase-1.0-quiescence-proof
+      - name: Apply bounded proof correction
+        run: python3 .github/scripts/_temp_phase1_quiescence_proof_correction.py
+      - name: Remove bootstrap-only files
+        run: |
+          rm .github/scripts/_temp_phase1_quiescence_proof_correction.py
+          rm .github/workflows/_temp-phase1-quiescence-proof-correction.yml
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck affected packages
+        run: |
+          pnpm --filter @alcode/program-state typecheck
+          pnpm --filter @alcode/host-runtime typecheck
+      - name: Run focused Program mutation tests
+        run: |
+          pnpm exec vitest run packages/program-state/src/reducer.test.ts packages/host-runtime/src/program-dispatch.test.ts packages/host-runtime/src/program-operation-correlation.test.ts packages/host-runtime/src/host-runtime.integration.test.ts
+      - name: Commit and publish correction
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/host-runtime/src/capability-broker.ts packages/host-runtime/src/program-dispatch.ts packages/host-runtime/src/program-operation-correlation.test.ts
+          git commit -m "fix(1.0): require validated mutation quiescence proof"
+          git push origin fix/phase-1.0-quiescence-proof
