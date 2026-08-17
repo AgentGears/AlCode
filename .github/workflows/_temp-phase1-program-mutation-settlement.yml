@@ -1,0 +1,47 @@
+name: Temporary Phase 1 Program mutation settlement
+
+on:
+  push:
+    branches:
+      - automation/phase-1.0-program-mutation-settlement
+
+permissions:
+  contents: write
+
+jobs:
+  implement:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: automation/phase-1.0-program-mutation-settlement
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.20.0
+          cache: pnpm
+      - name: Create implementation branch
+        run: git switch -c feat/phase-1.0-program-mutation-settlement
+      - name: Apply bounded settlement slice
+        run: python3 .github/scripts/_temp_phase1_program_mutation_settlement.py
+      - name: Remove bootstrap-only files
+        run: |
+          rm .github/scripts/_temp_phase1_program_mutation_settlement.py
+          rm .github/workflows/_temp-phase1-program-mutation-settlement.yml
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck affected packages
+        run: |
+          pnpm --filter @alcode/program-state typecheck
+          pnpm --filter @alcode/host-runtime typecheck
+      - name: Run focused Phase 1 tests
+        run: |
+          pnpm exec vitest run packages/program-state/src/reducer.test.ts packages/host-runtime/src/program-dispatch.test.ts packages/host-runtime/src/program-operation-correlation.test.ts packages/host-runtime/src/host-runtime.integration.test.ts
+      - name: Commit and publish implementation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/program-state/src/reducer-core.ts packages/host-runtime/src/program-dispatch.ts packages/host-runtime/src/capability-broker.ts packages/host-runtime/src/program-operation-correlation.test.ts
+          git commit -m "feat(1.0): settle Program mutation execution bases"
+          git push origin feat/phase-1.0-program-mutation-settlement
