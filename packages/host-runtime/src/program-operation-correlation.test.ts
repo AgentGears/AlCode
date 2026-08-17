@@ -78,7 +78,7 @@ describeLocked("Program root operation correlation", () => {
   it("binds a read-only root operation to the exact current ProgramAttempt", async () => {
     let executed = 0;
     const runtime = await setup("11", { name: "inspect", workspaceAccessClass: "read_only", async execute() { executed += 1; return { result: { ok: true }, outcome: "succeeded" }; } });
-    const result = await runtime.broker.execute({ sessionId: runtime.session.sessionId, toolCallId: "tc-program-read", toolName: "inspect", args: { path: "src/11.ts" }, program: programContext(runtime, "11") });
+    const result = await runtime.broker.execute({ sessionId: runtime.session.sessionId, toolCallId: "tc-program-read", toolName: "inspect", args: { path: "src/11.ts" } });
     expect(result.outcome).toBe("succeeded");
     expect(executed).toBe(1);
     const events = await replay(runtime.locked);
@@ -86,6 +86,18 @@ describeLocked("Program root operation correlation", () => {
     expect(String(requested?.programStateId)).toBe(String(runtime.initial.programStateId));
     expect(requested?.payload).toMatchObject({ programStateId: String(runtime.initial.programStateId), expectedProgramRevision: runtime.issued.state.revision, programAttemptId: runtime.issued.programAttemptId, workItemId: "work-11", agentGeneration: 7, workspaceAccessClass: "read_only", workspaceAccessClassifier: { id: "host-capability-workspace-access-v1", version: 1 } });
     expect(events.some((event) => event.type === "operation.mutation_quiesced")).toBe(false);
+    runtime.locked.close();
+  });
+
+  it("fails closed when an active ProgramAttempt exists before Host Program authority is wired", async () => {
+    let executed = 0;
+    const runtime = await setup("16", { name: "inspect", workspaceAccessClass: "read_only", async execute() { executed += 1; return { result: {}, outcome: "succeeded" }; } });
+    runtime.broker.setProgramOperationAuthority(undefined);
+    const before = (await replay(runtime.locked)).filter((event) => event.type === "operation.requested").length;
+    const result = await runtime.broker.execute({ sessionId: runtime.session.sessionId, toolCallId: "tc-no-program-authority", toolName: "inspect", args: {} });
+    expect(result).toMatchObject({ outcome: "denied", errorCode: "program_operation_authority_unavailable" });
+    expect(executed).toBe(0);
+    expect((await replay(runtime.locked)).filter((event) => event.type === "operation.requested")).toHaveLength(before);
     runtime.locked.close();
   });
 
@@ -109,18 +121,14 @@ describeLocked("Program root operation correlation", () => {
     runtime.locked.close();
   });
 
-  it("persists request-time containment and canonical mutation quiescence proof", async () => {
-    const runtime = await setup("14", { name: "mutate", workspaceAccessClass: "may_write", quiescence: { containmentKind: "operation_scoped_containment", proofContractId: "host-capability-promise-v1", proofContractVersion: 1 }, async execute() { return { result: { ok: true }, outcome: "succeeded" }; } });
-    const result = await runtime.broker.execute({ sessionId: runtime.session.sessionId, toolCallId: "tc-quiesced", toolName: "mutate", args: { path: "src/14.ts" }, program: programContext(runtime, "14") });
-    expect(result.outcome).toBe("succeeded");
-    const events = await replay(runtime.locked);
-    const requested = events.find((event) => event.type === "operation.requested");
-    const quiesced = events.find((event) => event.type === "operation.mutation_quiesced");
-    const contract = (requested?.payload as Record<string, unknown>).quiescenceContract as Record<string, unknown>;
-    expect(contract).toMatchObject({ version: 1, containment: "operation_scoped_containment", proofContractId: "host-capability-promise-v1", proofContractVersion: 1 });
-    expect(typeof contract.containmentInstanceId).toBe("string");
-    expect(quiesced?.payload).toMatchObject({ operationId: result.operationId as string, containmentInstanceId: contract.containmentInstanceId, containment: "operation_scoped_containment", proofContractId: "host-capability-promise-v1", proofContractVersion: 1 });
-    expect(String(quiesced?.programStateId)).toBe(String(runtime.initial.programStateId));
+  it("keeps supported Program may_write non-admitting until effect/base settlement is installed", async () => {
+    let executed = 0;
+    const runtime = await setup("14", { name: "mutate", workspaceAccessClass: "may_write", quiescence: { containmentKind: "operation_scoped_containment", proofContractId: "host-capability-promise-v1", proofContractVersion: 1 }, async execute() { executed += 1; return { result: { ok: true }, outcome: "succeeded" }; } });
+    const before = (await replay(runtime.locked)).filter((event) => event.type === "operation.requested").length;
+    const result = await runtime.broker.execute({ sessionId: runtime.session.sessionId, toolCallId: "tc-settlement-pending", toolName: "mutate", args: { path: "src/14.ts" } });
+    expect(result).toMatchObject({ outcome: "denied", errorCode: "program_mutation_settlement_pending" });
+    expect(executed).toBe(0);
+    expect((await replay(runtime.locked)).filter((event) => event.type === "operation.requested")).toHaveLength(before);
     runtime.locked.close();
   });
 

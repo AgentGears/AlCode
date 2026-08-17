@@ -31,6 +31,7 @@ import { COGNITION_TOOL_NAMES, HostCognitionService } from "./cognition-service.
 import { HostContextService, type HostContextServiceOptions } from "./context-service.ts";
 import { HostContextSourceReader } from "./context-source.ts";
 import { DefaultHostPolicy, type HostPolicy } from "./policy.ts";
+import type { ProgramRootOperationAuthorityV1 } from "./program-dispatch.ts";
 import { HostSessionManager, type HostSessionHandle } from "./session-manager.ts";
 import { TranscriptAdmissionService } from "./transcript-admission.ts";
 import { assertContextContinuable, compileVerbatimContext } from "./verbatim-context.ts";
@@ -127,6 +128,10 @@ export class HostRuntime {
 
   openOrResumeSession(sessionId?: SessionId): Promise<HostSessionHandle> {
     return this.sessions.openOrResume(sessionId);
+  }
+
+  setProgramOperationAuthority(authority: ProgramRootOperationAuthorityV1 | undefined): void {
+    this.capabilityBroker.setProgramOperationAuthority(authority);
   }
 
   async admitInput(sessionId: SessionId, text: string): Promise<{ timestamp: number }> {

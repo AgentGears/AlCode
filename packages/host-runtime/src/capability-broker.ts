@@ -25,7 +25,10 @@ import {
 import { CanonicalAdmissionQueue } from "./admission-queue.ts";
 import { CognitionGateway } from "./cognition-gateway.ts";
 import type { HostPolicy } from "./policy.ts";
-import type { ProgramRootOperationAuthorityV1 } from "./program-dispatch.ts";
+import {
+  resolveCurrentProgramOperationContext,
+  type ProgramRootOperationAuthorityV1,
+} from "./program-dispatch.ts";
 
 export interface HostCapabilityResult {
   result: unknown;
@@ -298,6 +301,15 @@ export class CapabilityBroker {
     const frozenArgs = freezeCanonical(request.args);
     const workspaceAccessClass = workspaceAccessClassOf(capability);
     const isReadOnly = workspaceAccessClass !== "may_write";
+    const currentProgram = await resolveCurrentProgramOperationContext(this.store, request.sessionId);
+    const program = request.program ?? currentProgram;
+    if (program !== undefined && program !== null && this.programOperationAuthority === undefined) {
+      return this.finish(request, {
+        outcome: "denied",
+        errorCode: "program_operation_authority_unavailable",
+        error: "An active ProgramAttempt requires protected Program operation authority",
+      });
+    }
     const approvalKey = this.approvalKey(request.sessionId, request.toolName);
     const alreadyApproved = this.alwaysApproved.has(approvalKey);
 
@@ -353,19 +365,19 @@ export class CapabilityBroker {
       baselineNeedsApproval = false;
     }
 
-    if (request.program && this.programOperationAuthority === undefined) {
-      return this.finish(request, {
-        outcome: "denied",
-        errorCode: "program_operation_authority_unavailable",
-        error: "Program-linked capability execution requires protected Program operation authority",
-      });
-    }
     const quiescenceBinding = workspaceAccessClass === "may_write" ? operationScopedQuiescence(capability) : undefined;
-    if (request.program && workspaceAccessClass === "may_write" && quiescenceBinding === undefined) {
+    if (program !== undefined && program !== null && workspaceAccessClass === "may_write") {
+      if (quiescenceBinding === undefined) {
+        return this.finish(request, {
+          outcome: "denied",
+          errorCode: "program_quiescence_unsupported",
+          error: `Program-linked may_write capability lacks a supported operation-scoped quiescence contract: ${request.toolName}`,
+        });
+      }
       return this.finish(request, {
         outcome: "denied",
-        errorCode: "program_quiescence_unsupported",
-        error: `Program-linked may_write capability lacks a supported operation-scoped quiescence contract: ${request.toolName}`,
+        errorCode: "program_mutation_settlement_pending",
+        error: "Program-linked may_write execution remains non-admitting until confirmed-effect generation advancement and post-quiescence observation settlement are installed",
       });
     }
 
@@ -377,7 +389,7 @@ export class CapabilityBroker {
 
     const operationId = mkOperationId();
     const workspaceId = asWorkspaceId(this.store.workspaceId);
-    const programEnvelope = request.program ? { programStateId: asProgramStateId(request.program.programStateId) } : {};
+    const programEnvelope = program ? { programStateId: asProgramStateId(program.programStateId) } : {};
     const quiescenceContract = quiescenceBinding === undefined ? undefined : {
       version: 1 as const,
       containment: quiescenceBinding.containmentKind,
@@ -397,12 +409,12 @@ export class CapabilityBroker {
           isReadOnly,
           workspaceAccessClass,
           workspaceAccessClassifier: { id: "host-capability-workspace-access-v1", version: 1 },
-          ...(request.program ? {
-            programStateId: request.program.programStateId,
-            expectedProgramRevision: request.program.expectedProgramRevision,
-            programAttemptId: request.program.programAttemptId,
-            workItemId: request.program.workItemId,
-            agentGeneration: request.program.agentGeneration,
+          ...(program ? {
+            programStateId: program.programStateId,
+            expectedProgramRevision: program.expectedProgramRevision,
+            programAttemptId: program.programAttemptId,
+            workItemId: program.workItemId,
+            agentGeneration: program.agentGeneration,
           } : {}),
           ...(quiescenceContract !== undefined ? { quiescenceContract } : {}),
         },
@@ -421,9 +433,9 @@ export class CapabilityBroker {
         payloadSchemaVersion: 1, producer: { kind: "runtime", component: "host-cognition" },
       },
     ];
-    const pre = request.program
+    const pre = program
       ? await this.programOperationAuthority!.appendRootOperation(
-          { ...request.program, sessionId: request.sessionId, operationId: operationId as string },
+          { ...program, sessionId: request.sessionId, operationId: operationId as string },
           preDrafts,
         )
       : await this.admission.append(preDrafts);

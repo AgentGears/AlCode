@@ -59,17 +59,21 @@ export interface ProgramDispatchServiceOptionsV1 {
   firstDispatchPlanning: ProgramFirstDispatchPlanningBridgeV1;
 }
 
-export interface ProgramRootOperationInputV1 {
+export interface ProgramRootOperationContextV1 {
   programStateId: string;
   expectedProgramRevision: number;
   programAttemptId: string;
   workItemId: string;
-  sessionId: EventSessionId;
   agentGeneration: number;
+}
+
+export interface ProgramRootOperationInputV1 extends ProgramRootOperationContextV1 {
+  sessionId: EventSessionId;
   operationId: string;
 }
 
 export interface ProgramRootOperationAuthorityV1 {
+  resolveCurrentOperation(sessionId: EventSessionId): Promise<ProgramRootOperationContextV1 | null>;
   appendRootOperation(
     input: ProgramRootOperationInputV1,
     drafts: readonly EventDraft<string, unknown>[],
@@ -143,6 +147,32 @@ function requireProgramState(
   const state = latestProgramStates(events).get(programStateId);
   if (state === undefined) throw new ProgramDispatchControlError(`Unknown ProgramState ${programStateId}`);
   return state;
+}
+
+export async function resolveCurrentProgramOperationContext(
+  store: WorkspaceEventStore,
+  sessionId: EventSessionId,
+): Promise<ProgramRootOperationContextV1 | null> {
+  const events = await replayAll(store);
+  let current: ProgramRootOperationContextV1 | null = null;
+  for (const [programStateId, state] of latestProgramStates(events)) {
+    const attempt = state.lifecycle === "active" ? state.activeAttempt : null;
+    if (attempt === null || String(attempt.sessionId) !== String(sessionId)) continue;
+    const candidate: ProgramRootOperationContextV1 = {
+      programStateId,
+      expectedProgramRevision: state.revision,
+      programAttemptId: String(attempt.programAttemptId),
+      workItemId: String(attempt.workItemId),
+      agentGeneration: attempt.agentGeneration,
+    };
+    if (current !== null) {
+      throw new ProgramDispatchControlError(
+        `Multiple active ProgramAttempts claim session ${String(sessionId)}`,
+      );
+    }
+    current = candidate;
+  }
+  return current;
 }
 
 function sessionIsActive(
@@ -429,6 +459,10 @@ export class ProgramDispatchServiceV1 {
         return next;
       });
     });
+  }
+
+  resolveCurrentOperation(sessionId: EventSessionId): Promise<ProgramRootOperationContextV1 | null> {
+    return resolveCurrentProgramOperationContext(this.options.store, sessionId);
   }
 
   async appendRootOperation(

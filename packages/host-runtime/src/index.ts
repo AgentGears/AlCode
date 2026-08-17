@@ -154,6 +154,8 @@ export {
   type ProgramRecoveryAuthorityV1,
   type ProgramFirstDispatchPlanningBridgeV1,
   type ProgramDispatchServiceOptionsV1,
+  type ProgramRootOperationContextV1,
   type ProgramRootOperationInputV1,
   type ProgramRootOperationAuthorityV1,
+  resolveCurrentProgramOperationContext,
 } from "./program-dispatch.ts";
