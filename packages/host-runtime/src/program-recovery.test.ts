@@ -511,3 +511,39 @@ describeLocked("Phase 1 recovery race and attribution corrections", () => {
     expect(calls).toBeGreaterThanOrEqual(4);
   });
 });
+
+
+describeLocked("WorkspaceEffectGeneration recovery integrity", () => {
+  it("fails closed on a non-contiguous durable generation history", async () => {
+    const runtime = await setup("08");
+    const operationId = mkOperationId();
+    await runtime.admission.append([{
+      eventId: mkEventId(),
+      workspaceId: asWorkspaceId(runtime.locked.store.workspaceId),
+      sessionId: runtime.sessionId,
+      operationId,
+      occurredAt: new Date().toISOString(),
+      type: "workspace.effect_generation.advanced",
+      payload: {
+        operationId: String(operationId),
+        previousWorkspaceEffectGeneration: 0,
+        workspaceEffectGeneration: 2,
+        effectStatus: "confirmed",
+      },
+      payloadSchemaVersion: 1,
+      producer: { kind: "runtime", component: "recovery-integrity-test" },
+    }]);
+    const controller = new Phase1RecoveryControllerV1({
+      store: runtime.locked.store,
+      admission: runtime.admission,
+      workspaceCoordinator: { runExclusive: (work) => work() },
+      observations: new MutableObservation({
+        status: "complete",
+        base: base(runtime.locked.store.workspaceId, 0, "current"),
+      }),
+      capabilities: [],
+    });
+    await expect(controller.recover()).rejects.toThrow("Invalid WorkspaceEffectGeneration continuity");
+    expect(await controller.isClear()).toBe(false);
+  });
+});
