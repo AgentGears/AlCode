@@ -164,6 +164,9 @@ importers:
       '@alcode/plugins':
         specifier: workspace:*
         version: link:../plugins
+      '@alcode/program-state':
+        specifier: workspace:*
+        version: link:../program-state
       '@alcode/reasoning':
         specifier: workspace:*
         version: link:../reasoning
@@ -203,6 +206,8 @@ importers:
         version: 13.0.3
 
   packages/plugins: {}
+
+  packages/program-state: {}
 
   packages/reasoning:
     dependencies:

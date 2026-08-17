@@ -27,6 +27,7 @@
     "@alcode/mcp": "workspace:*",
     "@alcode/memory": "workspace:*",
     "@alcode/plugins": "workspace:*",
+    "@alcode/program-state": "workspace:*",
     "@alcode/reasoning": "workspace:*",
     "@alcode/storage": "workspace:*",
     "@alcode/transcript": "workspace:*"

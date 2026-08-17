@@ -104,3 +104,39 @@ export {
 } from "./hook-manager.ts";
 export { createCapabilityHookCoordinator } from "./hook-coordinator.ts";
 export { createCodeIntelligenceCapability, createOwnedTypeScriptLanguageServerProvider } from "./code-intelligence.ts";
+export {
+  PlanningReadRegistry,
+  TrackedPlanningReads,
+  PlanningReadError,
+  PlanningBaseStaleError,
+  TRACKED_PLANNING_PROFILE_ID,
+  TRACKED_PLANNING_PROFILE_VERSION,
+  PLANNING_PROVENANCE_LIMITS,
+  planningCanonicalDigest,
+  assertPlanningObservationIdentity,
+  type PlanningReadDependencyV1,
+  type PlanningObservationIdentityV1,
+  type PlanningReadObservationV1,
+  type PlanningReadContractV1,
+  type PlanningReadDeliveryV1,
+} from "./planning-read.ts";
+export {
+  ProgramCreationServiceV1,
+  ProgramCreationControlError,
+  ProgramCreationStaleError,
+  PROGRAM_CREATION_DRAFT_PROFILE,
+  PROGRAM_CREATION_DRAFT_MAX_BYTES,
+  assertProgramCreationDraft,
+  buildPendingCreationInvalidations,
+  type ProgramCreationDraftV1,
+  type ProgramCreationProposalV1,
+  type ProgramCreationProvenanceV1,
+  type ProgramCreationAcceptedResult,
+  type ProgramCreationPolicySnapshotV1,
+  type ProgramCreationPolicySourceV1,
+  type ProgramObjectiveProvenanceV1,
+  type ExecutionObservationProfileIdentityV1,
+  type ExecutionObservationProfileAuthorityV1,
+  type PlanningReadBarrierV1,
+  type ProgramCreationServiceOptionsV1,
+} from "./program-creation.ts";
