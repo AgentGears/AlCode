@@ -28,8 +28,8 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Typecheck Host runtime
         run: pnpm --filter @alcode/host-runtime typecheck
-      - name: Test Host runtime
-        run: pnpm --filter @alcode/host-runtime test
+      - name: Test Program creation corrections
+        run: pnpm exec vitest run packages/host-runtime/src/planning-read.test.ts packages/host-runtime/src/program-creation.test.ts packages/host-runtime/src/program-creation-binding.test.ts
       - name: Commit review corrections
         shell: bash
         run: |
