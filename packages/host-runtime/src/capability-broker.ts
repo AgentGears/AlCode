@@ -127,6 +127,15 @@ export interface HostCapability {
   execute(args: unknown, context: HostCapabilityContext): Promise<HostCapabilityResult>;
 }
 
+export interface HostProgramVerificationInvocationV1 {
+  kind: "operation_result";
+  specId: string;
+  specVersion: number;
+  canonicalArgsDigest: string;
+  verificationObligationId: string;
+  subjectGeneration: number;
+}
+
 export interface CapabilityBrokerRequest {
   sessionId: SessionId;
   toolCallId: string;
@@ -134,6 +143,8 @@ export interface CapabilityBrokerRequest {
   args: unknown;
   expectedCapabilityRevision?: string;
   program?: ProgramCapabilityOperationContextV1;
+  /** Host-only stable Program verification provenance; never Agent-authored. */
+  programVerificationInvocation?: HostProgramVerificationInvocationV1;
   signal?: AbortSignal;
 }
 
@@ -560,6 +571,9 @@ export class CapabilityBroker {
           } : {}),
           ...(quiescenceContract !== undefined ? { quiescenceContract } : {}),
           ...(reconciliationContract !== undefined ? { reconciliationContract } : {}),
+          ...(request.programVerificationInvocation !== undefined
+            ? { programVerificationInvocation: freezeCanonical(request.programVerificationInvocation) }
+            : {}),
         },
         payloadSchemaVersion: 1, producer: { kind: "runtime", component: "host-capability-broker" },
       },
