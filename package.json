@@ -21,6 +21,7 @@
     "gate:0.7": "tsx scripts/gate/gate-0.7.ts",
     "gate:0.8": "tsx scripts/gate/gate-0.8.ts",
     "gate:0.9": "tsx scripts/gate/gate-0.9.ts",
+    "gate:1.0": "tsx scripts/gate/gate-1.0.ts",
     "pi:verify": "tsx scripts/import-pi.ts verify",
     "pi:import": "tsx scripts/import-pi.ts import",
     "build": "tsc -b",
