@@ -1,0 +1,46 @@
+name: Temporary Phase 1 Program Agent integration v2
+on:
+  push:
+    branches: [automation/phase-1.0-program-agent-integration-build-v2]
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.17.0
+          cache: pnpm
+      - name: Preserve builder and create feature branch
+        run: |
+          cp .github/builders/_temp_program_agent_wiring.py /tmp/program-agent-wiring.py
+          cp .github/builders/_temp_program_agent_wiring_correction.py /tmp/program-agent-wiring-correction.py
+          git switch -c feat/phase-1.0-program-agent-integration 2ea21568252f2862555efa241b37d618f2141485
+      - name: Apply Host and Agent integration
+        run: |
+          python /tmp/program-agent-wiring.py
+          python /tmp/program-agent-wiring-correction.py
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: |
+          pnpm --filter @alcode/agent-protocol typecheck
+          pnpm --filter @alcode/host-runtime typecheck
+          pnpm --filter @alcode/coding-agent typecheck
+      - name: Focused tests
+        run: |
+          pnpm exec vitest run packages/agent-protocol/src/program-state-protocol.test.ts packages/host-runtime/src/program-agent.test.ts packages/host-runtime/src/program-agent-host.integration.test.ts
+      - name: Commit and publish
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/host-runtime/src/host.ts packages/host-runtime/src/index.ts packages/host-runtime/src/program-agent-host.integration.test.ts packages/coding-agent/src/inference-context.ts packages/coding-agent/src/agent-worker.ts
+          git commit -m "feat(1.0): deliver ProgramAttempt to coding Agent"
+          git push origin HEAD:feat/phase-1.0-program-agent-integration
