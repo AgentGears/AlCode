@@ -1,0 +1,58 @@
+name: Temporary Phase 1 writer/stale correction v2
+
+on:
+  push:
+    branches:
+      - automation/phase-1.0-writer-stale-correction-v2
+
+permissions:
+  contents: write
+
+jobs:
+  correct:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: automation/phase-1.0-writer-stale-correction-v2
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.20.0'
+          cache: pnpm
+      - name: Create correction branch
+        run: git switch -c fix/phase-1.0-writer-stale-routing-v2
+      - name: Apply bounded P1 corrections
+        run: python3 .github/scripts/_temp_phase1_writer_stale_correction.py
+      - name: Align stale-attempt regression with structured broker result
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          path = Path('packages/host-runtime/src/program-operation-correlation.test.ts')
+          text = path.read_text()
+          text = text.replace('import { ProgramDispatchServiceV1, ProgramDispatchStaleError } from "./program-dispatch.ts";', 'import { ProgramDispatchServiceV1 } from "./program-dispatch.ts";')
+          old = '    await expect(runtime.broker.execute({ sessionId: runtime.session.sessionId, toolCallId: "tc-stale", toolName: "inspect", args: {}, program: { ...programContext(runtime, "12"), programAttemptId: `${runtime.issued.programAttemptId}-stale` } })).rejects.toBeInstanceOf(ProgramDispatchStaleError);\n'
+          new = '    const stale = await runtime.broker.execute({ sessionId: runtime.session.sessionId, toolCallId: "tc-stale", toolName: "inspect", args: {}, program: { ...programContext(runtime, "12"), programAttemptId: `${runtime.issued.programAttemptId}-stale` } });\n    expect(stale).toMatchObject({ outcome: "stale", errorCode: "program_execution_stale" });\n'
+          if text.count(old) != 1:
+              raise SystemExit(f'stale regression expected one match, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1))
+          PY
+      - name: Remove bootstrap-only files
+        run: |
+          rm .github/scripts/_temp_phase1_writer_stale_correction.py
+          rm .github/workflows/_temp-phase1-writer-stale-correction-v2.yml
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck Host runtime
+        run: pnpm --filter @alcode/host-runtime typecheck
+      - name: Run targeted Program operation tests
+        run: pnpm exec vitest run packages/host-runtime/src/program-operation-correlation.test.ts packages/host-runtime/src/program-dispatch.test.ts packages/host-runtime/src/host-runtime.integration.test.ts
+      - name: Commit and publish correction branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix(1.0): close writer and stale-routing gaps"
+          git push origin HEAD:refs/heads/fix/phase-1.0-writer-stale-routing-v2
