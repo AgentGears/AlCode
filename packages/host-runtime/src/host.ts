@@ -8,6 +8,7 @@ import {
   DYNAMIC_CAPABILITY_BINDING_CAPABILITY,
   DURABLE_TRANSCRIPT_CAPABILITY,
   GRAPH_CONTEXT_CAPABILITY,
+  PROGRAM_STATE_CAPABILITY,
   type AgentToHostMessage,
   type AuthorizedToolDescriptor,
   type CapabilityResult,
@@ -31,6 +32,7 @@ import { COGNITION_TOOL_NAMES, HostCognitionService } from "./cognition-service.
 import { HostContextService, type HostContextServiceOptions } from "./context-service.ts";
 import { HostContextSourceReader } from "./context-source.ts";
 import { DefaultHostPolicy, type HostPolicy } from "./policy.ts";
+import { ProgramAgentServiceV1 } from "./program-agent.ts";
 import type { ProgramRootOperationAuthorityV1 } from "./program-dispatch.ts";
 import type { Phase1RecoveryLifecycleV1 } from "./program-recovery.ts";
 import { HostSessionManager, type HostSessionHandle } from "./session-manager.ts";
@@ -69,6 +71,7 @@ function cognitionDescriptors(): AuthorizedToolDescriptor[] {
 
 export class HostRuntime {
   readonly admission: CanonicalAdmissionQueue;
+  readonly programAgents: ProgramAgentServiceV1;
   readonly cognitionGateway: CognitionGateway;
   readonly workDispatcher: DurableWorkDispatcher;
   readonly sessions: HostSessionManager;
@@ -88,6 +91,7 @@ export class HostRuntime {
     this.store = options.store;
     this.hostInstanceId = options.hostInstanceId ?? uuidv7();
     this.admission = new CanonicalAdmissionQueue(options.store.store);
+    this.programAgents = new ProgramAgentServiceV1(options.store.store, this.admission);
     this.cognitionGateway = new CognitionGateway(options.store);
     this.workDispatcher = new DurableWorkDispatcher(options.store.store, this.admission);
     this.sessions = new HostSessionManager(options.store, this.admission);
@@ -167,9 +171,19 @@ export class HostRuntime {
     const durableTranscript = connection.capabilities?.includes(DURABLE_TRANSCRIPT_CAPABILITY) ?? false;
     const graphContext = connection.capabilities?.includes(GRAPH_CONTEXT_CAPABILITY) ?? false;
     const dynamicCapabilityBinding = connection.capabilities?.includes(DYNAMIC_CAPABILITY_BINDING_CAPABILITY) ?? false;
+    const programStateCapable = connection.capabilities?.includes(PROGRAM_STATE_CAPABILITY) ?? false;
     if (connection.capabilities !== undefined && !durableTranscript) {
       throw new Error(`Agent missing required capability: ${DURABLE_TRANSCRIPT_CAPABILITY}`);
     }
+
+    await this.programAgents.attach(
+      session.sessionId,
+      connection.generationId,
+      programStateCapable,
+    );
+    void connection.waitForExit()
+      .then(() => this.programAgents.detach(session.sessionId, connection.generationId))
+      .catch(() => this.programAgents.detach(session.sessionId, connection.generationId));
 
     const transport = connection.transport;
     await transport.send({ type: "host.hello", protocolVersion: 1, hostInstanceId: this.hostInstanceId });
@@ -213,9 +227,16 @@ export class HostRuntime {
       durableTranscript,
       graphContext,
       dynamicCapabilityBinding,
+      programStateCapable,
       systemPrompt,
     ));
-    return { generationId: connection.generationId, detach: unsubscribe };
+    return {
+      generationId: connection.generationId,
+      detach: () => {
+        unsubscribe();
+        this.programAgents.detach(session.sessionId, connection.generationId);
+      },
+    };
   }
 
   async sendInput(
@@ -258,12 +279,15 @@ export class HostRuntime {
     durableTranscript: boolean,
     graphContext: boolean,
     dynamicCapabilityBinding: boolean,
+    programStateCapable: boolean,
     baseSystemPrompt: string,
   ): Promise<void> {
     switch (message.type) {
       case "context.refresh.request": {
         if (message.sessionId !== (sessionId as string)) throw new Error("Agent session mismatch");
-        if (!graphContext && !dynamicCapabilityBinding) throw new Error("Agent has no inference-refresh capability");
+        if (!graphContext && !dynamicCapabilityBinding && !programStateCapable) {
+          throw new Error("Agent has no inference-refresh capability");
+        }
         const cacheKey = `${generationId}:${message.requestId}`;
         let update = this.contextRequestCache.get(cacheKey);
         if (!update) {
@@ -276,7 +300,14 @@ export class HostRuntime {
             toolDefinitions: definitions,
             graphCapable: graphContext,
           });
-          update = dynamicCapabilityBinding ? { ...refreshed, toolCatalog } : refreshed;
+          const programAttempt = programStateCapable
+            ? await this.programAgents.currentAttemptProjection(sessionId, generationId)
+            : undefined;
+          update = {
+            ...refreshed,
+            ...(dynamicCapabilityBinding ? { toolCatalog } : {}),
+            ...(programAttempt !== undefined ? { programAttempt } : {}),
+          };
           this.contextRequestCache.set(cacheKey, update);
         }
         try {
