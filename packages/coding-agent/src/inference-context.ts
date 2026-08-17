@@ -5,11 +5,13 @@ import type {
   ContextUpdate,
   HostToAgentMessage,
   InferenceToolCatalog,
+  ProgramAttemptProjectionV1,
   ProtocolTransport,
 } from "@alcode/agent-protocol";
 
 export interface RefreshedInferenceContext extends InferenceContext {
   toolCatalog?: InferenceToolCatalog;
+  programAttempt?: ProgramAttemptProjectionV1;
 }
 
 function abortError(signal: AbortSignal): Error {
@@ -48,5 +50,6 @@ export async function requestInferenceContext(
     systemPrompt: update.systemPrompt,
     messages: structuredClone(update.messages) as Message[],
     ...(update.toolCatalog !== undefined ? { toolCatalog: structuredClone(update.toolCatalog) } : {}),
+    ...(update.programAttempt !== undefined ? { programAttempt: structuredClone(update.programAttempt) } : {}),
   };
 }
