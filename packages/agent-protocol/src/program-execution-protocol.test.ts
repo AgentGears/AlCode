@@ -79,7 +79,41 @@ describe("program_execution_v1 protocol", () => {
     })).toBe(false);
   });
 
-  it("validates Host planning responses", () => {
+  it("validates only the bounded Agent progress authority surface", () => {
+    const progress = {
+      type: "program.progress",
+      version: 1,
+      requestId: "progress-1",
+      sessionId: "session-1",
+      authority: {
+        programStateId: "program-1",
+        expectedProgramRevision: 4,
+        programAttemptId: "attempt-1",
+        workItemId: "work-1",
+        agentGeneration: 2,
+      },
+      evidence: [{ sourceOperationId: "operation-1" }],
+      advisoryBlockers: [{
+        action: "report",
+        reportId: "advisory-1",
+        scope: "work",
+        reason: "Need a caller decision before changing public behavior",
+      }],
+      requestAwaitingVerification: true,
+    };
+    expect(isAgentToHostMessage(progress)).toBe(true);
+    expect(isAgentToHostMessage({ ...progress, workCompleted: true })).toBe(false);
+    expect(isAgentToHostMessage({
+      ...progress,
+      evidence: [{ sourceOperationId: "operation-1", evidenceRefId: "agent-chosen" }],
+    })).toBe(false);
+    expect(isAgentToHostMessage({
+      ...progress,
+      advisoryBlockers: [{ action: "resolve", reportId: "advisory-1", reason: "agent override" }],
+    })).toBe(false);
+  });
+
+  it("validates Host planning and progress responses", () => {
     expect(isHostToAgentMessage({
       type: "program.planning.begin",
       version: 1,
@@ -95,6 +129,15 @@ describe("program_execution_v1 protocol", () => {
       sessionId: "session-1",
       planningEpisodeId: "episode-1",
       outcome: "sealed",
+    })).toBe(true);
+    expect(isHostToAgentMessage({
+      type: "program.progress.result",
+      version: 1,
+      requestId: "progress-1",
+      sessionId: "session-1",
+      outcome: "admitted",
+      programStateId: "program-1",
+      programRevision: 5,
     })).toBe(true);
   });
 });
