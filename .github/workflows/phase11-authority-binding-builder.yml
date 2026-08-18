@@ -1,0 +1,55 @@
+name: Phase 1.1 authority binding builder
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    if: github.head_ref == 'automation/phase11-authority-binding-pr-builder'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Prepare clean feature branch
+        run: |
+          cp .automation/phase11-authority-binding.py /tmp/phase11-authority-binding.py
+          git fetch origin main
+          git switch -C feat/phase-1.1-inference-authority origin/main
+      - name: Apply frozen authority-binding correction
+        run: python /tmp/phase11-authority-binding.py
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.10.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Verify cognition proxy
+        run: |
+          pnpm --filter @alcode/cognition-extension typecheck
+          pnpm --filter @alcode/cognition-extension test
+      - name: Verify coding Agent
+        run: |
+          pnpm --filter @alcode/coding-agent typecheck
+          pnpm --filter @alcode/coding-agent test
+      - name: Verify Host authority routing
+        run: |
+          pnpm --filter @alcode/host-runtime typecheck
+          pnpm --filter @alcode/host-runtime test
+      - name: Commit and publish clean feature branch
+        run: |
+          git status --short
+          git add -A
+          git config user.name "ALCODE Automation"
+          git config user.email "actions@users.noreply.github.com"
+          git commit -m "fix(1.1): bind Agent capability requests to inference Attempt"
+          git push --force origin HEAD:feat/phase-1.1-inference-authority
