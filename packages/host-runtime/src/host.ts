@@ -8,6 +8,7 @@ import {
   DYNAMIC_CAPABILITY_BINDING_CAPABILITY,
   DURABLE_TRANSCRIPT_CAPABILITY,
   GRAPH_CONTEXT_CAPABILITY,
+  PROGRAM_EXECUTION_CAPABILITY,
   PROGRAM_STATE_CAPABILITY,
   type AgentToHostMessage,
   type AuthorizedToolDescriptor,
@@ -55,6 +56,17 @@ export interface AttachedAgent {
 
 export type AgentResumeReason = "agent_replaced" | "host_reopened" | "reattach";
 
+export type ProgramAgentIdleDecisionV1 =
+  | { status: "not_program" }
+  | { status: "handled"; terminal: "none" | "completed" | "cancelled"; reason?: string };
+
+export interface ProgramAgentIdleAuthorityV1 {
+  handleAgentIdle(input: {
+    connectionGenerationId: string;
+    sessionId: SessionId;
+  }): Promise<ProgramAgentIdleDecisionV1>;
+}
+
 function cognitionDescriptors(): AuthorizedToolDescriptor[] {
   return [...COGNITION_TOOL_NAMES]
     .sort((a, b) => a.localeCompare(b, "en"))
@@ -86,6 +98,7 @@ export class HostRuntime {
   private readonly requestCache = new Map<string, CapabilityResult>();
   private readonly contextRequestCache = new Map<string, ContextUpdate>();
   private phase1Recovery: Phase1RecoveryLifecycleV1 | undefined;
+  private programAgentIdleAuthority: ProgramAgentIdleAuthorityV1 | undefined;
 
   constructor(options: HostRuntimeOptions) {
     this.store = options.store;
@@ -146,6 +159,10 @@ export class HostRuntime {
     this.capabilityBroker.setWorkspaceMutationAdmissionAuthority(controller);
   }
 
+  setProgramAgentIdleAuthority(authority: ProgramAgentIdleAuthorityV1 | undefined): void {
+    this.programAgentIdleAuthority = authority;
+  }
+
   async admitInput(sessionId: SessionId, text: string): Promise<{ timestamp: number }> {
     const timestamp = Date.now();
     await this.admission.append([{
@@ -172,6 +189,13 @@ export class HostRuntime {
     const graphContext = connection.capabilities?.includes(GRAPH_CONTEXT_CAPABILITY) ?? false;
     const dynamicCapabilityBinding = connection.capabilities?.includes(DYNAMIC_CAPABILITY_BINDING_CAPABILITY) ?? false;
     const programStateCapable = connection.capabilities?.includes(PROGRAM_STATE_CAPABILITY) ?? false;
+    const programExecutionCapable = connection.capabilities?.includes(PROGRAM_EXECUTION_CAPABILITY) ?? false;
+    if (programExecutionCapable && !programStateCapable) {
+      throw new Error(`Agent capability ${PROGRAM_EXECUTION_CAPABILITY} requires ${PROGRAM_STATE_CAPABILITY}`);
+    }
+    if (programExecutionCapable && this.programAgentIdleAuthority === undefined) {
+      throw new Error("Program execution Agent requires Host Program idle authority");
+    }
     if (connection.capabilities !== undefined && !durableTranscript) {
       throw new Error(`Agent missing required capability: ${DURABLE_TRANSCRIPT_CAPABILITY}`);
     }
@@ -228,6 +252,7 @@ export class HostRuntime {
       graphContext,
       dynamicCapabilityBinding,
       programStateCapable,
+      programExecutionCapable,
       systemPrompt,
     ));
     return {
@@ -271,6 +296,14 @@ export class HostRuntime {
     this.store.close();
   }
 
+  private async stopProgramSessionIfNeeded(
+    sessionId: SessionId,
+    reason: "completed" | "cancelled",
+  ): Promise<void> {
+    const state = await this.sessions.getState(sessionId);
+    if (state.started && !state.stopped) await this.sessions.stop(sessionId, reason);
+  }
+
   private async handleAgentMessage(
     generationId: string,
     transport: ProtocolTransport<HostToAgentMessage, AgentToHostMessage>,
@@ -280,6 +313,7 @@ export class HostRuntime {
     graphContext: boolean,
     dynamicCapabilityBinding: boolean,
     programStateCapable: boolean,
+    programExecutionCapable: boolean,
     baseSystemPrompt: string,
   ): Promise<void> {
     switch (message.type) {
@@ -415,6 +449,26 @@ export class HostRuntime {
         break;
 
       case "agent.idle": {
+        if (programExecutionCapable && this.programAgentIdleAuthority !== undefined) {
+          const decision = await this.programAgentIdleAuthority.handleAgentIdle({
+            connectionGenerationId: generationId,
+            sessionId,
+          });
+          if (decision.status === "handled") {
+            if (decision.terminal !== "none") {
+              await this.stopProgramSessionIfNeeded(sessionId, decision.terminal);
+              try {
+                await transport.send({
+                  type: "shutdown",
+                  requestId: uuidv7(),
+                  sessionId: sessionId as string,
+                  reason: decision.terminal,
+                });
+              } catch {}
+            }
+            break;
+          }
+        }
         const completion = await this.assessAndComplete(sessionId, true);
         if (completion.completed) {
           try { await transport.send({ type: "shutdown", requestId: uuidv7(), sessionId: sessionId as string, reason: "completed" }); } catch {}

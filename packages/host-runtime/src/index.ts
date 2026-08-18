@@ -64,7 +64,14 @@ export {
 } from "./verbatim-context.ts";
 export { DurableWorkDispatcher, type MemoryConsolidationWork } from "./work-dispatcher.ts";
 export { createChildProcessHostTransport, createProcessAgentTransport } from "./node-ipc-transport.ts";
-export { HostRuntime, type HostRuntimeOptions, type AttachedAgent, type AgentResumeReason } from "./host.ts";
+export {
+  HostRuntime,
+  type HostRuntimeOptions,
+  type AttachedAgent,
+  type AgentResumeReason,
+  type ProgramAgentIdleDecisionV1,
+  type ProgramAgentIdleAuthorityV1,
+} from "./host.ts";
 export {
   ExternalProcessSupervisor,
   scrubExternalProcessEnvironment,
@@ -237,6 +244,22 @@ export {
   type ProgramApplicationPortV1,
   type HostProgramApplicationControlOptionsV1,
 } from "./program-application.ts";
+
+export {
+  ProgramExecutionApplicationPortV1,
+  ProgramExecutionSchedulerV1,
+  type ProgramExecutionAgentGenerationSourceV1,
+  type ProgramExecutionScheduleResultV1,
+  type ProgramExecutionSchedulerOptionsV1,
+} from "./program-execution-scheduler.ts";
+
+export {
+  ProgramExecutionControlV1,
+  ProgramExecutionControlError,
+  type ProgramExecutionIdleAgentAuthorityV1,
+  type ProgramExecutionIdleResultV1,
+  type ProgramExecutionControlOptionsV1,
+} from "./program-execution-control.ts";
 
 export {
   HostProgramWorkspaceCoordinatorV1,
