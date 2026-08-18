@@ -3,7 +3,7 @@ name: Phase 1.1 progress builder
 on:
   push:
     branches:
-      - automation/phase11-progress-builder-run
+      - automation/phase11-progress-builder-detached
 
 permissions:
   contents: write
