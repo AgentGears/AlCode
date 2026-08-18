@@ -220,3 +220,10 @@ export {
   type ProgramApplicationPortV1,
   type HostProgramApplicationControlOptionsV1,
 } from "./program-application.ts";
+
+export {
+  HostProgramWorkspaceCoordinatorV1,
+  ProgramExecutionRuntimeV1,
+  createProgramExecutionRuntimeV1,
+  type ProgramExecutionRuntimeOptionsV1,
+} from "./program-execution-runtime.ts";
