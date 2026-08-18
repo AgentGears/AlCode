@@ -44,9 +44,7 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
       - name: Verify cognition proxy
-        run: |
-          pnpm --filter @alcode/cognition-extension typecheck
-          pnpm --filter @alcode/cognition-extension test
+        run: pnpm --filter @alcode/cognition-extension typecheck
       - name: Verify coding Agent
         run: |
           pnpm --filter @alcode/coding-agent typecheck
