@@ -9,6 +9,10 @@ export const DURABLE_TRANSCRIPT_CAPABILITY = "durable_transcript_v1" as const;
 export const GRAPH_CONTEXT_CAPABILITY = "graph_context_v1" as const;
 export const DYNAMIC_CAPABILITY_BINDING_CAPABILITY = "dynamic_capability_binding_v1" as const;
 export const PROGRAM_STATE_CAPABILITY = "program_state_v1" as const;
+export const PROGRAM_EXECUTION_CAPABILITY = "program_execution_v1" as const;
+export const PROGRAM_EXECUTION_MESSAGE_VERSION = 1 as const;
+export const PROGRAM_PLANNING_READ_MAX_BYTES = 1024 * 1024;
+export const PROGRAM_PROPOSAL_MAX_BYTES = 4 * 1024 * 1024;
 export const VERBATIM_COMPILER_VERSION = "verbatim-v1" as const;
 
 export type ProtocolRequestId = string;
@@ -118,16 +122,76 @@ export interface ProgramAttemptProjectionV1 {
   };
 }
 
+export interface ProgramCreationProposalWireV1 {
+  objective: string;
+  workItems: unknown[];
+  verification: unknown[];
+  outputSlots: unknown[];
+  productionSteps: unknown[];
+}
+
+export interface ProgramPlanningReadRequest {
+  type: "program.planning.read";
+  version: typeof PROGRAM_EXECUTION_MESSAGE_VERSION;
+  requestId: ProtocolRequestId;
+  sessionId: string;
+  planningEpisodeId: string;
+  readContractId: string;
+  readContractVersion: number;
+  args: unknown;
+}
+
+export interface ProgramProposalSubmitted {
+  type: "program.proposal";
+  version: typeof PROGRAM_EXECUTION_MESSAGE_VERSION;
+  requestId: ProtocolRequestId;
+  sessionId: string;
+  planningEpisodeId: string;
+  proposal: ProgramCreationProposalWireV1;
+}
+
 export interface AgentHello { type: "agent.hello"; protocolVersion: typeof AGENT_PROTOCOL_VERSION; generationId: AgentGenerationId; capabilities: string[]; }
 export interface AssistantMessageProduced { type: "assistant.message"; requestId: ProtocolRequestId; sessionId: string; text: string; content?: TranscriptAssistantMessage["content"]; stopReason?: TranscriptAssistantMessage["stopReason"]; errorMessage?: string; timestamp?: number; }
 export interface ToolResultProduced { type: "tool.result"; requestId: ProtocolRequestId; sessionId: string; toolCallId: string; toolName: string; content: TranscriptToolResultMessage["content"]; isError: boolean; timestamp: number; operationId?: string; }
-export interface CapabilityRequest { type: "capability.request"; requestId: ProtocolRequestId; sessionId: string; toolCallId: string; toolName: string; args: unknown; expectedCapabilityRevision?: string; }
+export interface CapabilityRequest { type: "capability.request"; requestId: ProtocolRequestId; sessionId: string; toolCallId: string; toolName: string; args: unknown; expectedCapabilityRevision?: string; programAttemptAuthority?: ProgramAttemptAuthorityV1; }
 export interface ContextRefreshRequest { type: "context.refresh.request"; requestId: ProtocolRequestId; sessionId: string; }
 export interface CriterionEvidence { type: "criterion.evidence"; requestId: ProtocolRequestId; sessionId: string; evidenceType: string; data?: unknown; }
 export interface AgentIdle { type: "agent.idle"; requestId: ProtocolRequestId; sessionId: string; reason: "stop" | "max_steps" | "cancelled"; }
 export interface AgentError { type: "agent.error"; requestId: ProtocolRequestId; sessionId?: string; message: string; }
 
-export type AgentToHostMessage = AgentHello | AssistantMessageProduced | ToolResultProduced | CapabilityRequest | ContextRefreshRequest | CriterionEvidence | AgentIdle | AgentError;
+export type AgentToHostMessage = AgentHello | AssistantMessageProduced | ToolResultProduced | CapabilityRequest | ProgramPlanningReadRequest | ProgramProposalSubmitted | ContextRefreshRequest | CriterionEvidence | AgentIdle | AgentError;
+
+export interface ProgramPlanningBegin {
+  type: "program.planning.begin";
+  version: typeof PROGRAM_EXECUTION_MESSAGE_VERSION;
+  requestId: ProtocolRequestId;
+  sessionId: string;
+  planningEpisodeId: string;
+  objective: string;
+}
+
+export interface ProgramPlanningReadResult {
+  type: "program.planning.read.result";
+  version: typeof PROGRAM_EXECUTION_MESSAGE_VERSION;
+  requestId: ProtocolRequestId;
+  sessionId: string;
+  planningEpisodeId: string;
+  outcome: "succeeded" | "stale" | "denied" | "failed";
+  result?: unknown;
+  errorCode?: string;
+  error?: string;
+}
+
+export interface ProgramProposalResult {
+  type: "program.proposal.result";
+  version: typeof PROGRAM_EXECUTION_MESSAGE_VERSION;
+  requestId: ProtocolRequestId;
+  sessionId: string;
+  planningEpisodeId: string;
+  outcome: "sealed" | "stale" | "denied" | "failed";
+  errorCode?: string;
+  error?: string;
+}
 
 export interface HostHello { type: "host.hello"; protocolVersion: typeof AGENT_PROTOCOL_VERSION; hostInstanceId: string; }
 export interface SessionOpen { type: "session.open"; requestId: ProtocolRequestId; sessionId: string; workspaceId: string; }
@@ -165,5 +229,5 @@ export interface CapabilityResult { type: "capability.result"; requestId: Protoc
 export interface Cancel { type: "cancel"; requestId: ProtocolRequestId; sessionId: string; reason?: string; }
 export interface Shutdown { type: "shutdown"; requestId: ProtocolRequestId; sessionId?: string; reason: "completed" | "cancelled" | "host_shutdown" | "replaced"; }
 
-export type HostToAgentMessage = HostHello | SessionOpen | SessionResume | InputAdmitted | ContextProvide | ContextUpdate | TranscriptAdmitted | CapabilityResult | Cancel | Shutdown;
+export type HostToAgentMessage = HostHello | SessionOpen | SessionResume | InputAdmitted | ProgramPlanningBegin | ProgramPlanningReadResult | ProgramProposalResult | ContextProvide | ContextUpdate | TranscriptAdmitted | CapabilityResult | Cancel | Shutdown;
 export type AgentProtocolMessage = AgentToHostMessage | HostToAgentMessage;

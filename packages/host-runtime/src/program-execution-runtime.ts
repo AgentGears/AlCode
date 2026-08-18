@@ -1,9 +1,20 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import {
+  PROGRAM_EXECUTION_CAPABILITY,
+  PROGRAM_STATE_CAPABILITY,
+  type ProgramPlanningBegin,
+} from "@alcode/agent-protocol";
 import type { WorkspaceEventStore } from "@alcode/storage";
+import type { AgentConnection } from "./agent-supervisor.ts";
 import type { ApplicationAgentControl } from "./application-service.ts";
 import { HostApplicationService } from "./application-service.ts";
 import type { HostArtifactStore } from "./artifact-store.ts";
-import { HostRuntime, type HostRuntimeOptions } from "./host.ts";
+import {
+  HostRuntime,
+  type AgentResumeReason,
+  type AttachedAgent,
+  type HostRuntimeOptions,
+} from "./host.ts";
 import type { PlanningReadRegistry } from "./planning-read.ts";
 import {
   ProgramCreationServiceV1,
@@ -13,11 +24,16 @@ import {
 } from "./program-creation.ts";
 import { HostProgramApplicationControlV1 } from "./program-application.ts";
 import {
+  ProgramPlanningControlError,
+  ProgramPlanningServiceV1,
+} from "./program-planning.ts";
+import {
   ProgramDispatchServiceV1,
   type ProgramDispatchWorkspaceCoordinatorV1,
   type ProgramExecutionObservationSourceV1,
 } from "./program-dispatch.ts";
 import { Phase1RecoveryControllerV1 } from "./program-recovery.ts";
+import type { HostSessionHandle } from "./session-manager.ts";
 import { ProgramTerminalServiceV1 } from "./program-terminal.ts";
 import {
   HostVerificationOperationRegistryV1,
@@ -70,12 +86,14 @@ export class ProgramExecutionRuntimeV1 {
   readonly host: HostRuntime;
   readonly workspaceCoordinator: ProgramDispatchWorkspaceCoordinatorV1 & PlanningReadBarrierV1;
   readonly creation: ProgramCreationServiceV1;
+  readonly planning: ProgramPlanningServiceV1;
   readonly recovery: Phase1RecoveryControllerV1;
   readonly dispatch: ProgramDispatchServiceV1;
   readonly verification: ProgramVerificationServiceV1;
   readonly terminal: ProgramTerminalServiceV1;
   readonly application: HostProgramApplicationControlV1;
   private readonly store: WorkspaceEventStore;
+  private readonly currentPlanningConnections = new Map<string, string>();
 
   constructor(options: ProgramExecutionRuntimeOptionsV1) {
     this.host = new HostRuntime(options.host);
@@ -89,6 +107,17 @@ export class ProgramExecutionRuntimeV1 {
       planningBarrier: this.workspaceCoordinator,
       policy: options.creationPolicy,
       executionObservationProfiles: options.executionObservationProfiles,
+    });
+
+    this.planning = new ProgramPlanningServiceV1({
+      store: this.store,
+      planningReads: options.planningReads,
+      creation: this.creation,
+      agents: {
+        isCurrent: (sessionId, connectionGenerationId, agentGeneration) =>
+          this.currentPlanningConnections.get(sessionId) === connectionGenerationId
+          && this.host.programAgents.isCurrent(sessionId, agentGeneration),
+      },
     });
 
     this.recovery = new Phase1RecoveryControllerV1({
@@ -140,6 +169,84 @@ export class ProgramExecutionRuntimeV1 {
       dispatch: this.dispatch,
       terminal: this.terminal,
     });
+  }
+
+  async attachAgent(
+    connection: AgentConnection,
+    session: HostSessionHandle,
+    systemPrompt: string,
+    resumeReason: AgentResumeReason = "reattach",
+  ): Promise<AttachedAgent> {
+    const capabilities = connection.capabilities ?? [];
+    const programStateCapable = capabilities.includes(PROGRAM_STATE_CAPABILITY);
+    const programExecutionCapable = capabilities.includes(PROGRAM_EXECUTION_CAPABILITY);
+    if (programExecutionCapable && !programStateCapable) {
+      throw new ProgramPlanningControlError(
+        `${PROGRAM_EXECUTION_CAPABILITY} requires ${PROGRAM_STATE_CAPABILITY}`,
+      );
+    }
+
+    const attached = await this.host.attachAgent(connection, session, systemPrompt, resumeReason);
+    const sessionId = String(session.sessionId);
+    this.currentPlanningConnections.delete(sessionId);
+    if (!programExecutionCapable) return attached;
+
+    const agentGeneration = this.host.programAgents.currentAgentGeneration(sessionId);
+    if (agentGeneration === null) {
+      attached.detach();
+      throw new ProgramPlanningControlError("Attached Program Agent lacks current generation authority");
+    }
+    this.currentPlanningConnections.set(sessionId, connection.generationId);
+
+    const unsubscribePlanning = connection.transport.onMessage(async (message) => {
+      const response = await this.planning.handleAgentMessage({
+        connectionGenerationId: connection.generationId,
+        agentGeneration,
+        sessionId: session.sessionId,
+        message,
+      });
+      if (response !== undefined) {
+        try { await connection.transport.send(response); } catch {}
+      }
+    });
+    return {
+      generationId: attached.generationId,
+      detach: () => {
+        unsubscribePlanning();
+        if (this.currentPlanningConnections.get(sessionId) === connection.generationId) {
+          this.currentPlanningConnections.delete(sessionId);
+        }
+        attached.detach();
+      },
+    };
+  }
+
+  async beginPlanning(
+    connection: AgentConnection,
+    session: HostSessionHandle,
+    objective: string,
+  ): Promise<ProgramPlanningBegin> {
+    const capabilities = connection.capabilities ?? [];
+    if (!capabilities.includes(PROGRAM_STATE_CAPABILITY)
+        || !capabilities.includes(PROGRAM_EXECUTION_CAPABILITY)) {
+      throw new ProgramPlanningControlError(
+        `Program planning requires ${PROGRAM_STATE_CAPABILITY} and ${PROGRAM_EXECUTION_CAPABILITY}`,
+      );
+    }
+    const sessionId = String(session.sessionId);
+    if (this.currentPlanningConnections.get(sessionId) !== connection.generationId) {
+      throw new ProgramPlanningControlError("Planning connection is not the current Agent connection");
+    }
+    const agentGeneration = this.host.programAgents.currentAgentGeneration(sessionId);
+    if (agentGeneration === null) throw new ProgramPlanningControlError("Planning Agent generation is unavailable");
+    const begin = await this.planning.begin({
+      sourceSessionId: session.sessionId,
+      connectionGenerationId: connection.generationId,
+      agentGeneration,
+      objective,
+    });
+    await connection.transport.send(begin);
+    return begin;
   }
 
   createApplicationService(agent: ApplicationAgentControl, maxReplayEvents?: number): HostApplicationService {
