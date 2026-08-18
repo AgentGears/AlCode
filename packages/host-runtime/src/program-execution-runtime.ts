@@ -24,6 +24,10 @@ import {
 } from "./program-creation.ts";
 import { HostProgramApplicationControlV1 } from "./program-application.ts";
 import {
+  ProgramExecutionApplicationPortV1,
+  ProgramExecutionSchedulerV1,
+} from "./program-execution-scheduler.ts";
+import {
   ProgramPlanningControlError,
   ProgramPlanningServiceV1,
 } from "./program-planning.ts";
@@ -89,9 +93,11 @@ export class ProgramExecutionRuntimeV1 {
   readonly planning: ProgramPlanningServiceV1;
   readonly recovery: Phase1RecoveryControllerV1;
   readonly dispatch: ProgramDispatchServiceV1;
+  readonly scheduler: ProgramExecutionSchedulerV1;
   readonly verification: ProgramVerificationServiceV1;
   readonly terminal: ProgramTerminalServiceV1;
   readonly application: HostProgramApplicationControlV1;
+  readonly productApplication: ProgramExecutionApplicationPortV1;
   private readonly store: WorkspaceEventStore;
   private readonly currentPlanningConnections = new Map<string, string>();
 
@@ -138,6 +144,12 @@ export class ProgramExecutionRuntimeV1 {
       firstDispatchPlanning: this.creation,
     });
 
+    this.scheduler = new ProgramExecutionSchedulerV1({
+      store: this.store,
+      dispatch: this.dispatch,
+      agents: this.host.programAgents,
+    });
+
     this.host.setProgramOperationAuthority(this.dispatch);
     this.host.setPhase1RecoveryController(this.recovery);
 
@@ -169,6 +181,7 @@ export class ProgramExecutionRuntimeV1 {
       dispatch: this.dispatch,
       terminal: this.terminal,
     });
+    this.productApplication = new ProgramExecutionApplicationPortV1(this.application, this.scheduler);
   }
 
   async attachAgent(
@@ -254,7 +267,7 @@ export class ProgramExecutionRuntimeV1 {
       store: this.store,
       admission: this.host.admission,
       agent,
-      program: this.application,
+      program: this.productApplication,
       ...(maxReplayEvents !== undefined ? { maxReplayEvents } : {}),
     });
   }
