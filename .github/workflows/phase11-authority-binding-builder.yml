@@ -24,6 +24,18 @@ jobs:
           git switch -C feat/phase-1.1-inference-authority origin/main
       - name: Apply frozen authority-binding correction
         run: python /tmp/phase11-authority-binding.py
+      - name: Normalize generated type-only import
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('extensions/cognition/src/proxy-tools.ts')
+          text = p.read_text()
+          old = '  HostToAgentMessage,\n  type ProgramAttemptAuthorityV1,\n  ProtocolTransport,'
+          new = '  HostToAgentMessage,\n  ProgramAttemptAuthorityV1,\n  ProtocolTransport,'
+          if text.count(old) != 1:
+              raise SystemExit('expected one generated ProgramAttemptAuthorityV1 import anchor')
+          p.write_text(text.replace(old, new, 1))
+          PY
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
