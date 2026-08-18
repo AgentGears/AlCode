@@ -13,6 +13,10 @@ export const PROGRAM_EXECUTION_CAPABILITY = "program_execution_v1" as const;
 export const PROGRAM_EXECUTION_MESSAGE_VERSION = 1 as const;
 export const PROGRAM_PLANNING_READ_MAX_BYTES = 1024 * 1024;
 export const PROGRAM_PROPOSAL_MAX_BYTES = 4 * 1024 * 1024;
+export const PROGRAM_PROGRESS_MAX_BYTES = 128 * 1024;
+export const PROGRAM_PROGRESS_MAX_EVIDENCE = 32;
+export const PROGRAM_PROGRESS_MAX_ADVISORIES = 16;
+export const PROGRAM_PROGRESS_ADVISORY_REASON_MAX_BYTES = 4 * 1024;
 export const VERBATIM_COMPILER_VERSION = "verbatim-v1" as const;
 
 export type ProtocolRequestId = string;
@@ -150,6 +154,35 @@ export interface ProgramProposalSubmitted {
   proposal: ProgramCreationProposalWireV1;
 }
 
+export interface ProgramProgressEvidenceProposalV1 {
+  verificationObligationId?: string;
+  sourceOperationId?: string;
+  artifactRef?: string;
+}
+
+export type ProgramProgressAdvisoryBlockerV1 =
+  | {
+      action: "report";
+      reportId: string;
+      scope: "program" | "work";
+      reason: string;
+    }
+  | {
+      action: "resolve";
+      reportId: string;
+    };
+
+export interface ProgramProgressProposal {
+  type: "program.progress";
+  version: typeof PROGRAM_EXECUTION_MESSAGE_VERSION;
+  requestId: ProtocolRequestId;
+  sessionId: string;
+  authority: ProgramAttemptAuthorityV1;
+  evidence: ProgramProgressEvidenceProposalV1[];
+  advisoryBlockers: ProgramProgressAdvisoryBlockerV1[];
+  requestAwaitingVerification: boolean;
+}
+
 export interface AgentHello { type: "agent.hello"; protocolVersion: typeof AGENT_PROTOCOL_VERSION; generationId: AgentGenerationId; capabilities: string[]; }
 export interface AssistantMessageProduced { type: "assistant.message"; requestId: ProtocolRequestId; sessionId: string; text: string; content?: TranscriptAssistantMessage["content"]; stopReason?: TranscriptAssistantMessage["stopReason"]; errorMessage?: string; timestamp?: number; }
 export interface ToolResultProduced { type: "tool.result"; requestId: ProtocolRequestId; sessionId: string; toolCallId: string; toolName: string; content: TranscriptToolResultMessage["content"]; isError: boolean; timestamp: number; operationId?: string; }
@@ -159,7 +192,7 @@ export interface CriterionEvidence { type: "criterion.evidence"; requestId: Prot
 export interface AgentIdle { type: "agent.idle"; requestId: ProtocolRequestId; sessionId: string; reason: "stop" | "max_steps" | "cancelled"; }
 export interface AgentError { type: "agent.error"; requestId: ProtocolRequestId; sessionId?: string; message: string; }
 
-export type AgentToHostMessage = AgentHello | AssistantMessageProduced | ToolResultProduced | CapabilityRequest | ProgramPlanningReadRequest | ProgramProposalSubmitted | ContextRefreshRequest | CriterionEvidence | AgentIdle | AgentError;
+export type AgentToHostMessage = AgentHello | AssistantMessageProduced | ToolResultProduced | CapabilityRequest | ProgramPlanningReadRequest | ProgramProposalSubmitted | ProgramProgressProposal | ContextRefreshRequest | CriterionEvidence | AgentIdle | AgentError;
 
 export interface ProgramPlanningBegin {
   type: "program.planning.begin";
@@ -189,6 +222,18 @@ export interface ProgramProposalResult {
   sessionId: string;
   planningEpisodeId: string;
   outcome: "sealed" | "stale" | "denied" | "failed";
+  errorCode?: string;
+  error?: string;
+}
+
+export interface ProgramProgressResult {
+  type: "program.progress.result";
+  version: typeof PROGRAM_EXECUTION_MESSAGE_VERSION;
+  requestId: ProtocolRequestId;
+  sessionId: string;
+  outcome: "admitted" | "stale" | "denied" | "failed";
+  programStateId?: string;
+  programRevision?: number;
   errorCode?: string;
   error?: string;
 }
@@ -229,5 +274,5 @@ export interface CapabilityResult { type: "capability.result"; requestId: Protoc
 export interface Cancel { type: "cancel"; requestId: ProtocolRequestId; sessionId: string; reason?: string; }
 export interface Shutdown { type: "shutdown"; requestId: ProtocolRequestId; sessionId?: string; reason: "completed" | "cancelled" | "host_shutdown" | "replaced"; }
 
-export type HostToAgentMessage = HostHello | SessionOpen | SessionResume | InputAdmitted | ProgramPlanningBegin | ProgramPlanningReadResult | ProgramProposalResult | ContextProvide | ContextUpdate | TranscriptAdmitted | CapabilityResult | Cancel | Shutdown;
+export type HostToAgentMessage = HostHello | SessionOpen | SessionResume | InputAdmitted | ProgramPlanningBegin | ProgramPlanningReadResult | ProgramProposalResult | ProgramProgressResult | ContextProvide | ContextUpdate | TranscriptAdmitted | CapabilityResult | Cancel | Shutdown;
 export type AgentProtocolMessage = AgentToHostMessage | HostToAgentMessage;

@@ -139,6 +139,14 @@ export {
   type ProgramPlanningResponseV1,
 } from "./program-planning.ts";
 export {
+  ProgramProgressServiceV1,
+  ProgramProgressControlError,
+  ProgramProgressStaleError,
+  PROGRAM_PROGRESS_MAX_CACHED_RESPONSES,
+  type ProgramProgressAgentAuthorityV1,
+  type ProgramProgressServiceOptionsV1,
+} from "./program-progress.ts";
+export {
   ProgramCreationServiceV1,
   ProgramCreationControlError,
   ProgramCreationStaleError,
