@@ -130,6 +130,15 @@ export {
   type PlanningReadDeliveryV1,
 } from "./planning-read.ts";
 export {
+  ProgramPlanningServiceV1,
+  ProgramPlanningControlError,
+  ProgramPlanningStaleError,
+  PROGRAM_PLANNING_MAX_CACHED_RESPONSES,
+  type ProgramPlanningAgentAuthorityV1,
+  type ProgramPlanningServiceOptionsV1,
+  type ProgramPlanningResponseV1,
+} from "./program-planning.ts";
+export {
   ProgramCreationServiceV1,
   ProgramCreationControlError,
   ProgramCreationStaleError,
