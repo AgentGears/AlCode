@@ -47,6 +47,11 @@ export class ApplicationClient {
   cancel(expectedExecutionId: string): Promise<CommandDecision> { return this.execute({ ...this.base(), type: "execution.cancel", expectedExecutionId }); }
   promote(queueItemId: string): Promise<CommandDecision> { return this.execute({ ...this.base(), type: "queue.promote", queueItemId }); }
   respondPermission(interactionId: string, decision: PermissionDecision): Promise<CommandDecision> { return this.execute({ ...this.base(), type: "permission.respond", interactionId, decision }); }
+  acceptProgramCreation(draftId: string, draftDigest: string): Promise<CommandDecision> { return this.execute({ ...this.base(), type: "program.creation.accept", draftId, draftDigest }); }
+  acceptProgramRebase(programStateId: string, expectedProgramRevision: number, mismatchReceiptId: string): Promise<CommandDecision> { return this.execute({ ...this.base(), type: "program.rebase.accept", programStateId, expectedProgramRevision, mismatchReceiptId }); }
+  cancelProgram(programStateId: string, expectedProgramRevision: number, reason?: string): Promise<CommandDecision> { return this.execute({ ...this.base(), type: "program.cancel", programStateId, expectedProgramRevision, ...(reason !== undefined ? { reason } : {}) }); }
+  attachProgramSession(programStateId: string, expectedProgramRevision: number): Promise<CommandDecision> { return this.execute({ ...this.base(), type: "program.session.attach", programStateId, expectedProgramRevision }); }
+  detachProgramSession(programStateId: string, expectedProgramRevision: number): Promise<CommandDecision> { return this.execute({ ...this.base(), type: "program.session.detach", programStateId, expectedProgramRevision }); }
   pluginRegister(sourceRoot: string, scope: "user" | "workspace"): Promise<CommandDecision> { return this.executePlugin({ ...this.base(), type: "plugin.register", sourceRoot, scope }); }
   pluginEnable(registrationId: string): Promise<CommandDecision> { return this.executePlugin({ ...this.base(), type: "plugin.enable", registrationId }); }
   pluginDisable(registrationId: string): Promise<CommandDecision> { return this.executePlugin({ ...this.base(), type: "plugin.disable", registrationId }); }
