@@ -155,7 +155,10 @@ export class ProgramExecutionRuntimeV1 {
     this.scheduler = new ProgramExecutionSchedulerV1({
       store: this.store,
       dispatch: this.dispatch,
-      agents: this.host.programAgents,
+      agents: {
+        currentAgentGeneration: (sessionId) =>
+          this.host.programAgents.currentExecutionAgentGeneration(sessionId),
+      },
     });
 
     this.host.setProgramOperationAuthority(this.dispatch);

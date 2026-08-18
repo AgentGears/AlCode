@@ -8,6 +8,7 @@ import {
   DYNAMIC_CAPABILITY_BINDING_CAPABILITY,
   DURABLE_TRANSCRIPT_CAPABILITY,
   GRAPH_CONTEXT_CAPABILITY,
+  PROGRAM_EXECUTION_CAPABILITY,
   PROGRAM_STATE_CAPABILITY,
   type AgentToHostMessage,
   type AuthorizedToolDescriptor,
@@ -15,6 +16,7 @@ import {
   type ContextUpdate,
   type HostToAgentMessage,
   type InferenceToolCatalog,
+  type ProgramAttemptAuthorityV1,
   type ProtocolTransport,
 } from "@alcode/agent-protocol";
 import { digestOf } from "@alcode/context";
@@ -54,6 +56,17 @@ export interface AttachedAgent {
 }
 
 export type AgentResumeReason = "agent_replaced" | "host_reopened" | "reattach";
+
+function sameProgramAttemptAuthority(
+  left: ProgramAttemptAuthorityV1,
+  right: ProgramAttemptAuthorityV1,
+): boolean {
+  return left.programStateId === right.programStateId
+    && left.expectedProgramRevision === right.expectedProgramRevision
+    && left.programAttemptId === right.programAttemptId
+    && left.workItemId === right.workItemId
+    && left.agentGeneration === right.agentGeneration;
+}
 
 function cognitionDescriptors(): AuthorizedToolDescriptor[] {
   return [...COGNITION_TOOL_NAMES]
@@ -172,6 +185,10 @@ export class HostRuntime {
     const graphContext = connection.capabilities?.includes(GRAPH_CONTEXT_CAPABILITY) ?? false;
     const dynamicCapabilityBinding = connection.capabilities?.includes(DYNAMIC_CAPABILITY_BINDING_CAPABILITY) ?? false;
     const programStateCapable = connection.capabilities?.includes(PROGRAM_STATE_CAPABILITY) ?? false;
+    const programExecutionCapable = connection.capabilities?.includes(PROGRAM_EXECUTION_CAPABILITY) ?? false;
+    if (programExecutionCapable && !programStateCapable) {
+      throw new Error(`${PROGRAM_EXECUTION_CAPABILITY} requires ${PROGRAM_STATE_CAPABILITY}`);
+    }
     if (connection.capabilities !== undefined && !durableTranscript) {
       throw new Error(`Agent missing required capability: ${DURABLE_TRANSCRIPT_CAPABILITY}`);
     }
@@ -180,6 +197,7 @@ export class HostRuntime {
       session.sessionId,
       connection.generationId,
       programStateCapable,
+      programExecutionCapable,
     );
     void connection.waitForExit()
       .then(() => this.programAgents.detach(session.sessionId, connection.generationId))
@@ -228,6 +246,7 @@ export class HostRuntime {
       graphContext,
       dynamicCapabilityBinding,
       programStateCapable,
+      programExecutionCapable,
       systemPrompt,
     ));
     return {
@@ -280,6 +299,7 @@ export class HostRuntime {
     graphContext: boolean,
     dynamicCapabilityBinding: boolean,
     programStateCapable: boolean,
+    programExecutionCapable: boolean,
     baseSystemPrompt: string,
   ): Promise<void> {
     switch (message.type) {
@@ -368,7 +388,52 @@ export class HostRuntime {
         const cacheKey = `${generationId}:${message.requestId}`;
         let response = this.requestCache.get(cacheKey);
         if (!response) {
-          if (COGNITION_TOOL_NAMES.has(message.toolName)) {
+          const activeProgramAuthority = await this.programAgents.currentAttemptAuthority(sessionId);
+          let programAuthority: ProgramAttemptAuthorityV1 | undefined;
+
+          if (activeProgramAuthority !== undefined) {
+            if (!programExecutionCapable) {
+              response = {
+                type: "capability.result", requestId: message.requestId, sessionId: sessionId as string,
+                toolCallId: message.toolCallId, toolName: message.toolName, outcome: "denied",
+                errorCode: "program_execution_capability_required",
+                error: `${PROGRAM_EXECUTION_CAPABILITY} is required for Program-backed capability execution`,
+              };
+            } else if (!this.programAgents.isCurrentConnection(String(sessionId), generationId)
+                || message.programAttemptAuthority === undefined
+                || !sameProgramAttemptAuthority(activeProgramAuthority, message.programAttemptAuthority)) {
+              response = {
+                type: "capability.result", requestId: message.requestId, sessionId: sessionId as string,
+                toolCallId: message.toolCallId, toolName: message.toolName, outcome: "stale",
+                errorCode: "program_execution_stale",
+                error: "ProgramAttempt authority is stale; refresh before retry",
+              };
+            } else {
+              programAuthority = structuredClone(message.programAttemptAuthority);
+            }
+          } else if (message.programAttemptAuthority !== undefined) {
+            response = {
+              type: "capability.result", requestId: message.requestId, sessionId: sessionId as string,
+              toolCallId: message.toolCallId, toolName: message.toolName,
+              outcome: programExecutionCapable ? "stale" : "denied",
+              errorCode: programExecutionCapable
+                ? "program_execution_stale"
+                : "program_execution_capability_required",
+              error: programExecutionCapable
+                ? "ProgramAttempt authority is no longer current; refresh before retry"
+                : `${PROGRAM_EXECUTION_CAPABILITY} is required for Program-backed capability execution`,
+            };
+          } else if (programExecutionCapable
+              && !this.programAgents.isCurrentConnection(String(sessionId), generationId)) {
+            response = {
+              type: "capability.result", requestId: message.requestId, sessionId: sessionId as string,
+              toolCallId: message.toolCallId, toolName: message.toolName, outcome: "stale",
+              errorCode: "program_execution_stale",
+              error: "Agent generation is no longer current",
+            };
+          }
+
+          if (response === undefined && COGNITION_TOOL_NAMES.has(message.toolName)) {
             if (message.expectedCapabilityRevision !== undefined) {
               response = {
                 type: "capability.result", requestId: message.requestId, sessionId: sessionId as string,
@@ -383,13 +448,14 @@ export class HostRuntime {
                 response = { type: "capability.result", requestId: message.requestId, sessionId: sessionId as string, toolCallId: message.toolCallId, toolName: message.toolName, outcome: "failed", error: error instanceof Error ? error.message : String(error) };
               }
             }
-          } else {
+          } else if (response === undefined) {
             const result = await this.capabilityBroker.execute({
               sessionId,
               toolCallId: message.toolCallId,
               toolName: message.toolName,
               args: message.args,
               ...(message.expectedCapabilityRevision !== undefined ? { expectedCapabilityRevision: message.expectedCapabilityRevision } : {}),
+              ...(programAuthority !== undefined ? { program: programAuthority } : {}),
             });
             response = {
               type: "capability.result", requestId: message.requestId, sessionId: sessionId as string,

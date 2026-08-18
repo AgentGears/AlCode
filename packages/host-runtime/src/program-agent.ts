@@ -6,7 +6,7 @@ import {
   type PersistedDomainEvent,
   type SessionId as EventSessionId,
 } from "@alcode/events";
-import type { ProgramAttemptProjectionV1 } from "@alcode/agent-protocol";
+import type { ProgramAttemptAuthorityV1, ProgramAttemptProjectionV1 } from "@alcode/agent-protocol";
 import {
   applyProgramTransition,
   assertValidProgramState,
@@ -33,6 +33,7 @@ interface ProgramAgentBindingV1 {
   connectionGenerationId: string;
   agentGeneration: number;
   programStateCapable: boolean;
+  programExecutionCapable: boolean;
 }
 
 export class ProgramAgentControlError extends Error {
@@ -297,6 +298,7 @@ export class ProgramAgentServiceV1 implements ProgramAgentGenerationAuthorityV1 
     sessionId: EventSessionId,
     connectionGenerationId: string,
     programStateCapable: boolean,
+    programExecutionCapable = false,
   ): Promise<number> {
     if (connectionGenerationId.length === 0) {
       throw new ProgramAgentControlError("connectionGenerationId is required");
@@ -315,7 +317,12 @@ export class ProgramAgentServiceV1 implements ProgramAgentGenerationAuthorityV1 
     // admitted before the new connection becomes current Agent authority.
     await this.interruptSupersededAttempt(sessionId, next);
     this.counters.set(sid, next);
-    this.bindings.set(sid, { connectionGenerationId, agentGeneration: next, programStateCapable });
+    this.bindings.set(sid, {
+      connectionGenerationId,
+      agentGeneration: next,
+      programStateCapable,
+      programExecutionCapable,
+    });
     return next;
   }
 
@@ -330,12 +337,49 @@ export class ProgramAgentServiceV1 implements ProgramAgentGenerationAuthorityV1 
     return this.bindings.get(sessionId)?.agentGeneration === agentGeneration;
   }
 
+  isCurrentConnection(sessionId: string, connectionGenerationId: string): boolean {
+    return this.bindings.get(sessionId)?.connectionGenerationId === connectionGenerationId;
+  }
+
   currentAgentGeneration(sessionId: string): number | null {
     return this.bindings.get(sessionId)?.agentGeneration ?? null;
   }
 
+  currentExecutionAgentGeneration(sessionId: string): number | null {
+    const binding = this.bindings.get(sessionId);
+    return binding?.programExecutionCapable === true ? binding.agentGeneration : null;
+  }
+
   programStateCapable(sessionId: string): boolean {
     return this.bindings.get(sessionId)?.programStateCapable === true;
+  }
+
+  programExecutionCapable(sessionId: string): boolean {
+    return this.bindings.get(sessionId)?.programExecutionCapable === true;
+  }
+
+  async currentAttemptAuthority(
+    sessionId: EventSessionId,
+  ): Promise<ProgramAttemptAuthorityV1 | undefined> {
+    const states = latestStates(await replayAll(this.store));
+    const matching = [...states.values()].filter((state) =>
+      state.lifecycle === "active" && state.activeAttempt !== null &&
+      String(state.activeAttempt.sessionId) === String(sessionId));
+    if (matching.length > 1) {
+      throw new ProgramAgentControlError(
+        `Multiple current ProgramAttempts claim session ${String(sessionId)}`,
+      );
+    }
+    const state = matching[0];
+    const attempt = state?.activeAttempt;
+    if (state === undefined || attempt === null || attempt === undefined) return undefined;
+    return {
+      programStateId: String(state.programStateId),
+      expectedProgramRevision: state.revision,
+      programAttemptId: String(attempt.programAttemptId),
+      workItemId: String(attempt.workItemId),
+      agentGeneration: attempt.agentGeneration,
+    };
   }
 
   async currentAttemptProjection(
