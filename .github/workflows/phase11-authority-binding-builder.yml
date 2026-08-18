@@ -36,6 +36,23 @@ jobs:
               raise SystemExit('expected one generated ProgramAttemptAuthorityV1 import anchor')
           p.write_text(text.replace(old, new, 1))
           PY
+      - name: Mark first-dispatch fixtures execution-capable
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('packages/host-runtime/src/program-first-dispatch.integration.test.ts')
+          text = p.read_text()
+          old = '      "phase11-first-dispatch-agent",\n      true,\n    );'
+          new = '      "phase11-first-dispatch-agent",\n      true,\n      true,\n    );'
+          if text.count(old) != 1:
+              raise SystemExit('expected first-dispatch Agent attach fixture anchor')
+          text = text.replace(old, new, 1)
+          old = '    await runtime.host.programAgents.attach(session.sessionId, "phase11-late-agent", true);'
+          new = '    await runtime.host.programAgents.attach(session.sessionId, "phase11-late-agent", true, true);'
+          if text.count(old) != 1:
+              raise SystemExit('expected late Agent attach fixture anchor')
+          p.write_text(text.replace(old, new, 1))
+          PY
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
