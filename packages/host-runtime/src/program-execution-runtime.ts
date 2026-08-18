@@ -23,6 +23,7 @@ import {
   type ProgramCreationPolicySourceV1,
 } from "./program-creation.ts";
 import { HostProgramApplicationControlV1 } from "./program-application.ts";
+import { ProgramExecutionControlV1 } from "./program-execution-control.ts";
 import {
   ProgramExecutionApplicationPortV1,
   ProgramExecutionSchedulerV1,
@@ -98,6 +99,7 @@ export class ProgramExecutionRuntimeV1 {
   readonly scheduler: ProgramExecutionSchedulerV1;
   readonly verification: ProgramVerificationServiceV1;
   readonly terminal: ProgramTerminalServiceV1;
+  readonly executionControl: ProgramExecutionControlV1;
   readonly application: HostProgramApplicationControlV1;
   readonly productApplication: ProgramExecutionApplicationPortV1;
   private readonly store: WorkspaceEventStore;
@@ -181,6 +183,15 @@ export class ProgramExecutionRuntimeV1 {
       recovery: this.recovery,
       artifactStore: options.artifactStore,
     });
+    this.executionControl = new ProgramExecutionControlV1({
+      store: this.store,
+      admission: this.host.admission,
+      verification: this.verification,
+      scheduler: this.scheduler,
+      terminal: this.terminal,
+      agents: executionAgents,
+    });
+    this.host.setProgramAgentIdleAuthority(this.executionControl);
 
     this.application = new HostProgramApplicationControlV1({
       store: this.store,
