@@ -3,6 +3,8 @@ import {
   PROGRAM_EXECUTION_MESSAGE_VERSION,
   PROGRAM_PLANNING_READ_MAX_BYTES,
   PROGRAM_PROPOSAL_MAX_BYTES,
+  PROGRAM_PROGRESS_MAX_BYTES,
+  PROGRAM_PROGRESS_BLOCKER_REASON_MAX_CHARS,
   type AgentToHostMessage,
   type HostToAgentMessage,
 } from "./messages.ts";
@@ -47,6 +49,29 @@ function isProgramCreationProposalWire(value: unknown): boolean {
     && Array.isArray(value.outputSlots)
     && Array.isArray(value.productionSteps)
     && withinSerializedBytes(value, PROGRAM_PROPOSAL_MAX_BYTES);
+}
+function isProgramProgressIntent(value: unknown): boolean {
+  if (!isObject(value) || typeof value.kind !== "string") return false;
+  switch (value.kind) {
+    case "evidence.add":
+      return hasOnlyKeys(value, ["kind", "sourceOperationId", "artifactRef"])
+        && (value.sourceOperationId === undefined || (hasString(value, "sourceOperationId") && (value.sourceOperationId as string).length > 0))
+        && (value.artifactRef === undefined || (hasString(value, "artifactRef") && (value.artifactRef as string).length > 0))
+        && (value.sourceOperationId !== undefined || value.artifactRef !== undefined);
+    case "blocker.report":
+      return hasOnlyKeys(value, ["kind", "scope", "reason"])
+        && ["program", "work"].includes(String(value.scope))
+        && hasString(value, "reason")
+        && (value.reason as string).length > 0
+        && (value.reason as string).length <= PROGRAM_PROGRESS_BLOCKER_REASON_MAX_CHARS;
+    case "blocker.resolve":
+      return hasOnlyKeys(value, ["kind", "advisoryBlockerId"])
+        && hasString(value, "advisoryBlockerId") && (value.advisoryBlockerId as string).length > 0;
+    case "work.awaiting_verification":
+      return hasOnlyKeys(value, ["kind"]);
+    default:
+      return false;
+  }
 }
 
 function isModelToolDefinition(value: unknown): boolean {
@@ -119,6 +144,12 @@ export function isAgentToHostMessage(value: unknown): value is AgentToHostMessag
       return value.version === PROGRAM_EXECUTION_MESSAGE_VERSION
         && hasString(value, "requestId") && hasString(value, "sessionId") && hasString(value, "planningEpisodeId")
         && isProgramCreationProposalWire(value.proposal);
+    case "program.progress":
+      return value.version === PROGRAM_EXECUTION_MESSAGE_VERSION
+        && hasString(value, "requestId") && hasString(value, "sessionId")
+        && isProgramAttemptAuthority(value.authority)
+        && isProgramProgressIntent(value.intent)
+        && withinSerializedBytes(value, PROGRAM_PROGRESS_MAX_BYTES);
     case "context.refresh.request":
       return hasString(value, "requestId") && hasString(value, "sessionId");
     case "criterion.evidence":
@@ -158,6 +189,15 @@ export function isHostToAgentMessage(value: unknown): value is HostToAgentMessag
       return value.version === PROGRAM_EXECUTION_MESSAGE_VERSION
         && hasString(value, "requestId") && hasString(value, "sessionId") && hasString(value, "planningEpisodeId")
         && ["sealed", "stale", "denied", "failed"].includes(String(value.outcome))
+        && (value.errorCode === undefined || hasString(value, "errorCode"))
+        && (value.error === undefined || hasString(value, "error"));
+    case "program.progress.result":
+      return value.version === PROGRAM_EXECUTION_MESSAGE_VERSION
+        && hasString(value, "requestId") && hasString(value, "sessionId")
+        && ["accepted", "stale", "denied", "failed"].includes(String(value.outcome))
+        && (value.programRevision === undefined || hasPositiveInteger(value, "programRevision"))
+        && (value.evidenceRefId === undefined || hasString(value, "evidenceRefId"))
+        && (value.advisoryBlockerId === undefined || hasString(value, "advisoryBlockerId"))
         && (value.errorCode === undefined || hasString(value, "errorCode"))
         && (value.error === undefined || hasString(value, "error"));
     case "context.provide":

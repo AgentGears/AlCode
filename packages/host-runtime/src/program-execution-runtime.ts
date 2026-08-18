@@ -31,6 +31,7 @@ import {
   ProgramPlanningControlError,
   ProgramPlanningServiceV1,
 } from "./program-planning.ts";
+import { ProgramProgressServiceV1 } from "./program-progress.ts";
 import {
   ProgramDispatchServiceV1,
   type ProgramDispatchWorkspaceCoordinatorV1,
@@ -91,6 +92,7 @@ export class ProgramExecutionRuntimeV1 {
   readonly workspaceCoordinator: ProgramDispatchWorkspaceCoordinatorV1 & PlanningReadBarrierV1;
   readonly creation: ProgramCreationServiceV1;
   readonly planning: ProgramPlanningServiceV1;
+  readonly progress: ProgramProgressServiceV1;
   readonly recovery: Phase1RecoveryControllerV1;
   readonly dispatch: ProgramDispatchServiceV1;
   readonly scheduler: ProgramExecutionSchedulerV1;
@@ -119,6 +121,15 @@ export class ProgramExecutionRuntimeV1 {
       store: this.store,
       planningReads: options.planningReads,
       creation: this.creation,
+      agents: {
+        isCurrent: (sessionId, connectionGenerationId, agentGeneration) =>
+          this.currentPlanningConnections.get(sessionId) === connectionGenerationId
+          && this.host.programAgents.isCurrent(sessionId, agentGeneration),
+      },
+    });
+    this.progress = new ProgramProgressServiceV1({
+      store: this.store,
+      admission: this.host.admission,
       agents: {
         isCurrent: (sessionId, connectionGenerationId, agentGeneration) =>
           this.currentPlanningConnections.get(sessionId) === connectionGenerationId
@@ -212,14 +223,25 @@ export class ProgramExecutionRuntimeV1 {
     this.currentPlanningConnections.set(sessionId, connection.generationId);
 
     const unsubscribePlanning = connection.transport.onMessage(async (message) => {
-      const response = await this.planning.handleAgentMessage({
+      const planningResponse = await this.planning.handleAgentMessage({
         connectionGenerationId: connection.generationId,
         agentGeneration,
         sessionId: session.sessionId,
         message,
       });
-      if (response !== undefined) {
-        try { await connection.transport.send(response); } catch {}
+      if (planningResponse !== undefined) {
+        try { await connection.transport.send(planningResponse); } catch {}
+        return;
+      }
+      const progressResponse = await this.progress.handleAgentMessage({
+        connectionGenerationId: connection.generationId,
+        agentGeneration,
+        sessionId: session.sessionId,
+        programExecutionCapable,
+        message,
+      });
+      if (progressResponse !== undefined) {
+        try { await connection.transport.send(progressResponse); } catch {}
       }
     });
     return {
