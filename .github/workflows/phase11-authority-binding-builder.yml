@@ -52,7 +52,7 @@ jobs:
       - name: Verify Host authority routing
         run: |
           pnpm --filter @alcode/host-runtime typecheck
-          pnpm --filter @alcode/host-runtime test
+          pnpm exec vitest run packages/host-runtime/src
       - name: Commit and publish clean feature branch
         run: |
           git status --short
