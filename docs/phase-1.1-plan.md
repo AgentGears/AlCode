@@ -125,6 +125,8 @@ The Agent Protocol gains a bounded, versioned Agent→Host Program proposal mess
 
 The Host validates Agent generation/session ownership, planning-episode identity, proposal bounds, and exact objective provenance before calling `ProgramCreationServiceV1.sealDraft`.
 
+Both this Program proposal message and the progress-proposal message in §7.2 are valid only from an Agent connection that negotiated `program_state_v1`. The Agent must not send either message without that capability, and the Host rejects either message fail-closed when that capability is absent. Phase 1.1 keeps Agent Protocol version 1 for these additive message forms; capability negotiation is the compatibility gate, and AC-11-02/AC-11-05 negative tests must prove non-capable peers neither gain nor are assumed to have this authority.
+
 The Agent cannot provide or choose:
 
 - `ProgramStateId`;
@@ -165,16 +167,20 @@ If any freshness, recovery, writer-barrier, planning-recheck, attachment, or Wor
 
 When a Session owns the current ProgramAttempt, every Agent capability request is admitted under the exact current Program root-operation context before environmental execution.
 
-Direct operation persistence from `coding-agent` is prohibited in Program-backed mode. Existing low-level durable-agent helpers may remain for compatibility tests but are not the supported Program execution route.
+Direct operation persistence from `coding-agent` is prohibited in Program-backed mode. Existing low-level durable-agent helpers may remain on the public library surface and in compatibility tests, but they are not the supported Program execution route; the eventual as-built mapping must record that compatibility status explicitly.
 
 ### 7.2 Program progress proposals
 
-The Agent Protocol gains one bounded, versioned progress-proposal message for the current Attempt. It may propose only these Host-admitted semantic intents:
+The Agent Protocol gains one bounded, versioned progress-proposal message for the current Attempt, capability-gated as specified in §5.2. It may propose only these bounded intents:
 
 - add work-bound decisive evidence;
-- add a blocker for the current work item or Program;
-- resolve a blocker previously proposed by the Agent when still current;
-- move the current work item from `in_progress` to `awaiting_verification` after the Agent believes execution work is finished.
+- report advisory blocker information for the current work item or Program;
+- report advisory resolution of blocker information previously reported by the Agent when still current;
+- request that the current work item move from `in_progress` to `awaiting_verification` after the Agent believes execution work is finished.
+
+Blocker reports are advisory structured information under the frozen Phase 1.0 contract: they do not themselves add or resolve canonical `ProgramBlocker` state, enlarge required topology, or add completion burden. A Host may use a report as input to existing Host-owned policy/control logic, but any canonical blocker transition remains a separate Host admission rather than Agent authority.
+
+The `awaiting_verification` request is the Phase 1.1 transport of the frozen Phase 1.0 §16 grant that the Agent may submit work-completion requests. It does not authorize `work.completed`, which remains Host/verification-gated.
 
 Every proposal must carry the exact current Program authority tuple from the AttemptProjection. The Host rejects stale revision/Attempt/work/session/Agent-generation tuples.
 
@@ -206,6 +212,8 @@ For a Program-backed Session:
 - a successful Completion Oracle transition terminalizes the Program exactly once and then permits the associated execution/session surface to report completed;
 - failed completion evaluation returns the current blocking reasons/state and leaves the Program active;
 - Application cancellation continues through `program.cancel` with exact Program revision and retains the frozen no-rollback semantics.
+
+When completion is blocked and no Attempt is currently eligible—for example while awaiting Application acceptance/rebase or while current Program control state prevents dispatch—the Program-backed execution remains active but idle. The authoritative projection must expose the blocking/control state; there is no polling or autonomous redispatch, and progress resumes only from a later admitted Application/user/Host event allowed by the frozen Phase 1.0 semantics.
 
 Legacy cognition/session completion remains available only for explicitly non-Program compatibility executions.
 
@@ -251,7 +259,7 @@ Because exact Program creation acceptance is a real Application authority, non-i
 
 The default must never make Agent proposal equivalent to Application acceptance.
 
-The offline `TestModelProvider` may remain available for deterministic tests; Phase 1.1 does not require adding or changing production model providers.
+For AC-11-08 and `gate:1.1`, the deterministic CLI proof uses the existing offline `TestModelProvider`. Phase 1.1 does not require adding or changing production model providers.
 
 ---
 
@@ -296,7 +304,7 @@ A supported production composition wires the existing Phase 1.0 creation, dispat
 
 ### AC-11-02 — Planning proposal to pending creation
 
-A real replaceable coding Agent can perform Host-tracked planning reads and submit one bounded Program proposal. The Host alone seals the exact `ProgramCreationDraft`, and the authoritative Application snapshot exposes it as pending. Negative cases cover stale planning episode, changed tracked read, wrong Session/Agent generation, malformed/over-bound proposal, and stopped source Session.
+A real replaceable coding Agent that negotiated `program_state_v1` can perform Host-tracked planning reads and submit one bounded Program proposal. The Host alone seals the exact `ProgramCreationDraft`, and the authoritative Application snapshot exposes it as pending. Negative cases cover missing Program capability negotiation, stale planning episode, changed tracked read, wrong Session/Agent generation, malformed/over-bound proposal, and stopped source Session.
 
 ### AC-11-03 — Exact Application acceptance and first dispatch
 
@@ -308,7 +316,7 @@ After dispatch, the current coding Agent receives the bounded AttemptProjection 
 
 ### AC-11-05 — Progress, verification, and successor dispatch
 
-The current Agent can propose only the bounded progress intents defined in §7.2. The Host admits current evidence/blocker/work-awaiting-verification transitions, runs Phase 1.0 verification, marks work complete only after current verification, and dispatches the next eligible work item deterministically. Negative cases prove the Agent cannot directly complete work, satisfy/waive verification, rebase, cancel, or complete the Program.
+The current `program_state_v1` Agent can propose only the bounded progress intents defined in §7.2. The Host admits current evidence/work-awaiting-verification transitions, preserves blocker reports as advisory unless a separate Host-owned canonical blocker admission occurs, runs Phase 1.0 verification, marks work complete only after current verification, and dispatches the next eligible work item deterministically. Negative cases prove a non-capable Agent cannot use the progress message, advisory blocker reports do not themselves mutate canonical blocker state, and the Agent cannot directly complete work, satisfy/waive verification, rebase, cancel, or complete the Program.
 
 ### AC-11-06 — Program terminal path replaces legacy completion
 
@@ -320,7 +328,7 @@ The ordinary Application client and supported web shell expose the minimum Progr
 
 ### AC-11-08 — Default local entrypoint and composed gate
 
-`alcode -p` no longer invokes `runAgentLoop` directly for the normal coding path. It enters through the Program-backed Host/Application composition and preserves exact Application acceptance authority. `pnpm gate:1.1` composes the exact closed `gate:1.0`, runs AC-11-01 through AC-11-08 proof surfaces and the scenarios below, and emits the existing GateReceipt at the exact implementation source head.
+`alcode -p` no longer invokes `runAgentLoop` directly for the normal coding path. It enters through the Program-backed Host/Application composition and preserves exact Application acceptance authority. The deterministic CLI proof uses the existing offline `TestModelProvider`. `pnpm gate:1.1` composes the exact closed `gate:1.0`, runs AC-11-01 through AC-11-08 proof surfaces and the scenarios below, and emits the existing GateReceipt at the exact implementation source head.
 
 ---
 
