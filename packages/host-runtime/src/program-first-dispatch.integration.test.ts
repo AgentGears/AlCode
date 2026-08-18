@@ -88,6 +88,7 @@ describeLocked("Phase 1.1 exact acceptance to first dispatch", () => {
       session.sessionId,
       "phase11-first-dispatch-agent",
       true,
+      true,
     );
 
     const tracker = planningReads.track(locked.store.workspaceId);
@@ -234,7 +235,7 @@ describeLocked("Phase 1.1 exact acceptance to first dispatch", () => {
     expect(first.programRevision).toBe(1);
     expect((await application.getSnapshot(String(session.sessionId))).programs?.[0]?.activeAttempt).toBeUndefined();
 
-    await runtime.host.programAgents.attach(session.sessionId, "phase11-late-agent", true);
+    await runtime.host.programAgents.attach(session.sessionId, "phase11-late-agent", true, true);
     const retry = await application.execute({
       protocolVersion: APPLICATION_PROTOCOL_VERSION,
       commandId: "accept-after-agent",

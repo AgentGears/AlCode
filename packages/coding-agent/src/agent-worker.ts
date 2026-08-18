@@ -18,6 +18,7 @@ import {
   DYNAMIC_CAPABILITY_BINDING_CAPABILITY,
   DURABLE_TRANSCRIPT_CAPABILITY,
   GRAPH_CONTEXT_CAPABILITY,
+  PROGRAM_EXECUTION_CAPABILITY,
   PROGRAM_STATE_CAPABILITY,
   createProcessAgentTransport,
   type ContextProvide,
@@ -66,6 +67,7 @@ function toolsFromCatalog(
   catalog: InferenceToolCatalog,
   transport: ReturnType<typeof createProcessAgentTransport>,
   sessionId: string,
+  programAttemptAuthority?: ProgramAttemptProjectionV1["authority"],
 ): AgentTool[] {
   return catalog.tools.map((descriptor) => createProtocolProxyTool({
     name: descriptor.definition.name,
@@ -73,6 +75,9 @@ function toolsFromCatalog(
     inputSchema: descriptor.definition.inputSchema,
     ...(descriptor.isReadOnly !== undefined ? { isReadOnly: descriptor.isReadOnly } : {}),
     ...(descriptor.binding.kind === "dynamic" ? { expectedCapabilityRevision: descriptor.binding.revision } : {}),
+    ...(programAttemptAuthority !== undefined
+      ? { programAttemptAuthority: structuredClone(programAttemptAuthority) }
+      : {}),
     sessionId: () => sessionId,
     transport,
   }));
@@ -111,6 +116,7 @@ async function main(): Promise<void> {
       GRAPH_CONTEXT_CAPABILITY,
       DYNAMIC_CAPABILITY_BINDING_CAPABILITY,
       PROGRAM_STATE_CAPABILITY,
+      PROGRAM_EXECUTION_CAPABILITY,
     ],
   });
 
@@ -138,7 +144,14 @@ async function main(): Promise<void> {
                 systemPrompt: renderProgramAttempt(refreshed.systemPrompt, refreshed.programAttempt),
                 messages: refreshed.messages,
                 ...(refreshed.toolCatalog !== undefined
-                  ? { tools: toolsFromCatalog(refreshed.toolCatalog, transport, localSessionId) }
+                  ? {
+                      tools: toolsFromCatalog(
+                        refreshed.toolCatalog,
+                        transport,
+                        localSessionId,
+                        refreshed.programAttempt?.authority,
+                      ),
+                    }
                   : {}),
               };
             } }

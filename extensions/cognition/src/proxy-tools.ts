@@ -3,6 +3,7 @@ import type { AgentTool, AgentToolResult, ToolInputSchema } from "@alcode/agent-
 import type {
   AgentToHostMessage,
   HostToAgentMessage,
+  ProgramAttemptAuthorityV1,
   ProtocolTransport,
 } from "@alcode/agent-protocol";
 
@@ -12,6 +13,7 @@ export interface ProxyToolOptions {
   inputSchema?: ToolInputSchema;
   isReadOnly?: boolean;
   expectedCapabilityRevision?: string;
+  programAttemptAuthority?: ProgramAttemptAuthorityV1;
   sessionId: () => string;
   transport: ProtocolTransport<AgentToHostMessage, HostToAgentMessage>;
 }
@@ -34,6 +36,9 @@ async function requestHost(
 }
 
 export function createProtocolProxyTool(options: ProxyToolOptions): AgentTool<Record<string, unknown>, unknown> {
+  const programAttemptAuthority = options.programAttemptAuthority === undefined
+    ? undefined
+    : structuredClone(options.programAttemptAuthority);
   return {
     name: options.name,
     description: options.description ?? `Request Host-owned ${options.name} capability or cognition operation.`,
@@ -49,6 +54,9 @@ export function createProtocolProxyTool(options: ProxyToolOptions): AgentTool<Re
         toolName: options.name,
         args: input,
         ...(options.expectedCapabilityRevision !== undefined ? { expectedCapabilityRevision: options.expectedCapabilityRevision } : {}),
+        ...(programAttemptAuthority !== undefined
+          ? { programAttemptAuthority: structuredClone(programAttemptAuthority) }
+          : {}),
       });
       const text = response.error ?? JSON.stringify(response.result ?? null);
       const executionOutcome = response.outcome === "denied" || response.outcome === "stale" ? "failed" : response.outcome;
