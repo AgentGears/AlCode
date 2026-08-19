@@ -36,8 +36,8 @@ export interface CreateInferenceCapabilityProjectionOptions {
   runtime: AgentRuntime;
   client: Pick<CognitionHostClient, "requestCapability">;
   sessionId: string;
-  catalog?: InferenceToolCatalog;
-  programAttemptAuthority?: ProgramAttemptProjectionV1["authority"];
+  catalog?: InferenceToolCatalog | undefined;
+  programAttemptAuthority?: ProgramAttemptProjectionV1["authority"] | undefined;
 }
 
 function createScopedCapabilityClient(
