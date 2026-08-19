@@ -16,7 +16,6 @@ import {
   mkEventId,
   mkProgramStateId,
   uuidv7,
-  type PersistedDomainEvent,
 } from "@alcode/events";
 import {
   asProgramStateId,
@@ -97,6 +96,7 @@ describeLocked("Program-backed Host idle routing", () => {
       operationSpecs: new HostVerificationOperationRegistryV1([]),
       artifactStore: new HostArtifactStore({ root: join(dir, "artifacts") }),
     });
+    await runtime.host.startup();
     const session = await runtime.host.sessions.openOrResume();
     const pair = createInMemoryTransportPair<HostToAgentMessage, AgentToHostMessage>();
     const neverExit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(() => {});
