@@ -12,6 +12,7 @@ import { createWorkspaceContextSnapshot } from "@alcode/context";
 import { asWorkspaceId, uuidv7 } from "@alcode/events";
 import { AgentSupervisor, HostRuntime } from "@alcode/host-runtime";
 import { createWorkspaceReadModels, openLockedWorkspaceStore, type LockedWorkspaceStore } from "@alcode/storage";
+import { createAgentProtocolBridgeForTransport } from "./agent-protocol-bridge.ts";
 import { requestInferenceContext } from "./inference-context.ts";
 import { GitWorkspaceContextProvider } from "./workspace-context.ts";
 
@@ -29,6 +30,7 @@ async function waitUntil(predicate: () => boolean | Promise<boolean>, timeoutMs 
 describe("Phase 0.7 coding-agent boundary corrections", () => {
   it("cancels a pending Host context refresh instead of leaving the Agent wait unresolved", async () => {
     const { a: agentTransport, b: hostTransport } = createInMemoryTransportPair<AgentToHostMessage, HostToAgentMessage>();
+    const protocol = createAgentProtocolBridgeForTransport(agentTransport);
     let requestSeen = false;
     const unsubscribe = hostTransport.onMessage((message) => {
       if (message.type === "context.refresh.request") requestSeen = true;
@@ -36,7 +38,7 @@ describe("Phase 0.7 coding-agent boundary corrections", () => {
     const controller = new AbortController();
 
     try {
-      const pending = requestInferenceContext(agentTransport, "session-1", controller.signal);
+      const pending = requestInferenceContext(protocol, "session-1", controller.signal);
       await waitUntil(() => requestSeen, 1_000);
 
       const reason = new Error("cancelled while Host context was pending");
@@ -44,7 +46,7 @@ describe("Phase 0.7 coding-agent boundary corrections", () => {
       await expect(pending).rejects.toBe(reason);
     } finally {
       unsubscribe();
-      await agentTransport.close();
+      await protocol.close();
       await hostTransport.close();
     }
   });

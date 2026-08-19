@@ -15,6 +15,7 @@ import {
   createAgentEventForwarder,
   createProtocolProxyTool,
 } from "@alcode/cognition-extension";
+import { createAgentProtocolBridgeForTransport } from "./agent-protocol-bridge.ts";
 
 function deferred() {
   let resolve!: () => void;
@@ -39,6 +40,7 @@ function stream(events: ModelEvent[]): ModelStream {
 describe("Phase 0.6 durable transcript admission barrier", () => {
   it("does not execute a tool before assistant ACK or issue the next model request before tool-result ACK", async () => {
     const pair = createInMemoryTransportPair<AgentToHostMessage, HostToAgentMessage>();
+    const protocol = createAgentProtocolBridgeForTransport(pair.a);
     const assistantAck = deferred();
     const toolResultAck = deferred();
     const assistantSeen = deferred();
@@ -119,7 +121,7 @@ describe("Phase 0.6 durable transcript admission barrier", () => {
     const tool = createProtocolProxyTool({
       name: "read",
       sessionId: () => "s1",
-      transport: pair.a,
+      client: protocol,
     });
 
     const run = runAgentLoop("inspect", {
@@ -127,7 +129,7 @@ describe("Phase 0.6 durable transcript admission barrier", () => {
       provider,
       tools: [tool],
       promptTimestamp: 1,
-      emit: createAgentEventForwarder(pair.a, () => "s1", true),
+      emit: createAgentEventForwarder(protocol, () => "s1", true),
     });
 
     await assistantSeen.promise;
@@ -160,5 +162,8 @@ describe("Phase 0.6 durable transcript admission barrier", () => {
         timestamp: expect.any(Number),
       },
     ]);
+
+    await protocol.close();
+    await pair.b.close();
   });
 });

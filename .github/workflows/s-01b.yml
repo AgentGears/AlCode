@@ -1,0 +1,45 @@
+name: S-01B Agent Protocol Boundary
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  protocol-boundary:
+    name: Privileged semantic client boundary
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.17.0"
+          cache: pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck S-01B boundaries
+        run: |
+          pnpm --filter @alcode/agent-core typecheck
+          pnpm --filter @alcode/cognition-extension typecheck
+          pnpm --filter @alcode/coding-agent typecheck
+      - name: Verify S-01A lifecycle and S-01B client boundary
+        run: >-
+          pnpm exec vitest run
+          packages/agent-core/src/runtime-scope.test.ts
+          packages/agent-core/src/agent-core.test.ts
+          extensions/cognition/src/proxy-tools.test.ts
+          extensions/cognition/src/event-adapter.test.ts
+          packages/coding-agent/src/agent-protocol-bridge.test.ts
+          packages/coding-agent/src/agent-protocol-boundary.test.ts
+          packages/coding-agent/src/agent-replacement.integration.test.ts

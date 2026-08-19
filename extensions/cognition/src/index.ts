@@ -1,14 +1,10 @@
 import type { AgentExtension } from "@alcode/agent-core";
-import type {
-  AgentToHostMessage,
-  HostToAgentMessage,
-  ProtocolTransport,
-} from "@alcode/agent-protocol";
 import { createAgentEventForwarder } from "./event-adapter.ts";
+import type { CognitionHostClient } from "./host-client.ts";
 import { createProtocolProxyTool } from "./proxy-tools.ts";
 
 export interface CognitionExtensionOptions {
-  transport: ProtocolTransport<AgentToHostMessage, HostToAgentMessage>;
+  client: CognitionHostClient;
   sessionId: () => string;
   toolNames: readonly string[];
   readOnlyTools?: ReadonlySet<string>;
@@ -24,12 +20,12 @@ export function createCognitionExtension(options: CognitionExtensionOptions): Ag
         context.registerTool(createProtocolProxyTool({
           name,
           sessionId: options.sessionId,
-          transport: options.transport,
+          client: options.client,
           ...(options.readOnlyTools ? { isReadOnly: options.readOnlyTools.has(name) } : {}),
         }));
       }
       context.onEvent(createAgentEventForwarder(
-        options.transport,
+        options.client,
         options.sessionId,
         options.durableTranscript ?? true,
       ));
@@ -37,5 +33,12 @@ export function createCognitionExtension(options: CognitionExtensionOptions): Ag
   };
 }
 
+export {
+  type CognitionAssistantRecord,
+  type CognitionCapabilityRequest,
+  type CognitionHostClient,
+  type CognitionIdleRecord,
+  type CognitionToolResultRecord,
+} from "./host-client.ts";
 export { createProtocolProxyTool, type ProxyToolOptions } from "./proxy-tools.ts";
 export { createAgentEventForwarder } from "./event-adapter.ts";
