@@ -4,6 +4,7 @@
 
 import { randomUUID } from "node:crypto";
 import {
+  AgentRuntime,
   runAgentLoop,
   StaticExtensionHost,
   type AgentExtension,
@@ -20,15 +21,18 @@ import {
   DURABLE_TRANSCRIPT_CAPABILITY,
   GRAPH_CONTEXT_CAPABILITY,
   PROGRAM_EXECUTION_CAPABILITY,
-  PROGRAM_EXECUTION_MESSAGE_VERSION,
   PROGRAM_STATE_CAPABILITY,
-  createProcessAgentTransport,
   type ContextProvide,
   type HostToAgentMessage,
   type InferenceToolCatalog,
   type ProgramAttemptProjectionV1,
 } from "@alcode/agent-protocol";
-import { createCognitionExtension, createProtocolProxyTool } from "@alcode/cognition-extension";
+import {
+  createCognitionExtension,
+  createProtocolProxyTool,
+  type CognitionHostClient,
+} from "@alcode/cognition-extension";
+import { createProcessAgentProtocolBridge } from "./agent-protocol-bridge.ts";
 import { requestInferenceContext } from "./inference-context.ts";
 import { TestModelProvider } from "./test-model-provider.ts";
 
@@ -67,7 +71,7 @@ function createProvider(): ModelProvider {
 
 function toolsFromCatalog(
   catalog: InferenceToolCatalog,
-  transport: ReturnType<typeof createProcessAgentTransport>,
+  client: Pick<CognitionHostClient, "requestCapability">,
   sessionId: string,
   programAttemptAuthority?: ProgramAttemptProjectionV1["authority"],
 ): AgentTool[] {
@@ -81,7 +85,7 @@ function toolsFromCatalog(
       ? { programAttemptAuthority: structuredClone(programAttemptAuthority) }
       : {}),
     sessionId: () => sessionId,
-    transport,
+    client,
   }));
 }
 
@@ -99,7 +103,9 @@ function renderProgramAttempt(
 async function main(): Promise<void> {
   const generationId = process.env.ALCODE_AGENT_GENERATION_ID;
   if (!generationId) throw new Error("ALCODE_AGENT_GENERATION_ID is required");
-  const transport = createProcessAgentTransport();
+  const runtime = await AgentRuntime.create({ generationId });
+  const protocol = createProcessAgentProtocolBridge();
+  runtime.rootScope.register(() => protocol.close());
   let sessionId: string | null = null;
   let context: ContextProvide | null = null;
   let history: Message[] = [];
@@ -107,53 +113,28 @@ async function main(): Promise<void> {
   let runChain: Promise<void> = Promise.resolve();
 
   const reportError = async (message: string, activeSessionId?: string): Promise<void> => {
-    await transport.send({
-      type: "agent.error",
-      requestId: randomUUID(),
-      ...(activeSessionId !== undefined ? { sessionId: activeSessionId } : {}),
-      message,
-    });
+    await protocol.reportError(message, activeSessionId);
   };
 
   const submitPlanningProposal = async (
     begin: Extract<HostToAgentMessage, { type: "program.planning.begin" }>,
   ): Promise<void> => {
-    const requestId = randomUUID();
-    const result = await new Promise<Extract<HostToAgentMessage, { type: "program.proposal.result" }>>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        unsubscribe();
-        reject(new Error("Program proposal timed out"));
-      }, 10_000);
-      const unsubscribe = transport.onMessage((message) => {
-        if (message.type !== "program.proposal.result" || message.requestId !== requestId) return;
-        clearTimeout(timeout);
-        unsubscribe();
-        resolve(message);
-      });
-      void transport.send({
-        type: "program.proposal",
-        version: PROGRAM_EXECUTION_MESSAGE_VERSION,
-        requestId,
-        sessionId: begin.sessionId,
-        planningEpisodeId: begin.planningEpisodeId,
-        proposal: {
-          objective: begin.objective,
-          workItems: [{
-            workItemId: "work-1",
-            creationOrder: 0,
-            description: begin.objective,
-            dependencyIds: [],
-            affectedPaths: [],
-          }],
-          verification: [],
-          outputSlots: [],
-          productionSteps: [],
-        },
-      }).catch((error) => {
-        clearTimeout(timeout);
-        unsubscribe();
-        reject(error);
-      });
+    const result = await protocol.submitProgramProposal({
+      sessionId: begin.sessionId,
+      planningEpisodeId: begin.planningEpisodeId,
+      proposal: {
+        objective: begin.objective,
+        workItems: [{
+          workItemId: "work-1",
+          creationOrder: 0,
+          description: begin.objective,
+          dependencyIds: [],
+          affectedPaths: [],
+        }],
+        verification: [],
+        outputSlots: [],
+        productionSteps: [],
+      },
     });
     if (result.outcome !== "sealed") {
       throw new Error(`Program proposal was not sealed: ${result.outcome}${result.error ? ` (${result.error})` : ""}`);
@@ -164,53 +145,28 @@ async function main(): Promise<void> {
     activeSessionId: string,
     authority: ProgramAttemptProjectionV1["authority"],
   ): Promise<void> => {
-    const requestId = randomUUID();
-    const result = await new Promise<Extract<HostToAgentMessage, { type: "program.progress.result" }>>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        unsubscribe();
-        reject(new Error("Program progress proposal timed out"));
-      }, 10_000);
-      const unsubscribe = transport.onMessage((message) => {
-        if (message.type !== "program.progress.result" || message.requestId !== requestId) return;
-        clearTimeout(timeout);
-        unsubscribe();
-        resolve(message);
-      });
-      void transport.send({
-        type: "program.progress",
-        version: PROGRAM_EXECUTION_MESSAGE_VERSION,
-        requestId,
-        sessionId: activeSessionId,
-        authority: structuredClone(authority),
-        evidence: [],
-        advisoryBlockers: [],
-        requestAwaitingVerification: true,
-      }).catch((error) => {
-        clearTimeout(timeout);
-        unsubscribe();
-        reject(error);
-      });
+    const result = await protocol.submitProgramProgress({
+      sessionId: activeSessionId,
+      authority,
+      evidence: [],
+      advisoryBlockers: [],
+      requestAwaitingVerification: true,
     });
     if (result.outcome !== "admitted") {
       throw new Error(`Program progress was not admitted: ${result.outcome}${result.error ? ` (${result.error})` : ""}`);
     }
   };
 
-  await transport.send({
-    type: "agent.hello",
-    protocolVersion: AGENT_PROTOCOL_VERSION,
-    generationId,
-    capabilities: [
-      "capability.request",
-      "criterion.evidence",
-      "agent.idle",
-      DURABLE_TRANSCRIPT_CAPABILITY,
-      GRAPH_CONTEXT_CAPABILITY,
-      DYNAMIC_CAPABILITY_BINDING_CAPABILITY,
-      PROGRAM_STATE_CAPABILITY,
-      PROGRAM_EXECUTION_CAPABILITY,
-    ],
-  });
+  await protocol.announceHello(generationId, [
+    "capability.request",
+    "criterion.evidence",
+    "agent.idle",
+    DURABLE_TRANSCRIPT_CAPABILITY,
+    GRAPH_CONTEXT_CAPABILITY,
+    DYNAMIC_CAPABILITY_BINDING_CAPABILITY,
+    PROGRAM_STATE_CAPABILITY,
+    PROGRAM_EXECUTION_CAPABILITY,
+  ]);
 
   const runInput = async (text: string, timestamp?: number): Promise<void> => {
     if (!sessionId || !context) throw new Error("Agent received input before session/context bootstrap");
@@ -231,7 +187,7 @@ async function main(): Promise<void> {
     const extensionHost = new StaticExtensionHost();
     await extensionHost.mount([
       programProgressExtension,
-      createCognitionExtension({ transport, sessionId: () => localSessionId, toolNames: localContext.toolNames, durableTranscript: localContext.verbatim !== undefined }),
+      createCognitionExtension({ client: protocol, sessionId: () => localSessionId, toolNames: localContext.toolNames, durableTranscript: localContext.verbatim !== undefined }),
     ]);
     const provider = createProvider();
     try {
@@ -244,7 +200,7 @@ async function main(): Promise<void> {
         initialMessages: history,
         ...(localContext.verbatim !== undefined
           ? { beforeInference: async () => {
-              const refreshed = await requestInferenceContext(transport, localSessionId, runAbortController.signal);
+              const refreshed = await requestInferenceContext(protocol, localSessionId, runAbortController.signal);
               latestProgramAttempt = refreshed.programAttempt;
               return {
                 systemPrompt: renderProgramAttempt(refreshed.systemPrompt, refreshed.programAttempt),
@@ -253,7 +209,7 @@ async function main(): Promise<void> {
                   ? {
                       tools: toolsFromCatalog(
                         refreshed.toolCatalog,
-                        transport,
+                        protocol,
                         localSessionId,
                         refreshed.programAttempt?.authority,
                       ),
@@ -270,7 +226,7 @@ async function main(): Promise<void> {
     }
   };
 
-  transport.onMessage((message: HostToAgentMessage) => {
+  protocol.onHostMessage((message: HostToAgentMessage) => {
     switch (message.type) {
       case "host.hello":
         if (message.protocolVersion !== AGENT_PROTOCOL_VERSION) throw new Error(`Host protocol version ${message.protocolVersion} is incompatible`);
@@ -295,7 +251,7 @@ async function main(): Promise<void> {
         break;
       case "shutdown":
         abortController.abort(message.reason);
-        void transport.close().finally(() => process.exit(0));
+        void runtime.dispose().finally(() => process.exit(0));
         break;
       case "context.update":
       case "capability.result":

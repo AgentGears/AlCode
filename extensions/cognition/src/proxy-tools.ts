@@ -1,11 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { AgentTool, AgentToolResult, ToolInputSchema } from "@alcode/agent-core";
-import type {
-  AgentToHostMessage,
-  HostToAgentMessage,
-  ProgramAttemptAuthorityV1,
-  ProtocolTransport,
-} from "@alcode/agent-protocol";
+import type { ProgramAttemptAuthorityV1 } from "@alcode/agent-protocol";
+import type { CognitionHostClient } from "./host-client.ts";
 
 export interface ProxyToolOptions {
   name: string;
@@ -15,24 +11,7 @@ export interface ProxyToolOptions {
   expectedCapabilityRevision?: string;
   programAttemptAuthority?: ProgramAttemptAuthorityV1;
   sessionId: () => string;
-  transport: ProtocolTransport<AgentToHostMessage, HostToAgentMessage>;
-}
-
-async function requestHost(
-  transport: ProtocolTransport<AgentToHostMessage, HostToAgentMessage>,
-  message: AgentToHostMessage & { type: "capability.request" },
-): Promise<Extract<HostToAgentMessage, { type: "capability.result" }>> {
-  return new Promise((resolve, reject) => {
-    const unsubscribe = transport.onMessage((response) => {
-      if (response.type !== "capability.result" || response.requestId !== message.requestId) return;
-      unsubscribe();
-      resolve(response);
-    });
-    transport.send(message).catch((error) => {
-      unsubscribe();
-      reject(error);
-    });
-  });
+  client: Pick<CognitionHostClient, "requestCapability">;
 }
 
 export function createProtocolProxyTool(options: ProxyToolOptions): AgentTool<Record<string, unknown>, unknown> {
@@ -45,10 +24,7 @@ export function createProtocolProxyTool(options: ProxyToolOptions): AgentTool<Re
     inputSchema: structuredClone(options.inputSchema ?? { type: "object", properties: {} }),
     ...(options.isReadOnly !== undefined ? { isReadOnly: options.isReadOnly } : {}),
     async execute(input, context): Promise<AgentToolResult<unknown>> {
-      const requestId = randomUUID();
-      const response = await requestHost(options.transport, {
-        type: "capability.request",
-        requestId,
+      const response = await options.client.requestCapability({
         sessionId: options.sessionId(),
         toolCallId: context.toolCallId ?? randomUUID(),
         toolName: options.name,
