@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import {
   runAgentLoop,
   StaticExtensionHost,
+  type AgentExtension,
   type AgentTool,
   type Message,
   type ModelEvent,
@@ -19,6 +20,7 @@ import {
   DURABLE_TRANSCRIPT_CAPABILITY,
   GRAPH_CONTEXT_CAPABILITY,
   PROGRAM_EXECUTION_CAPABILITY,
+  PROGRAM_EXECUTION_MESSAGE_VERSION,
   PROGRAM_STATE_CAPABILITY,
   createProcessAgentTransport,
   type ContextProvide,
@@ -104,6 +106,96 @@ async function main(): Promise<void> {
   let abortController = new AbortController();
   let runChain: Promise<void> = Promise.resolve();
 
+  const reportError = async (message: string, activeSessionId?: string): Promise<void> => {
+    await transport.send({
+      type: "agent.error",
+      requestId: randomUUID(),
+      ...(activeSessionId !== undefined ? { sessionId: activeSessionId } : {}),
+      message,
+    });
+  };
+
+  const submitPlanningProposal = async (
+    begin: Extract<HostToAgentMessage, { type: "program.planning.begin" }>,
+  ): Promise<void> => {
+    const requestId = randomUUID();
+    const result = await new Promise<Extract<HostToAgentMessage, { type: "program.proposal.result" }>>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        unsubscribe();
+        reject(new Error("Program proposal timed out"));
+      }, 10_000);
+      const unsubscribe = transport.onMessage((message) => {
+        if (message.type !== "program.proposal.result" || message.requestId !== requestId) return;
+        clearTimeout(timeout);
+        unsubscribe();
+        resolve(message);
+      });
+      void transport.send({
+        type: "program.proposal",
+        version: PROGRAM_EXECUTION_MESSAGE_VERSION,
+        requestId,
+        sessionId: begin.sessionId,
+        planningEpisodeId: begin.planningEpisodeId,
+        proposal: {
+          objective: begin.objective,
+          workItems: [{
+            workItemId: "work-1",
+            creationOrder: 0,
+            description: begin.objective,
+            dependencyIds: [],
+            affectedPaths: [],
+          }],
+          verification: [],
+          outputSlots: [],
+          productionSteps: [],
+        },
+      }).catch((error) => {
+        clearTimeout(timeout);
+        unsubscribe();
+        reject(error);
+      });
+    });
+    if (result.outcome !== "sealed") {
+      throw new Error(`Program proposal was not sealed: ${result.outcome}${result.error ? ` (${result.error})` : ""}`);
+    }
+  };
+
+  const submitAwaitingVerification = async (
+    activeSessionId: string,
+    authority: ProgramAttemptProjectionV1["authority"],
+  ): Promise<void> => {
+    const requestId = randomUUID();
+    const result = await new Promise<Extract<HostToAgentMessage, { type: "program.progress.result" }>>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        unsubscribe();
+        reject(new Error("Program progress proposal timed out"));
+      }, 10_000);
+      const unsubscribe = transport.onMessage((message) => {
+        if (message.type !== "program.progress.result" || message.requestId !== requestId) return;
+        clearTimeout(timeout);
+        unsubscribe();
+        resolve(message);
+      });
+      void transport.send({
+        type: "program.progress",
+        version: PROGRAM_EXECUTION_MESSAGE_VERSION,
+        requestId,
+        sessionId: activeSessionId,
+        authority: structuredClone(authority),
+        evidence: [],
+        advisoryBlockers: [],
+        requestAwaitingVerification: true,
+      }).catch((error) => {
+        clearTimeout(timeout);
+        unsubscribe();
+        reject(error);
+      });
+    });
+    if (result.outcome !== "admitted") {
+      throw new Error(`Program progress was not admitted: ${result.outcome}${result.error ? ` (${result.error})` : ""}`);
+    }
+  };
+
   await transport.send({
     type: "agent.hello",
     protocolVersion: AGENT_PROTOCOL_VERSION,
@@ -126,8 +218,21 @@ async function main(): Promise<void> {
     const localSessionId = sessionId;
     const localContext = context;
     const runAbortController = abortController;
+    let latestProgramAttempt: ProgramAttemptProjectionV1 | undefined;
+    const programProgressExtension: AgentExtension = {
+      name: "program-progress-v1",
+      register(ctx) {
+        ctx.onEvent(async (event) => {
+          if (event.type !== "agent_end" || latestProgramAttempt === undefined) return;
+          await submitAwaitingVerification(localSessionId, latestProgramAttempt.authority);
+        });
+      },
+    };
     const extensionHost = new StaticExtensionHost();
-    await extensionHost.mount([createCognitionExtension({ transport, sessionId: () => localSessionId, toolNames: localContext.toolNames, durableTranscript: localContext.verbatim !== undefined })]);
+    await extensionHost.mount([
+      programProgressExtension,
+      createCognitionExtension({ transport, sessionId: () => localSessionId, toolNames: localContext.toolNames, durableTranscript: localContext.verbatim !== undefined }),
+    ]);
     const provider = createProvider();
     try {
       const completeHistory = await runAgentLoop(text, {
@@ -140,6 +245,7 @@ async function main(): Promise<void> {
         ...(localContext.verbatim !== undefined
           ? { beforeInference: async () => {
               const refreshed = await requestInferenceContext(transport, localSessionId, runAbortController.signal);
+              latestProgramAttempt = refreshed.programAttempt;
               return {
                 systemPrompt: renderProgramAttempt(refreshed.systemPrompt, refreshed.programAttempt),
                 messages: refreshed.messages,
@@ -160,7 +266,7 @@ async function main(): Promise<void> {
       });
       history = completeHistory as Message[];
     } catch (error) {
-      await transport.send({ type: "agent.error", requestId: randomUUID(), sessionId: localSessionId, message: error instanceof Error ? error.message : String(error) });
+      await reportError(error instanceof Error ? error.message : String(error), localSessionId);
     }
   };
 
@@ -177,6 +283,9 @@ async function main(): Promise<void> {
         context = message;
         history = message.verbatim ? structuredClone(message.verbatim.messages) as Message[] : [];
         break;
+      case "program.planning.begin":
+        void submitPlanningProposal(message).catch((error) => reportError(error instanceof Error ? error.message : String(error), message.sessionId));
+        break;
       case "input.admitted":
         if (message.sessionId !== sessionId) throw new Error("input.admitted session mismatch");
         runChain = runChain.then(() => runInput(message.text, message.timestamp));
@@ -191,6 +300,9 @@ async function main(): Promise<void> {
       case "context.update":
       case "capability.result":
       case "transcript.admitted":
+      case "program.planning.read.result":
+      case "program.proposal.result":
+      case "program.progress.result":
         break;
     }
   });
