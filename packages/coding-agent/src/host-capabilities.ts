@@ -21,8 +21,10 @@ import { createWriteTool } from "./tools/write.ts";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyAgentTool = AgentTool<any, any>;
 
+const OPERATION_SCOPED_PROOF_CONTRACT_ID = "coding-agent-owned-tool-promise-v1";
+const OPERATION_SCOPED_PROOF_CONTRACT_VERSION = 1;
+
 function extractNumber(details: unknown, key: string): number | null | undefined {
-  if (typeof details !== "object" && details === null) return undefined;
   if (typeof details !== "object" || details === null || Array.isArray(details)) return undefined;
   const value = (details as Record<string, unknown>)[key];
   return typeof value === "number" || value === null ? value : undefined;
@@ -31,11 +33,20 @@ function extractNumber(details: unknown, key: string): number | null | undefined
 export function agentToolAsHostCapability<TInput, TResult>(
   tool: AgentTool<TInput, TResult>,
 ): HostCapability {
+  const isReadOnly = tool.isReadOnly ?? false;
   return {
     name: tool.name,
     description: tool.description,
     inputSchema: structuredClone(tool.inputSchema),
-    isReadOnly: tool.isReadOnly ?? false,
+    isReadOnly,
+    workspaceAccessClass: isReadOnly ? "read_only" : "may_write",
+    ...(!isReadOnly ? {
+      quiescence: {
+        containmentKind: "operation_scoped_containment" as const,
+        proofContractId: OPERATION_SCOPED_PROOF_CONTRACT_ID,
+        proofContractVersion: OPERATION_SCOPED_PROOF_CONTRACT_VERSION,
+      },
+    } : {}),
     async execute(args, context): Promise<HostCapabilityResult> {
       const result = await tool.execute(
         args as TInput,
@@ -46,6 +57,18 @@ export function agentToolAsHostCapability<TInput, TResult>(
         .map((block) => block.text)
         .join("\n");
       const exitCode = extractNumber(result.details, "exitCode");
+      const quiescenceProof = !isReadOnly && context.quiescenceContract !== undefined
+        ? {
+            containmentInstanceId: context.quiescenceContract.containmentInstanceId,
+            proofContractId: context.quiescenceContract.proofContractId,
+            proofContractVersion: context.quiescenceContract.proofContractVersion,
+            proofKind: "operation_containment_ended" as const,
+            evidence: {
+              kind: "operation_scope_ended",
+              containmentInstanceId: context.quiescenceContract.containmentInstanceId,
+            },
+          }
+        : undefined;
       return {
         result: {
           content: result.content,
@@ -54,6 +77,7 @@ export function agentToolAsHostCapability<TInput, TResult>(
         ...(result.executionOutcome !== undefined ? { outcome: result.executionOutcome } : {}),
         stdout: text,
         ...(exitCode !== undefined ? { exitCode } : {}),
+        ...(quiescenceProof !== undefined ? { quiescenceProof } : {}),
       };
     },
   };
