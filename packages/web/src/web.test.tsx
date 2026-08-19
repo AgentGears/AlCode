@@ -35,6 +35,41 @@ class FakeService implements ApplicationServicePort {
     }],
     queue: [{ queueItemId: "q1", sourceCommandId: "c1", position: 1, text: "Next task", admittedAt: "2026-08-12T00:00:02.000Z" }],
     pendingInteractions: [{ interactionId: "p1", kind: "permission", status: "pending", toolName: "bash", description: "Run mutation" }],
+    pendingProgramCreations: [{ draftId: "draft-1", draftDigest: "digest-1", objective: "Approve the exact Program", sourceSessionId: "s1", status: "pending" }],
+    programs: [{
+      programStateId: "program-1",
+      revision: 4,
+      objective: "Ship Program-backed product controls",
+      lifecycle: "active",
+      attachedSessionIds: ["s1"],
+      workItems: [{ workItemId: "work-1", lifecycle: "awaiting_verification", description: "Render authoritative Program state" }],
+      currentWorkItemId: "work-1",
+      blockers: [{ blockerId: "blocker-1", workItemId: "work-1", reason: "Review required" }],
+      verification: [
+        { obligationId: "verify-current", kind: "workspace_path_state", subjectGeneration: 2, status: "current" },
+        { obligationId: "verify-stale", kind: "operation_result", subjectGeneration: 3, status: "stale" },
+        { obligationId: "verify-waived", kind: "artifact_present", subjectGeneration: 1, status: "waived" },
+      ],
+      activeAttempt: { programAttemptId: "attempt-1", workItemId: "work-1", sessionId: "s1", agentGeneration: 9 },
+      control: {
+        rebaseRequired: true,
+        executionBaseUnavailable: true,
+        mismatch: {
+          receiptId: "mismatch-1",
+          currentWorkspaceEffectGeneration: 3,
+          currentObservationIdentity: {
+            kind: "workspace-observation-v1",
+            providerKind: "local",
+            workspaceIdentity: "workspace-1",
+            coverageDigest: "coverage-1",
+            stateDigest: "state-1",
+          },
+        },
+      },
+      uncertainty: { outstandingOperations: 0, indeterminateEffects: 0, unresolvedReconciliation: 0 },
+      omissions: { workItems: 0, blockers: 0, verification: 0, attachedSessions: 0 },
+    }],
+    programOmissions: { programs: 0, pendingCreations: 0 },
   };
 
   async execute(command: ApplicationCommand): Promise<CommandDecision> {
@@ -69,6 +104,17 @@ class FakeService implements ApplicationServicePort {
   }
 }
 
+function render(host: FakeService, client: ApplicationClient): string {
+  return renderToStaticMarkup(
+    <AlcodeApp
+      client={client}
+      sessions={[{ sessionId: "s1", label: "Project" }]}
+      activeSessionId="s1"
+      onSelectSession={() => undefined}
+    />,
+  );
+}
+
 describe("Phase 0.8 React Experience Plane", () => {
   it("hydrates from Host snapshot, applies ordered events, and detach does not issue cancel", async () => {
     const host = new FakeService();
@@ -97,15 +143,7 @@ describe("Phase 0.8 React Experience Plane", () => {
     const host = new FakeService();
     const client = new ApplicationClient(createLoopbackApplicationTransport(host), "web-render");
     await client.connect("s1");
-
-    const html = renderToStaticMarkup(
-      <AlcodeApp
-        client={client}
-        sessions={[{ sessionId: "s1", label: "Project" }]}
-        activeSessionId="s1"
-        onSelectSession={() => undefined}
-      />,
-    );
+    const html = render(host, client);
 
     expect(html).toContain("Ready");
     expect(html).toContain("Effect unknown — reconciliation pending");
@@ -115,5 +153,43 @@ describe("Phase 0.8 React Experience Plane", () => {
     expect(html).toContain("Guide current work");
     expect(html).toContain("Queue");
     expect(html).toContain("Stop");
+  });
+
+  it("renders the minimum authoritative Program control surface", async () => {
+    const host = new FakeService();
+    const client = new ApplicationClient(createLoopbackApplicationTransport(host), "web-program-render");
+    await client.connect("s1");
+    const html = render(host, client);
+
+    expect(html).toContain("Program approval");
+    expect(html).toContain("Approve the exact Program");
+    expect(html).toContain("Accept Program");
+    expect(html).toContain("Ship Program-backed product controls");
+    expect(html).toContain("active");
+    expect(html).toContain("Revision 4");
+    expect(html).toContain("Render authoritative Program state · awaiting_verification");
+    expect(html).toContain("attempt-1 · agent 9");
+    expect(html).toContain("Verification: 1 current · 1 stale · 1 waived");
+    expect(html).toContain("Blockers: Review required");
+    expect(html).toContain("Control: rebase required · execution base unavailable");
+    expect(html).toContain("Accept rebase");
+    expect(html).toContain("Cancel Program");
+  });
+
+  it("renders terminal Program truth without active mutation controls", async () => {
+    const host = new FakeService();
+    host.snapshot = structuredClone(host.snapshot);
+    const program = host.snapshot.programs![0]!;
+    program.lifecycle = "completed";
+    delete program.activeAttempt;
+    program.control = { rebaseRequired: false, executionBaseUnavailable: false };
+    const client = new ApplicationClient(createLoopbackApplicationTransport(host), "web-program-terminal");
+    await client.connect("s1");
+    const html = render(host, client);
+
+    expect(html).toContain("completed");
+    expect(html).toContain("Attempt: none");
+    expect(html).not.toContain("Accept rebase");
+    expect(html).not.toContain("Cancel Program");
   });
 });
