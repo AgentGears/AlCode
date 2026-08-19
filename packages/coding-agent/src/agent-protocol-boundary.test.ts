@@ -32,9 +32,10 @@ describe("S-01B privileged Agent protocol boundary", () => {
 
   it("generation lifecycle owns bridge close while StaticExtensionHost remains the behavior path", () => {
     const worker = source("packages/coding-agent/src/agent-worker.ts");
-    expect(worker).toContain("AgentRuntime.create({ generationId })");
-    expect(worker).toContain("runtime.rootScope.register(() => protocol.close())");
+    const profile = source("packages/coding-agent/src/agent-runtime-profile.ts");
+    expect(worker).toContain("AgentRuntime.create({");
+    expect(worker).toContain("modules: createDefaultAgentRuntimeModules({ protocol })");
+    expect(profile).toContain("scope.register(() => protocol.close())");
     expect(worker).toContain("new StaticExtensionHost()");
-    expect(worker).not.toContain("modules:");
   });
 });
