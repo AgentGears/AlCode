@@ -80,7 +80,7 @@ describe("S-01D inference-scoped Host capability projection", () => {
       expectedCapabilityRevision: "cap-rev-7",
       programAttemptAuthority: authority,
     }]);
-    await projection.scope.dispose();
+    await projection.dispose();
     await runtime.dispose();
   });
 
@@ -101,7 +101,7 @@ describe("S-01D inference-scoped Host capability projection", () => {
     });
     const staleTool = projection.tools![0]!;
 
-    await projection.scope.dispose();
+    await projection.dispose();
     await expect(staleTool.execute({ path: "README.md" }, { toolCallId: "stale-call" }))
       .rejects.toBeInstanceOf(ScopeNotOpenError);
     expect(hostCalls).toBe(0);
@@ -128,7 +128,7 @@ describe("S-01D inference-scoped Host capability projection", () => {
 
     const execution = projection.tools![0]!.execute({ path: "package.json" }, { toolCallId: "in-flight" });
     await Promise.resolve();
-    const disposal = projection.scope.dispose();
+    const disposal = projection.dispose();
     let disposalResolved = false;
     void disposal.then(() => { disposalResolved = true; });
     await Promise.resolve();
@@ -142,6 +142,31 @@ describe("S-01D inference-scoped Host capability projection", () => {
     await runtime.dispose();
   });
 
+  it("keeps generation disposal waiting for the whole inference lifecycle lease", async () => {
+    const runtime = await AgentRuntime.create({ generationId: "agent-generation-a" });
+    const projection = createInferenceCapabilityProjection({
+      runtime,
+      sessionId: "session-1",
+      catalog,
+      client: {
+        async requestCapability(request) {
+          return succeeded(request);
+        },
+      },
+    });
+
+    const generationDisposal = runtime.dispose();
+    let generationClosed = false;
+    void generationDisposal.then(() => { generationClosed = true; });
+    await Promise.resolve();
+    expect(projection.scope.state).toBe("closing");
+    expect(generationClosed).toBe(false);
+
+    await projection.dispose();
+    await generationDisposal;
+    expect(generationClosed).toBe(true);
+  });
+
   it("integrates the worker through the inference projection rather than constructing catalog tools directly", () => {
     const worker = source("packages/coding-agent/src/agent-worker.ts");
     const inferenceRuntime = source("packages/coding-agent/src/inference-runtime.ts");
@@ -149,6 +174,7 @@ describe("S-01D inference-scoped Host capability projection", () => {
     expect(worker).toContain("afterInference: disposeActiveInferenceScope");
     expect(worker).not.toContain("createProtocolProxyTool");
     expect(inferenceRuntime).toContain("const admission = scope.admit()");
+    expect(inferenceRuntime).toContain("const lifecycleAdmission = scope.admit()");
     expect(inferenceRuntime).toContain("programAttemptAuthority: structuredClone(options.programAttemptAuthority)");
   });
 });

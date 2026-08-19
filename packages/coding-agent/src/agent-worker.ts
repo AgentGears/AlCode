@@ -8,7 +8,6 @@ import {
   runAgentLoop,
   StaticExtensionHost,
   type Message,
-  type RuntimeScope,
 } from "@alcode/agent-core";
 import {
   AGENT_PROTOCOL_VERSION,
@@ -27,7 +26,10 @@ import {
   AGENT_RUN_COMPOSITION_FACTORY,
   createDefaultAgentRuntimeModules,
 } from "./agent-runtime-profile.ts";
-import { createInferenceCapabilityProjection } from "./inference-runtime.ts";
+import {
+  createInferenceCapabilityProjection,
+  type InferenceCapabilityProjection,
+} from "./inference-runtime.ts";
 import { requestInferenceContext } from "./inference-context.ts";
 
 function renderProgramAttempt(
@@ -81,11 +83,11 @@ async function main(): Promise<void> {
     const localContext = context;
     const runAbortController = abortController;
     let latestProgramAttemptAuthority: ProgramAttemptProjectionV1["authority"] | undefined;
-    let activeInferenceScope: RuntimeScope | null = null;
+    let activeInferenceProjection: InferenceCapabilityProjection | null = null;
     const disposeActiveInferenceScope = async (): Promise<void> => {
-      const scope = activeInferenceScope;
-      activeInferenceScope = null;
-      if (scope !== null) await scope.dispose();
+      const projection = activeInferenceProjection;
+      activeInferenceProjection = null;
+      if (projection !== null) await projection.dispose();
     };
     const composition = runCompositionFactory.create({
       sessionId: localSessionId,
@@ -117,7 +119,7 @@ async function main(): Promise<void> {
                   catalog: refreshed.toolCatalog,
                   programAttemptAuthority: refreshed.programAttempt?.authority,
                 });
-                activeInferenceScope = projection.scope;
+                activeInferenceProjection = projection;
                 return {
                   systemPrompt: renderProgramAttempt(refreshed.systemPrompt, refreshed.programAttempt),
                   messages: refreshed.messages,

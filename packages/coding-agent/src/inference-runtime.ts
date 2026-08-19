@@ -30,6 +30,8 @@ export const INFERENCE_CAPABILITY_CLIENT = createServiceToken<InferenceCapabilit
 export interface InferenceCapabilityProjection {
   readonly scope: RuntimeScope;
   readonly tools?: readonly AgentTool[];
+  /** Release the inference lifecycle lease, then quiescently close the scope. */
+  dispose(): Promise<void>;
 }
 
 export interface CreateInferenceCapabilityProjectionOptions {
@@ -61,35 +63,52 @@ function createScopedCapabilityClient(
 
 /**
  * Create the ephemeral Host-capability projection for exactly one provider
- * inference. Disposing the returned scope prevents stale proxy tools from
- * originating new requests and waits for already-admitted requests to settle.
+ * inference. A lifecycle admission remains held for the whole inference/tool
+ * cycle, so Agent-generation disposal cannot close the protocol beneath live
+ * inference work. `dispose()` releases that lease and then closes quiescently.
  */
 export function createInferenceCapabilityProjection(
   options: CreateInferenceCapabilityProjectionOptions,
 ): InferenceCapabilityProjection {
   const scope = options.runtime.createInferenceScope();
-  scope.provide(
-    INFERENCE_CAPABILITY_CLIENT,
-    createScopedCapabilityClient(scope, options.client),
-  );
+  const lifecycleAdmission = scope.admit();
+  let disposalPromise: Promise<void> | null = null;
 
-  if (options.catalog === undefined) return { scope };
+  const dispose = (): Promise<void> => {
+    if (disposalPromise !== null) return disposalPromise;
+    lifecycleAdmission.release();
+    disposalPromise = scope.dispose();
+    return disposalPromise;
+  };
 
-  const client = scope.resolve(INFERENCE_CAPABILITY_CLIENT);
-  const tools = options.catalog.tools.map((descriptor) => createProtocolProxyTool({
-    name: descriptor.definition.name,
-    description: descriptor.definition.description,
-    inputSchema: descriptor.definition.inputSchema,
-    ...(descriptor.isReadOnly !== undefined ? { isReadOnly: descriptor.isReadOnly } : {}),
-    ...(descriptor.binding.kind === "dynamic"
-      ? { expectedCapabilityRevision: descriptor.binding.revision }
-      : {}),
-    ...(options.programAttemptAuthority !== undefined
-      ? { programAttemptAuthority: structuredClone(options.programAttemptAuthority) }
-      : {}),
-    sessionId: () => options.sessionId,
-    client,
-  }));
+  try {
+    scope.provide(
+      INFERENCE_CAPABILITY_CLIENT,
+      createScopedCapabilityClient(scope, options.client),
+    );
 
-  return { scope, tools };
+    if (options.catalog === undefined) return { scope, dispose };
+
+    const client = scope.resolve(INFERENCE_CAPABILITY_CLIENT);
+    const tools = options.catalog.tools.map((descriptor) => createProtocolProxyTool({
+      name: descriptor.definition.name,
+      description: descriptor.definition.description,
+      inputSchema: descriptor.definition.inputSchema,
+      ...(descriptor.isReadOnly !== undefined ? { isReadOnly: descriptor.isReadOnly } : {}),
+      ...(descriptor.binding.kind === "dynamic"
+        ? { expectedCapabilityRevision: descriptor.binding.revision }
+        : {}),
+      ...(options.programAttemptAuthority !== undefined
+        ? { programAttemptAuthority: structuredClone(options.programAttemptAuthority) }
+        : {}),
+      sessionId: () => options.sessionId,
+      client,
+    }));
+
+    return { scope, tools, dispose };
+  } catch (error) {
+    lifecycleAdmission.release();
+    void scope.dispose().catch(() => {});
+    throw error;
+  }
 }
