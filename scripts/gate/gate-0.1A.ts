@@ -151,9 +151,11 @@ async function main(): Promise<void> {
     });
   }
 
-  // 8. CLI returns deterministic offline response (alcode -p hello)
+  // 8. CLI returns deterministic offline response. Phase 1.1 keeps the
+  // Phase 0.1A response proof while explicitly authorizing the CLI
+  // Application actor to accept the exact pending Program draft.
   {
-    const result = run("npx", ["tsx", "packages/coding-agent/src/cli.ts", "-p", "hello"], {
+    const result = run("npx", ["tsx", "packages/coding-agent/src/cli.ts", "-p", "hello", "--accept-program"], {
       cwd: ROOT, throwOnError: false,
     });
     const output = result.stdout;
