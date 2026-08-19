@@ -40,6 +40,12 @@ export interface AgentLoopOptions {
    * calls formed by it; local Agent history remains disposable.
    */
   beforeInference?: (local: InferenceContext) => Promise<InferenceContext>;
+  /**
+   * Ephemeral inference-lifecycle seam. When present, this is awaited after
+   * the provider inference and all tool calls formed by it settle, including
+   * exceptional provider/tool-event paths. It owns no execution authority.
+   */
+  afterInference?: () => void | Promise<void>;
 }
 
 export async function runAgentLoop(
@@ -83,80 +89,87 @@ export async function runAgentLoop(
       throw error;
     }
     if (signal?.aborted) {
-      await emit({ type: "turn_end" });
-      break;
-    }
-    const authorizedTools = authorized.tools ? [...authorized.tools] : tools;
-
-    const assistantMessage = await streamAssistant(
-      authorized.systemPrompt,
-      [...authorized.messages].map((message) => structuredClone(message)),
-      authorizedTools,
-      provider,
-      signal,
-    );
-    messages.push(assistantMessage);
-    await emit({ type: "message_start", message: assistantMessage });
-    await emit({ type: "message_end", message: assistantMessage });
-
-    const toolCalls = assistantMessage.content.filter(
-      (c): c is ToolCallContent => c.type === "toolCall",
-    );
-
-    if (toolCalls.length === 0 || assistantMessage.stopReason === "error" || assistantMessage.stopReason === "aborted") {
+      await options.afterInference?.();
       await emit({ type: "turn_end" });
       break;
     }
 
-    for (const tc of toolCalls) {
-      if (signal?.aborted) break;
-      await emit({ type: "tool_execution_start", toolCallId: tc.id, toolName: tc.name, args: tc.arguments });
+    let finishAfterTurn = false;
+    try {
+      const authorizedTools = authorized.tools ? [...authorized.tools] : tools;
 
-      const tool = authorizedTools.find((t) => t.name === tc.name);
-      let result: AgentToolResult;
-      let isError: boolean;
-      let outcome: ToolExecutionOutcome;
+      const assistantMessage = await streamAssistant(
+        authorized.systemPrompt,
+        [...authorized.messages].map((message) => structuredClone(message)),
+        authorizedTools,
+        provider,
+        signal,
+      );
+      messages.push(assistantMessage);
+      await emit({ type: "message_start", message: assistantMessage });
+      await emit({ type: "message_end", message: assistantMessage });
 
-      if (!tool) {
-        result = {
-          content: [{ type: "text", text: `Tool "${tc.name}" not found in the Host-authorized inference catalog` }],
-          details: { error: "tool_not_authorized_for_inference" },
-        };
-        isError = true;
-        outcome = "failed";
+      const toolCalls = assistantMessage.content.filter(
+        (c): c is ToolCallContent => c.type === "toolCall",
+      );
+
+      if (toolCalls.length === 0 || assistantMessage.stopReason === "error" || assistantMessage.stopReason === "aborted") {
+        finishAfterTurn = true;
       } else {
-        try {
-          const ctx = signal ? { signal, toolCallId: tc.id } : { toolCallId: tc.id };
-          result = await tool.execute(tc.arguments, ctx);
-          isError = false;
-          outcome = result.executionOutcome ?? "succeeded";
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
-          result = {
-            content: [{ type: "text", text: `Tool "${tc.name}" failed: ${msg}` }],
-            details: { error: msg },
+        for (const tc of toolCalls) {
+          if (signal?.aborted) break;
+          await emit({ type: "tool_execution_start", toolCallId: tc.id, toolName: tc.name, args: tc.arguments });
+
+          const tool = authorizedTools.find((t) => t.name === tc.name);
+          let result: AgentToolResult;
+          let isError: boolean;
+          let outcome: ToolExecutionOutcome;
+
+          if (!tool) {
+            result = {
+              content: [{ type: "text", text: `Tool "${tc.name}" not found in the Host-authorized inference catalog` }],
+              details: { error: "tool_not_authorized_for_inference" },
+            };
+            isError = true;
+            outcome = "failed";
+          } else {
+            try {
+              const ctx = signal ? { signal, toolCallId: tc.id } : { toolCallId: tc.id };
+              result = await tool.execute(tc.arguments, ctx);
+              isError = false;
+              outcome = result.executionOutcome ?? "succeeded";
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : String(e);
+              result = {
+                content: [{ type: "text", text: `Tool "${tc.name}" failed: ${msg}` }],
+                details: { error: msg },
+              };
+              isError = true;
+              outcome = "failed";
+            }
+          }
+
+          await emit({ type: "tool_execution_end", toolCallId: tc.id, toolName: tc.name, result, isError, outcome });
+
+          const toolResult: ToolResultMessage = {
+            role: "toolResult",
+            toolCallId: tc.id,
+            toolName: tc.name,
+            content: result.content,
+            isError,
+            timestamp: Date.now(),
           };
-          isError = true;
-          outcome = "failed";
+          messages.push(toolResult);
+          await emit({ type: "message_start", message: toolResult });
+          await emit({ type: "message_end", message: toolResult });
         }
       }
-
-      await emit({ type: "tool_execution_end", toolCallId: tc.id, toolName: tc.name, result, isError, outcome });
-
-      const toolResult: ToolResultMessage = {
-        role: "toolResult",
-        toolCallId: tc.id,
-        toolName: tc.name,
-        content: result.content,
-        isError,
-        timestamp: Date.now(),
-      };
-      messages.push(toolResult);
-      await emit({ type: "message_start", message: toolResult });
-      await emit({ type: "message_end", message: toolResult });
+    } finally {
+      await options.afterInference?.();
     }
 
     await emit({ type: "turn_end" });
+    if (finishAfterTurn) break;
   }
 
   await emit({ type: "agent_end" });
