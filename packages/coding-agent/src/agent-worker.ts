@@ -7,13 +7,8 @@ import {
   AgentRuntime,
   runAgentLoop,
   StaticExtensionHost,
-  type AgentExtension,
   type AgentTool,
   type Message,
-  type ModelEvent,
-  type ModelProvider,
-  type ModelRequest,
-  type ModelStream,
 } from "@alcode/agent-core";
 import {
   AGENT_PROTOCOL_VERSION,
@@ -28,46 +23,16 @@ import {
   type ProgramAttemptProjectionV1,
 } from "@alcode/agent-protocol";
 import {
-  createCognitionExtension,
   createProtocolProxyTool,
   type CognitionHostClient,
 } from "@alcode/cognition-extension";
 import { createProcessAgentProtocolBridge } from "./agent-protocol-bridge.ts";
+import {
+  AGENT_PROGRAM_BEHAVIOR,
+  AGENT_RUN_COMPOSITION_FACTORY,
+  createDefaultAgentRuntimeModules,
+} from "./agent-runtime-profile.ts";
 import { requestInferenceContext } from "./inference-context.ts";
-import { TestModelProvider } from "./test-model-provider.ts";
-
-interface ScriptedTurn {
-  text?: string;
-  toolCalls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }>;
-  stopReason?: "stop" | "length" | "tool_use" | "error" | "aborted";
-  errorMessage?: string;
-}
-
-class ScriptedWorkerProvider implements ModelProvider {
-  private index = 0;
-  constructor(private readonly turns: readonly ScriptedTurn[]) {}
-  async stream(_request: ModelRequest): Promise<ModelStream> {
-    const turn = this.turns[this.index++] ?? { text: "ALCODE Agent is idle.", stopReason: "stop" as const };
-    const events: ModelEvent[] = [];
-    if (turn.text !== undefined) events.push({ type: "text_delta", text: turn.text });
-    for (const call of turn.toolCalls ?? []) events.push({ type: "tool_call", id: call.id, name: call.name, arguments: call.arguments });
-    events.push({ type: "done", stopReason: turn.stopReason ?? ((turn.toolCalls?.length ?? 0) > 0 ? "tool_use" : "stop"), ...(turn.errorMessage !== undefined ? { errorMessage: turn.errorMessage } : {}) });
-    return { [Symbol.asyncIterator]() { let i = 0; return { async next(): Promise<IteratorResult<ModelEvent>> { const value = events[i++]; return value === undefined ? { value: undefined, done: true } : { value, done: false }; }}; }};
-  }
-}
-
-function createProvider(): ModelProvider {
-  const raw = process.env.ALCODE_AGENT_SCRIPT;
-  if (raw) {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) throw new Error("ALCODE_AGENT_SCRIPT must be a JSON array");
-    return new ScriptedWorkerProvider(parsed as ScriptedTurn[]);
-  }
-  return new TestModelProvider([
-    { match: "hello", text: "Hello from ALCODE. The agent loop is running." },
-    { match: "*", text: "ALCODE received your prompt." },
-  ]);
-}
 
 function toolsFromCatalog(
   catalog: InferenceToolCatalog,
@@ -103,9 +68,13 @@ function renderProgramAttempt(
 async function main(): Promise<void> {
   const generationId = process.env.ALCODE_AGENT_GENERATION_ID;
   if (!generationId) throw new Error("ALCODE_AGENT_GENERATION_ID is required");
-  const runtime = await AgentRuntime.create({ generationId });
   const protocol = createProcessAgentProtocolBridge();
-  runtime.rootScope.register(() => protocol.close());
+  const runtime = await AgentRuntime.create({
+    generationId,
+    modules: createDefaultAgentRuntimeModules({ protocol }),
+  });
+  const programBehavior = runtime.rootScope.resolve(AGENT_PROGRAM_BEHAVIOR);
+  const runCompositionFactory = runtime.rootScope.resolve(AGENT_RUN_COMPOSITION_FACTORY);
   let sessionId: string | null = null;
   let context: ContextProvide | null = null;
   let history: Message[] = [];
@@ -114,47 +83,6 @@ async function main(): Promise<void> {
 
   const reportError = async (message: string, activeSessionId?: string): Promise<void> => {
     await protocol.reportError(message, activeSessionId);
-  };
-
-  const submitPlanningProposal = async (
-    begin: Extract<HostToAgentMessage, { type: "program.planning.begin" }>,
-  ): Promise<void> => {
-    const result = await protocol.submitProgramProposal({
-      sessionId: begin.sessionId,
-      planningEpisodeId: begin.planningEpisodeId,
-      proposal: {
-        objective: begin.objective,
-        workItems: [{
-          workItemId: "work-1",
-          creationOrder: 0,
-          description: begin.objective,
-          dependencyIds: [],
-          affectedPaths: [],
-        }],
-        verification: [],
-        outputSlots: [],
-        productionSteps: [],
-      },
-    });
-    if (result.outcome !== "sealed") {
-      throw new Error(`Program proposal was not sealed: ${result.outcome}${result.error ? ` (${result.error})` : ""}`);
-    }
-  };
-
-  const submitAwaitingVerification = async (
-    activeSessionId: string,
-    authority: ProgramAttemptProjectionV1["authority"],
-  ): Promise<void> => {
-    const result = await protocol.submitProgramProgress({
-      sessionId: activeSessionId,
-      authority,
-      evidence: [],
-      advisoryBlockers: [],
-      requestAwaitingVerification: true,
-    });
-    if (result.outcome !== "admitted") {
-      throw new Error(`Program progress was not admitted: ${result.outcome}${result.error ? ` (${result.error})` : ""}`);
-    }
   };
 
   await protocol.announceHello(generationId, [
@@ -170,53 +98,49 @@ async function main(): Promise<void> {
 
   const runInput = async (text: string, timestamp?: number): Promise<void> => {
     if (!sessionId || !context) throw new Error("Agent received input before session/context bootstrap");
-    if (context.verbatim?.status === "incomplete") throw new Error(`context incomplete: unresolved tool calls ${context.verbatim.pendingToolCallIds.join(", ")}`);
+    if (context.verbatim?.status === "incomplete") {
+      throw new Error(`context incomplete: unresolved tool calls ${context.verbatim.pendingToolCallIds.join(", ")}`);
+    }
     const localSessionId = sessionId;
     const localContext = context;
     const runAbortController = abortController;
-    let latestProgramAttempt: ProgramAttemptProjectionV1 | undefined;
-    const programProgressExtension: AgentExtension = {
-      name: "program-progress-v1",
-      register(ctx) {
-        ctx.onEvent(async (event) => {
-          if (event.type !== "agent_end" || latestProgramAttempt === undefined) return;
-          await submitAwaitingVerification(localSessionId, latestProgramAttempt.authority);
-        });
-      },
-    };
+    let latestProgramAttemptAuthority: ProgramAttemptProjectionV1["authority"] | undefined;
+    const composition = runCompositionFactory.create({
+      sessionId: localSessionId,
+      context: localContext,
+      latestProgramAttemptAuthority: () => latestProgramAttemptAuthority,
+    });
     const extensionHost = new StaticExtensionHost();
-    await extensionHost.mount([
-      programProgressExtension,
-      createCognitionExtension({ client: protocol, sessionId: () => localSessionId, toolNames: localContext.toolNames, durableTranscript: localContext.verbatim !== undefined }),
-    ]);
-    const provider = createProvider();
+    await extensionHost.mount(composition.extensions);
     try {
       const completeHistory = await runAgentLoop(text, {
         systemPrompt: localContext.systemPrompt,
-        provider,
+        provider: composition.provider,
         tools: extensionHost.getTools(),
         emit: (event) => extensionHost.emit(event),
         signal: runAbortController.signal,
         initialMessages: history,
         ...(localContext.verbatim !== undefined
-          ? { beforeInference: async () => {
-              const refreshed = await requestInferenceContext(protocol, localSessionId, runAbortController.signal);
-              latestProgramAttempt = refreshed.programAttempt;
-              return {
-                systemPrompt: renderProgramAttempt(refreshed.systemPrompt, refreshed.programAttempt),
-                messages: refreshed.messages,
-                ...(refreshed.toolCatalog !== undefined
-                  ? {
-                      tools: toolsFromCatalog(
-                        refreshed.toolCatalog,
-                        protocol,
-                        localSessionId,
-                        refreshed.programAttempt?.authority,
-                      ),
-                    }
-                  : {}),
-              };
-            } }
+          ? {
+              beforeInference: async () => {
+                const refreshed = await requestInferenceContext(protocol, localSessionId, runAbortController.signal);
+                latestProgramAttemptAuthority = refreshed.programAttempt?.authority;
+                return {
+                  systemPrompt: renderProgramAttempt(refreshed.systemPrompt, refreshed.programAttempt),
+                  messages: refreshed.messages,
+                  ...(refreshed.toolCatalog !== undefined
+                    ? {
+                        tools: toolsFromCatalog(
+                          refreshed.toolCatalog,
+                          protocol,
+                          localSessionId,
+                          refreshed.programAttempt?.authority,
+                        ),
+                      }
+                    : {}),
+                };
+              },
+            }
           : {}),
         ...(timestamp !== undefined ? { promptTimestamp: timestamp } : {}),
       });
@@ -229,7 +153,9 @@ async function main(): Promise<void> {
   protocol.onHostMessage((message: HostToAgentMessage) => {
     switch (message.type) {
       case "host.hello":
-        if (message.protocolVersion !== AGENT_PROTOCOL_VERSION) throw new Error(`Host protocol version ${message.protocolVersion} is incompatible`);
+        if (message.protocolVersion !== AGENT_PROTOCOL_VERSION) {
+          throw new Error(`Host protocol version ${message.protocolVersion} is incompatible`);
+        }
         break;
       case "session.open":
       case "session.resume":
@@ -240,14 +166,19 @@ async function main(): Promise<void> {
         history = message.verbatim ? structuredClone(message.verbatim.messages) as Message[] : [];
         break;
       case "program.planning.begin":
-        void submitPlanningProposal(message).catch((error) => reportError(error instanceof Error ? error.message : String(error), message.sessionId));
+        void programBehavior.submitPlanningProposal(message).catch((error) => {
+          return reportError(error instanceof Error ? error.message : String(error), message.sessionId);
+        });
         break;
       case "input.admitted":
         if (message.sessionId !== sessionId) throw new Error("input.admitted session mismatch");
         runChain = runChain.then(() => runInput(message.text, message.timestamp));
         break;
       case "cancel":
-        if (message.sessionId === sessionId) { abortController.abort(message.reason); abortController = new AbortController(); }
+        if (message.sessionId === sessionId) {
+          abortController.abort(message.reason);
+          abortController = new AbortController();
+        }
         break;
       case "shutdown":
         abortController.abort(message.reason);
@@ -266,6 +197,14 @@ async function main(): Promise<void> {
 
 main().catch((error) => {
   try {
-    if (typeof process.send === "function") process.send({ type: "agent.error", requestId: randomUUID(), message: error instanceof Error ? error.message : String(error) });
-  } finally { process.exit(1); }
+    if (typeof process.send === "function") {
+      process.send({
+        type: "agent.error",
+        requestId: randomUUID(),
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  } finally {
+    process.exit(1);
+  }
 });
