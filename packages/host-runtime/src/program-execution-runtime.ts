@@ -4,6 +4,7 @@ import {
   PROGRAM_STATE_CAPABILITY,
   type ProgramPlanningBegin,
 } from "@alcode/agent-protocol";
+import { uuidv7 } from "@alcode/events";
 import type { WorkspaceEventStore } from "@alcode/storage";
 import type { AgentConnection } from "./agent-supervisor.ts";
 import type { ApplicationAgentControl } from "./application-service.ts";
@@ -23,6 +24,7 @@ import {
   type ProgramCreationPolicySourceV1,
 } from "./program-creation.ts";
 import { HostProgramApplicationControlV1 } from "./program-application.ts";
+import { ProgramExecutionControlV1 } from "./program-execution-control.ts";
 import {
   ProgramExecutionApplicationPortV1,
   ProgramExecutionSchedulerV1,
@@ -98,6 +100,7 @@ export class ProgramExecutionRuntimeV1 {
   readonly scheduler: ProgramExecutionSchedulerV1;
   readonly verification: ProgramVerificationServiceV1;
   readonly terminal: ProgramTerminalServiceV1;
+  readonly executionControl: ProgramExecutionControlV1;
   readonly application: HostProgramApplicationControlV1;
   readonly productApplication: ProgramExecutionApplicationPortV1;
   private readonly store: WorkspaceEventStore;
@@ -185,6 +188,15 @@ export class ProgramExecutionRuntimeV1 {
       artifactStore: options.artifactStore,
     });
 
+    this.executionControl = new ProgramExecutionControlV1({
+      store: this.store,
+      admission: this.host.admission,
+      verification: this.verification,
+      scheduler: this.scheduler,
+      terminal: this.terminal,
+      agents: executionAgents,
+    });
+
     this.application = new HostProgramApplicationControlV1({
       store: this.store,
       admission: this.host.admission,
@@ -193,6 +205,59 @@ export class ProgramExecutionRuntimeV1 {
       terminal: this.terminal,
     });
     this.productApplication = new ProgramExecutionApplicationPortV1(this.application, this.scheduler);
+  }
+
+  private hostConnectionWithoutProgramIdle(connection: AgentConnection): AgentConnection {
+    const transport = connection.transport;
+    return {
+      ...connection,
+      transport: {
+        send: (message) => transport.send(message),
+        onMessage: (handler) => transport.onMessage((message) => {
+          if (message.type === "agent.idle") return;
+          return handler(message);
+        }),
+        close: () => transport.close(),
+      },
+    };
+  }
+
+  private async handleProgramAgentIdle(
+    connection: AgentConnection,
+    session: HostSessionHandle,
+  ): Promise<void> {
+    const decision = await this.executionControl.handleAgentIdle({
+      connectionGenerationId: connection.generationId,
+      sessionId: session.sessionId,
+    });
+    if (decision.status === "not_program") {
+      const completion = await this.host.assessAndComplete(session.sessionId, true);
+      if (completion.completed) {
+        try {
+          await connection.transport.send({
+            type: "shutdown",
+            requestId: uuidv7(),
+            sessionId: String(session.sessionId),
+            reason: "completed",
+          });
+        } catch {}
+      }
+      return;
+    }
+    if (decision.terminal === "none") return;
+
+    const sessionState = await this.host.sessions.getState(session.sessionId);
+    if (sessionState.started && !sessionState.stopped) {
+      await this.host.sessions.stop(session.sessionId, decision.terminal);
+    }
+    try {
+      await connection.transport.send({
+        type: "shutdown",
+        requestId: uuidv7(),
+        sessionId: String(session.sessionId),
+        reason: decision.terminal,
+      });
+    } catch {}
   }
 
   async attachAgent(
@@ -210,7 +275,10 @@ export class ProgramExecutionRuntimeV1 {
       );
     }
 
-    const attached = await this.host.attachAgent(connection, session, systemPrompt, resumeReason);
+    const hostConnection = programExecutionCapable
+      ? this.hostConnectionWithoutProgramIdle(connection)
+      : connection;
+    const attached = await this.host.attachAgent(hostConnection, session, systemPrompt, resumeReason);
     const sessionId = String(session.sessionId);
     this.currentPlanningConnections.delete(sessionId);
     if (!programExecutionCapable) return attached;
@@ -223,6 +291,10 @@ export class ProgramExecutionRuntimeV1 {
     this.currentPlanningConnections.set(sessionId, connection.generationId);
 
     const unsubscribeProgramExecution = connection.transport.onMessage(async (message) => {
+      if (message.type === "agent.idle") {
+        await this.handleProgramAgentIdle(connection, session);
+        return;
+      }
       const planningResponse = await this.planning.handleAgentMessage({
         connectionGenerationId: connection.generationId,
         agentGeneration,
