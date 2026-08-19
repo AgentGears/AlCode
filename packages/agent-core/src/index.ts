@@ -1,4 +1,4 @@
-// @alcode/agent-core — ALCODE-owned agent loop, contracts, and extension host.
+// @alcode/agent-core — ALCODE-owned agent loop, contracts, scoped runtime, and extension host.
 //
 // The agent loop semantics are derived from pi v0.81.1 (see ./imported/ for
 // the verified reference slice and docs/provenance/pi.md for provenance), but
@@ -31,6 +31,27 @@ export type {
 } from "./contracts.ts";
 
 export { runAgentLoop, type AgentLoopOptions, type InferenceContext } from "./agent-loop.ts";
+
+export {
+  AgentRuntime,
+  AgentRuntimeMountError,
+  DuplicateRuntimeModuleError,
+  DuplicateServiceBindingError,
+  ScopeDisposalError,
+  ScopeNotOpenError,
+  ServiceNotFoundError,
+  createServiceToken,
+  type AgentRuntimeConfig,
+  type ChildScopeKind,
+  type Disposer,
+  type Registration,
+  type RuntimeModule,
+  type RuntimeScope,
+  type ScopeAdmission,
+  type ScopeKind,
+  type ScopeState,
+  type ServiceToken,
+} from "./runtime-scope.ts";
 
 export {
   type ExtensionContext,
