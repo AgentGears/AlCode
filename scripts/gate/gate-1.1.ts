@@ -10,6 +10,7 @@ function check(id: string, run: () => void, evidence: string): GateCheck {
   catch (error) { return { id, status: "failed", evidence: error instanceof Error ? error.message : String(error) }; }
 }
 const vitest = (...paths: string[]) => command("exec", "vitest", "run", ...paths);
+const vitestMatching = (pattern: string, ...paths: string[]) => command("exec", "vitest", "run", ...paths, "-t", pattern);
 const checks: GateCheck[] = [];
 
 checks.push(check("1.1.compose.1.0", () => command("gate:1.0"), "exact closed Phase 1.0 gate passed"));
@@ -29,14 +30,17 @@ checks.push(check("1.1.ac11-04.attempt-execution", () => vitest(
   "packages/host-runtime/src/program-operation-correlation.test.ts",
   "packages/coding-agent/src/host-capabilities.program.test.ts",
 ), "current inference-bound ProgramAttempt authority is required for Host capability execution and mutating owned tools prove exact quiescence"));
-checks.push(check("1.1.ac11-05.progress-verification", () => vitest(
-  "packages/host-runtime/src/program-progress.test.ts",
-  "packages/host-runtime/src/program-execution-control.test.ts",
-), "bounded progress proposal, Host verification, work completion, and deterministic successor dispatch"));
+checks.push(check("1.1.ac11-05.progress-verification", () => {
+  vitest("packages/host-runtime/src/program-progress.test.ts");
+  vitestMatching(
+    "satisfies current verification|turns verification failure|dispatches the deterministic successor",
+    "packages/host-runtime/src/program-execution-control.test.ts",
+  );
+}, "bounded progress proposal, Host verification, work completion, retry state, and deterministic successor dispatch"));
 checks.push(check("1.1.ac11-06.terminal-authority", () => vitest(
-  "packages/host-runtime/src/program-execution-control.test.ts",
+  "packages/host-runtime/src/program-idle-routing.integration.test.ts",
   "packages/host-runtime/src/program-terminal.test.ts",
-), "Program-backed idle cannot bypass verification or Completion Oracle terminal authority"));
+), "Program-backed idle cannot fall through to legacy Session completion and only Completion Oracle owns successful terminalization"));
 checks.push(check("1.1.ac11-07.product-recovery", () => vitest(
   "packages/host-runtime/src/program-product-restart.integration.test.ts",
   "packages/host-runtime/src/program-application.test.ts",
@@ -51,7 +55,7 @@ checks.push(check("1.1.scenarios.B-F", () => vitest(
   "packages/host-runtime/src/program-recovery.test.ts",
   "packages/coding-agent/src/agent-replacement.integration.test.ts",
   "packages/host-runtime/src/program-dispatch.test.ts",
-  "packages/host-runtime/src/program-execution-control.test.ts",
+  "packages/host-runtime/src/program-verification.test.ts",
   "packages/host-runtime/src/program-terminal.test.ts",
 ), "required Host crash/recovery, Agent replacement, divergence/rebase, verification failure/retry, and cancellation/terminal race scenarios"));
 checks.push(check("1.1.ownership", () => {
