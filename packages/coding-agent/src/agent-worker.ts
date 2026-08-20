@@ -7,7 +7,6 @@ import {
   AgentRuntime,
   runAgentLoop,
   StaticExtensionHost,
-  type AgentTool,
   type Message,
 } from "@alcode/agent-core";
 import {
@@ -19,40 +18,19 @@ import {
   PROGRAM_STATE_CAPABILITY,
   type ContextProvide,
   type HostToAgentMessage,
-  type InferenceToolCatalog,
   type ProgramAttemptProjectionV1,
 } from "@alcode/agent-protocol";
-import {
-  createProtocolProxyTool,
-  type CognitionHostClient,
-} from "@alcode/cognition-extension";
 import { createProcessAgentProtocolBridge } from "./agent-protocol-bridge.ts";
 import {
   AGENT_PROGRAM_BEHAVIOR,
   AGENT_RUN_COMPOSITION_FACTORY,
   createDefaultAgentRuntimeModules,
 } from "./agent-runtime-profile.ts";
+import {
+  createInferenceCapabilityProjection,
+  type InferenceCapabilityProjection,
+} from "./inference-runtime.ts";
 import { requestInferenceContext } from "./inference-context.ts";
-
-function toolsFromCatalog(
-  catalog: InferenceToolCatalog,
-  client: Pick<CognitionHostClient, "requestCapability">,
-  sessionId: string,
-  programAttemptAuthority?: ProgramAttemptProjectionV1["authority"],
-): AgentTool[] {
-  return catalog.tools.map((descriptor) => createProtocolProxyTool({
-    name: descriptor.definition.name,
-    description: descriptor.definition.description,
-    inputSchema: descriptor.definition.inputSchema,
-    ...(descriptor.isReadOnly !== undefined ? { isReadOnly: descriptor.isReadOnly } : {}),
-    ...(descriptor.binding.kind === "dynamic" ? { expectedCapabilityRevision: descriptor.binding.revision } : {}),
-    ...(programAttemptAuthority !== undefined
-      ? { programAttemptAuthority: structuredClone(programAttemptAuthority) }
-      : {}),
-    sessionId: () => sessionId,
-    client,
-  }));
-}
 
 function renderProgramAttempt(
   systemPrompt: string,
@@ -105,6 +83,12 @@ async function main(): Promise<void> {
     const localContext = context;
     const runAbortController = abortController;
     let latestProgramAttemptAuthority: ProgramAttemptProjectionV1["authority"] | undefined;
+    let activeInferenceProjection: InferenceCapabilityProjection | null = null;
+    const disposeActiveInferenceScope = async (): Promise<void> => {
+      const projection = activeInferenceProjection;
+      activeInferenceProjection = null;
+      if (projection !== null) await projection.dispose();
+    };
     const composition = runCompositionFactory.create({
       sessionId: localSessionId,
       context: localContext,
@@ -123,23 +107,26 @@ async function main(): Promise<void> {
         ...(localContext.verbatim !== undefined
           ? {
               beforeInference: async () => {
+                // Defensive closure keeps at most one live inference scope even
+                // if a future loop implementation skips the lifecycle callback.
+                await disposeActiveInferenceScope();
                 const refreshed = await requestInferenceContext(protocol, localSessionId, runAbortController.signal);
                 latestProgramAttemptAuthority = refreshed.programAttempt?.authority;
+                const projection = createInferenceCapabilityProjection({
+                  runtime,
+                  client: protocol,
+                  sessionId: localSessionId,
+                  catalog: refreshed.toolCatalog,
+                  programAttemptAuthority: refreshed.programAttempt?.authority,
+                });
+                activeInferenceProjection = projection;
                 return {
                   systemPrompt: renderProgramAttempt(refreshed.systemPrompt, refreshed.programAttempt),
                   messages: refreshed.messages,
-                  ...(refreshed.toolCatalog !== undefined
-                    ? {
-                        tools: toolsFromCatalog(
-                          refreshed.toolCatalog,
-                          protocol,
-                          localSessionId,
-                          refreshed.programAttempt?.authority,
-                        ),
-                      }
-                    : {}),
+                  ...(projection.tools !== undefined ? { tools: [...projection.tools] } : {}),
                 };
               },
+              afterInference: disposeActiveInferenceScope,
             }
           : {}),
         ...(timestamp !== undefined ? { promptTimestamp: timestamp } : {}),
@@ -147,6 +134,19 @@ async function main(): Promise<void> {
       history = completeHistory as Message[];
     } catch (error) {
       await reportError(error instanceof Error ? error.message : String(error), localSessionId);
+    } finally {
+      try {
+        await disposeActiveInferenceScope();
+      } catch (error) {
+        try {
+          await reportError(
+            `Inference scope disposal failed: ${error instanceof Error ? error.message : String(error)}`,
+            localSessionId,
+          );
+        } catch {
+          // The Host may already be closing the generation protocol.
+        }
+      }
     }
   };
 

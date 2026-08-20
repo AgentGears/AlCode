@@ -33,8 +33,15 @@ describe("Phase 0.5 ownership boundaries", () => {
     expect(text).toContain("@alcode/agent-protocol");
   });
 
-  it("keeps the replaceable Agent worker free of Host/store/workspace semantic authority", () => {
-    const worker = readFileSync(join(repoRoot, "packages/coding-agent/src/agent-worker.ts"), "utf8");
+  it("keeps the replaceable Agent composition path free of Host/store/workspace semantic authority", () => {
+    const codingAgentDir = join(repoRoot, "packages/coding-agent/src");
+    const worker = readFileSync(join(codingAgentDir, "agent-worker.ts"), "utf8");
+    const compositionFiles = [
+      join(codingAgentDir, "agent-worker.ts"),
+      join(codingAgentDir, "agent-runtime-profile.ts"),
+      join(codingAgentDir, "inference-runtime.ts"),
+    ];
+    const composition = combined(compositionFiles);
     for (const forbidden of [
       "@alcode/host-runtime",
       "@alcode/storage",
@@ -44,10 +51,15 @@ describe("Phase 0.5 ownership boundaries", () => {
       "better-sqlite3",
       "openLockedWorkspaceStore",
     ]) {
-      expect(worker).not.toContain(forbidden);
+      expect(composition).not.toContain(forbidden);
     }
     expect(worker).toContain("@alcode/agent-protocol");
-    expect(worker).toContain("@alcode/cognition-extension");
+    // S-01C/S-01D deliberately delegate cognition and inference capability
+    // composition out of the worker while retaining the same thin extension
+    // boundary inside the replaceable Agent process.
+    expect(worker).toContain("./agent-runtime-profile.ts");
+    expect(worker).toContain("./inference-runtime.ts");
+    expect(composition).toContain("@alcode/cognition-extension");
   });
 
   it("does not introduce Phase 0.6/0.7 context compilers into Phase 0.5 cognition surfaces", () => {
