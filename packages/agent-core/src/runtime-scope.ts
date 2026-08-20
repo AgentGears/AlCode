@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 
 export type ScopeState = "open" | "closing" | "closed";
-export type ScopeKind = "agent_generation" | "inference";
-export type ChildScopeKind = "inference";
+export type ScopeKind = "agent_generation" | "agent_run" | "inference";
+export type ChildScopeKind = "agent_run" | "inference";
 export type Disposer = () => void | Promise<void>;
 
 export interface ServiceToken<T> {
@@ -384,6 +384,10 @@ export class AgentRuntime {
     }
 
     return new AgentRuntime(generationId, root, mounted);
+  }
+
+  createRunScope(): RuntimeScope {
+    return this.rootScope.child("agent_run");
   }
 
   createInferenceScope(): RuntimeScope {

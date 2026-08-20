@@ -1,0 +1,46 @@
+name: S-01E Agent Generation Closure
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  generation-closure:
+    name: Scoped Agent behavior and replacement closure
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.17.0"
+          cache: pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck S-01E boundaries
+        run: |
+          pnpm --filter @alcode/agent-core typecheck
+          pnpm --filter @alcode/cognition-extension typecheck
+          pnpm --filter @alcode/coding-agent typecheck
+          pnpm --filter @alcode/host-runtime typecheck
+      - name: Verify scoped behavior, generation closure, and Host continuity
+        run: >-
+          pnpm exec vitest run
+          packages/agent-core/src/runtime-scope.test.ts
+          packages/agent-core/src/agent-behavior.test.ts
+          packages/agent-core/src/inference-lifecycle.test.ts
+          packages/coding-agent/src/agent-runtime-profile.test.ts
+          packages/coding-agent/src/agent-generation-closure.test.ts
+          packages/coding-agent/src/inference-runtime.test.ts
+          packages/coding-agent/src/agent-replacement.integration.test.ts

@@ -6,7 +6,6 @@ import { randomUUID } from "node:crypto";
 import {
   AgentRuntime,
   runAgentLoop,
-  StaticExtensionHost,
   type Message,
 } from "@alcode/agent-core";
 import {
@@ -25,6 +24,7 @@ import {
   AGENT_PROGRAM_BEHAVIOR,
   AGENT_RUN_COMPOSITION_FACTORY,
   createDefaultAgentRuntimeModules,
+  type AgentRunComposition,
 } from "./agent-runtime-profile.ts";
 import {
   createInferenceCapabilityProjection,
@@ -84,24 +84,24 @@ async function main(): Promise<void> {
     const runAbortController = abortController;
     let latestProgramAttemptAuthority: ProgramAttemptProjectionV1["authority"] | undefined;
     let activeInferenceProjection: InferenceCapabilityProjection | null = null;
+    let composition: AgentRunComposition | null = null;
     const disposeActiveInferenceScope = async (): Promise<void> => {
       const projection = activeInferenceProjection;
       activeInferenceProjection = null;
       if (projection !== null) await projection.dispose();
     };
-    const composition = runCompositionFactory.create({
-      sessionId: localSessionId,
-      context: localContext,
-      latestProgramAttemptAuthority: () => latestProgramAttemptAuthority,
-    });
-    const extensionHost = new StaticExtensionHost();
-    await extensionHost.mount(composition.extensions);
+
     try {
+      composition = await runCompositionFactory.create({
+        sessionId: localSessionId,
+        context: localContext,
+        latestProgramAttemptAuthority: () => latestProgramAttemptAuthority,
+      });
       const completeHistory = await runAgentLoop(text, {
         systemPrompt: localContext.systemPrompt,
         provider: composition.provider,
-        tools: extensionHost.getTools(),
-        emit: (event) => extensionHost.emit(event),
+        tools: [...composition.tools],
+        emit: (event) => composition!.emit(event),
         signal: runAbortController.signal,
         initialMessages: history,
         ...(localContext.verbatim !== undefined
@@ -145,6 +145,20 @@ async function main(): Promise<void> {
           );
         } catch {
           // The Host may already be closing the generation protocol.
+        }
+      }
+      if (composition !== null) {
+        try {
+          await composition.dispose();
+        } catch (error) {
+          try {
+            await reportError(
+              `Agent run scope disposal failed: ${error instanceof Error ? error.message : String(error)}`,
+              localSessionId,
+            );
+          } catch {
+            // The Host may already be closing the generation protocol.
+          }
         }
       }
     }

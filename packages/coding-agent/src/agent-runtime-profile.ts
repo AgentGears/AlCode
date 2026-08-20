@@ -1,6 +1,9 @@
 import {
+  ScopedAgentBehavior,
   createServiceToken,
-  type AgentExtension,
+  type AgentBehaviorContribution,
+  type AgentEvent,
+  type AgentTool,
   type ModelEvent,
   type ModelProvider,
   type ModelRequest,
@@ -90,15 +93,17 @@ export interface AgentProgramBehavior {
   submitPlanningProposal(
     begin: Extract<HostToAgentMessage, { type: "program.planning.begin" }>,
   ): Promise<void>;
-  createProgressExtension(options: {
+  createProgressContribution(options: {
     sessionId: string;
     latestProgramAttemptAuthority: () => ProgramAttemptProjectionV1["authority"] | undefined;
-  }): AgentExtension;
+  }): AgentBehaviorContribution;
 }
 
 export interface AgentRunComposition {
-  provider: ModelProvider;
-  extensions: readonly AgentExtension[];
+  readonly provider: ModelProvider;
+  readonly tools: readonly AgentTool[];
+  emit(event: AgentEvent): Promise<void>;
+  dispose(): Promise<void>;
 }
 
 export interface AgentRunCompositionFactory {
@@ -106,7 +111,17 @@ export interface AgentRunCompositionFactory {
     sessionId: string;
     context: ContextProvide;
     latestProgramAttemptAuthority: () => ProgramAttemptProjectionV1["authority"] | undefined;
-  }): AgentRunComposition;
+  }): Promise<AgentRunComposition>;
+}
+
+export class AgentRunCompositionMountError extends Error {
+  constructor(
+    cause: unknown,
+    readonly cleanupError?: unknown,
+  ) {
+    super("Agent run composition failed to mount", { cause });
+    this.name = "AgentRunCompositionMountError";
+  }
 }
 
 export const AGENT_PROVIDER_FACTORY = createServiceToken<AgentProviderFactory>(
@@ -189,7 +204,7 @@ function createProgramBehaviorModule(
           }
         },
 
-        createProgressExtension(options) {
+        createProgressContribution(options) {
           return {
             name: "program-progress-v1",
             register(context) {
@@ -228,11 +243,21 @@ function createRunCompositionModule(
       const providerFactory = scope.resolve(AGENT_PROVIDER_FACTORY);
       const programBehavior = scope.resolve(AGENT_PROGRAM_BEHAVIOR);
       const compositionFactory: AgentRunCompositionFactory = {
-        create(options) {
-          return {
-            provider: providerFactory.create(),
-            extensions: [
-              programBehavior.createProgressExtension({
+        async create(options) {
+          const runScope = scope.child("agent_run");
+          const runAdmission = runScope.admit();
+          const behavior = new ScopedAgentBehavior(runScope);
+          let disposalPromise: Promise<void> | null = null;
+          const dispose = (): Promise<void> => {
+            if (disposalPromise !== null) return disposalPromise;
+            runAdmission.release();
+            disposalPromise = runScope.dispose();
+            return disposalPromise;
+          };
+
+          try {
+            await behavior.mount([
+              programBehavior.createProgressContribution({
                 sessionId: options.sessionId,
                 latestProgramAttemptAuthority: options.latestProgramAttemptAuthority,
               }),
@@ -242,8 +267,24 @@ function createRunCompositionModule(
                 toolNames: options.context.toolNames,
                 durableTranscript: options.context.verbatim !== undefined,
               }),
-            ],
-          };
+            ]);
+            const tools = behavior.getTools();
+            const provider = providerFactory.create();
+            return {
+              provider,
+              tools,
+              emit: (event) => behavior.emit(event),
+              dispose,
+            };
+          } catch (error) {
+            let cleanupError: unknown | undefined;
+            try {
+              await dispose();
+            } catch (cleanupFailure) {
+              cleanupError = cleanupFailure;
+            }
+            throw new AgentRunCompositionMountError(error, cleanupError);
+          }
         },
       };
       scope.provide(AGENT_RUN_COMPOSITION_FACTORY, compositionFactory);
@@ -252,8 +293,9 @@ function createRunCompositionModule(
 }
 
 /**
- * Statically bundled S-01C profile. It composes Agent-local behavior only;
- * canonical execution authority remains behind the privileged Host protocol.
+ * Statically bundled S-01 runtime profile. It composes Agent-local behavior
+ * only; canonical execution authority remains behind the privileged Host
+ * protocol. S-01E gives every run-local contribution an AgentRunScope owner.
  */
 export function createDefaultAgentRuntimeModules(
   options: DefaultAgentRuntimeProfileOptions,
