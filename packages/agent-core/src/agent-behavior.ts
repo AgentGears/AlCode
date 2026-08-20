@@ -23,8 +23,11 @@ export interface AgentBehaviorContribution {
 }
 
 export class AgentBehaviorContributionDisposedError extends Error {
-  constructor(readonly contributionKind: "tool" | "event", readonly name: string) {
-    super(`${contributionKind} contribution ${name} is disposed`);
+  constructor(
+    readonly contributionKind: "tool" | "event",
+    readonly contributionName: string,
+  ) {
+    super(`${contributionKind} contribution ${contributionName} is disposed`);
     this.name = "AgentBehaviorContributionDisposedError";
   }
 }
