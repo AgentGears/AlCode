@@ -1,11 +1,12 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  AgentRuntime,
+  ScopedAgentBehavior,
   runAgentLoop,
-  StaticExtensionHost,
-  type AgentExtension,
+  type AgentBehaviorContribution,
   type AgentEvent,
 } from "@alcode/agent-core";
 import { TestModelProvider, createBashTool } from "./index.ts";
@@ -37,11 +38,13 @@ describe("alcode -p \"hello\" (offline provider)", () => {
   });
 });
 
-describe("StaticExtensionHost", () => {
-  it("mounts an extension that registers a tool", async () => {
-    const host = new StaticExtensionHost();
-    const ext: AgentExtension = {
-      name: "test-ext",
+describe("ScopedAgentBehavior", () => {
+  it("mounts a contribution that registers a tool", async () => {
+    const runtime = await AgentRuntime.create({ generationId: "coding-agent-test-tool" });
+    const runScope = runtime.createRunScope();
+    const behavior = new ScopedAgentBehavior(runScope);
+    const contribution: AgentBehaviorContribution = {
+      name: "test-contribution",
       register(ctx) {
         ctx.registerTool({
           name: "echo",
@@ -56,32 +59,38 @@ describe("StaticExtensionHost", () => {
         });
       },
     };
-    await host.mount([ext]);
-    expect(host.getTools().length).toBe(1);
-    expect(host.getTools()[0]!.name).toBe("echo");
+    await behavior.mount([contribution]);
+    expect(behavior.getTools().length).toBe(1);
+    expect(behavior.getTools()[0]!.name).toBe("echo");
+    await runScope.dispose();
+    await runtime.dispose();
   });
 
-  it("mounts an extension that observes a lifecycle hook", async () => {
-    const host = new StaticExtensionHost();
+  it("mounts a contribution that observes lifecycle hooks", async () => {
+    const runtime = await AgentRuntime.create({ generationId: "coding-agent-test-events" });
+    const runScope = runtime.createRunScope();
+    const behavior = new ScopedAgentBehavior(runScope);
     const observed: AgentEvent[] = [];
-    const ext: AgentExtension = {
+    const contribution: AgentBehaviorContribution = {
       name: "observer",
       register(ctx) {
         ctx.onEvent((event) => { observed.push(event); });
       },
     };
-    await host.mount([ext]);
+    await behavior.mount([contribution]);
 
     const provider = new TestModelProvider([{ match: "*", text: "ok" }]);
     await runAgentLoop("test", {
       systemPrompt: "",
       provider,
       tools: [],
-      emit: (event) => host.emit(event),
+      emit: (event) => behavior.emit(event),
     });
 
     expect(observed.some((e) => e.type === "agent_start")).toBe(true);
     expect(observed.some((e) => e.type === "agent_end")).toBe(true);
+    await runScope.dispose();
+    await runtime.dispose();
   });
 });
 
@@ -149,7 +158,7 @@ describe("bash tool (controlled execution in disposable repo)", () => {
   });
 });
 
-describe("end-to-end: agent loop + extension + bash + offline provider", () => {
+describe("end-to-end: agent loop + scoped behavior + bash + offline provider", () => {
   let scratch: string;
 
   beforeEach(() => {
@@ -160,15 +169,17 @@ describe("end-to-end: agent loop + extension + bash + offline provider", () => {
     rmSync(scratch, { recursive: true, force: true });
   });
 
-  it("agent calls bash via extension and gets the result", async () => {
-    const host = new StaticExtensionHost();
-    const bashExt: AgentExtension = {
+  it("agent calls bash via scoped behavior and gets the result", async () => {
+    const runtime = await AgentRuntime.create({ generationId: "coding-agent-test-e2e" });
+    const runScope = runtime.createRunScope();
+    const behavior = new ScopedAgentBehavior(runScope);
+    const bashContribution: AgentBehaviorContribution = {
       name: "bash-tool",
       register(ctx) {
         ctx.registerTool(createBashTool({ workingDirectory: scratch }));
       },
     };
-    await host.mount([bashExt]);
+    await behavior.mount([bashContribution]);
 
     // Provider scripts: first turn, emit a bash tool call; second turn, just text.
     const provider = new TestModelProvider([
@@ -184,10 +195,10 @@ describe("end-to-end: agent loop + extension + bash + offline provider", () => {
     const messages = await runAgentLoop("run echo", {
       systemPrompt: "",
       provider,
-      tools: host.getTools(),
+      tools: behavior.getTools(),
       emit(event) {
         events.push(event);
-        return host.emit(event);
+        return behavior.emit(event);
       },
     });
 
@@ -200,7 +211,13 @@ describe("end-to-end: agent loop + extension + bash + offline provider", () => {
     }
 
     // The transcript includes the tool result.
-    const toolResults = messages.filter((m) => "role" in m && (m as { role: string }).role === "toolResult" || (m as { type?: string }).type === "toolResult");
+    const toolResults = messages.filter((m) =>
+      ("role" in m && (m as { role: string }).role === "toolResult")
+      || (m as { type?: string }).type === "toolResult",
+    );
     expect(toolResults.length).toBeGreaterThanOrEqual(1);
+
+    await runScope.dispose();
+    await runtime.dispose();
   });
 });
