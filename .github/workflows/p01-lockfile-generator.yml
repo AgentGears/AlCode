@@ -1,0 +1,37 @@
+name: P-01 lockfile generator
+
+on:
+  pull_request:
+    paths:
+      - "packages/coding-agent/package.json"
+      - ".github/workflows/p01-lockfile-generator.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  generate-lock-blob:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.22.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.20.0
+      - name: Generate exact workspace lockfile
+        run: pnpm install --lockfile-only --no-frozen-lockfile
+      - name: Publish generated lockfile as Git blob
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import base64, json
+          from pathlib import Path
+          content = base64.b64encode(Path("pnpm-lock.yaml").read_bytes()).decode("ascii")
+          Path("/tmp/blob.json").write_text(json.dumps({"content": content, "encoding": "base64"}))
+          PY
+          LOCK_BLOB_SHA="$(gh api --method POST "repos/${GITHUB_REPOSITORY}/git/blobs" --input /tmp/blob.json --jq .sha)"
+          echo "P01_LOCK_BLOB_SHA=${LOCK_BLOB_SHA}"
