@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   AgentRuntime,
-  StaticExtensionHost,
+  ScopeNotOpenError,
   type ModelProvider,
   type ModelStream,
 } from "@alcode/agent-core";
@@ -15,6 +15,7 @@ import {
 import {
   AGENT_PROGRAM_BEHAVIOR,
   AGENT_RUN_COMPOSITION_FACTORY,
+  AgentRunCompositionMountError,
   createDefaultAgentRuntimeModules,
   type DefaultAgentRuntimeProfileOptions,
 } from "./agent-runtime-profile.ts";
@@ -37,6 +38,7 @@ function createRecordingProtocol() {
   const assistants: unknown[] = [];
   const toolResults: unknown[] = [];
   const idle: unknown[] = [];
+  const capabilities: unknown[] = [];
   let closeCalls = 0;
 
   const protocol: DefaultAgentRuntimeProfileOptions["protocol"] = {
@@ -65,6 +67,7 @@ function createRecordingProtocol() {
       };
     },
     async requestCapability(request) {
+      capabilities.push(structuredClone(request));
       return {
         type: "capability.result",
         requestId: "capability-result",
@@ -92,6 +95,7 @@ function createRecordingProtocol() {
     assistants,
     toolResults,
     idle,
+    capabilities,
     closeCalls: () => closeCalls,
   };
 }
@@ -115,8 +119,8 @@ function durableContext(): ContextProvide {
   };
 }
 
-describe("S-01C default Agent runtime profile", () => {
-  it("composes provider, cognition, and Program behavior without changing wire semantics", async () => {
+describe("S-01E default Agent runtime profile", () => {
+  it("preserves cognition and Program wire semantics on the scoped run path", async () => {
     const recording = createRecordingProtocol();
     const provider: ModelProvider = {
       async stream() {
@@ -173,18 +177,15 @@ describe("S-01C default Agent runtime profile", () => {
       agentGeneration: 3,
     };
     const runCompositionFactory = runtime.rootScope.resolve(AGENT_RUN_COMPOSITION_FACTORY);
-    const composition = runCompositionFactory.create({
+    const composition = await runCompositionFactory.create({
       sessionId: "session-1",
       context: durableContext(),
       latestProgramAttemptAuthority: () => authority,
     });
     expect(composition.provider).toBe(provider);
+    expect(composition.tools.map((tool) => tool.name)).toEqual(["read"]);
 
-    const extensionHost = new StaticExtensionHost();
-    await extensionHost.mount(composition.extensions);
-    expect(extensionHost.getTools().map((tool) => tool.name)).toEqual(["read"]);
-
-    await extensionHost.emit({
+    await composition.emit({
       type: "message_end",
       message: {
         role: "assistant",
@@ -193,7 +194,7 @@ describe("S-01C default Agent runtime profile", () => {
         timestamp: 10,
       },
     });
-    await extensionHost.emit({ type: "agent_end" });
+    await composition.emit({ type: "agent_end" });
 
     expect(recording.assistants).toEqual([{
       sessionId: "session-1",
@@ -211,50 +212,83 @@ describe("S-01C default Agent runtime profile", () => {
       requestAwaitingVerification: true,
     }]);
 
+    const capturedTool = composition.tools[0]!;
+    await capturedTool.execute({}, { toolCallId: "legacy-static-call" });
+    expect(recording.capabilities).toHaveLength(1);
+
+    await composition.dispose();
+    await expect(composition.emit({ type: "agent_end" })).rejects.toBeInstanceOf(ScopeNotOpenError);
+    await expect(capturedTool.execute({}, {})).rejects.toThrow();
+
     await runtime.dispose();
     expect(recording.closeCalls()).toBe(1);
   });
 
-  it("rolls back the statically mounted profile and closes its protocol on later mount failure", async () => {
+  it("holds generation disposal until the active run releases its lifecycle admission", async () => {
     const recording = createRecordingProtocol();
-    const provider: ModelProvider = {
-      async stream() {
-        return emptyStream();
-      },
-    };
-    const modules = createDefaultAgentRuntimeModules({
-      protocol: recording.protocol,
-      providerFactory: () => provider,
+    const runtime = await AgentRuntime.create({
+      generationId: "generation-2",
+      modules: createDefaultAgentRuntimeModules({ protocol: recording.protocol }),
+    });
+    const factory = runtime.rootScope.resolve(AGENT_RUN_COMPOSITION_FACTORY);
+    const composition = await factory.create({
+      sessionId: "session-1",
+      context: durableContext(),
+      latestProgramAttemptAuthority: () => undefined,
     });
 
-    await expect(AgentRuntime.create({
-      generationId: "generation-2",
-      modules: [
-        ...modules,
-        {
-          id: "test.fail-after-profile",
-          mount() {
-            throw new Error("mount failed");
-          },
-        },
-      ],
-    })).rejects.toMatchObject({
-      name: "AgentRuntimeMountError",
-      moduleId: "test.fail-after-profile",
+    const disposal = runtime.dispose();
+    expect(runtime.rootScope.state).toBe("closing");
+    let settled = false;
+    void disposal.finally(() => {
+      settled = true;
     });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(recording.closeCalls()).toBe(0);
+
+    await composition.dispose();
+    await disposal;
     expect(recording.closeCalls()).toBe(1);
   });
 
-  it("keeps StaticExtensionHost as compatibility path while moving worker composition behind modules", () => {
+  it("rolls back a partially mounted run and releases its lifecycle admission when provider creation fails", async () => {
+    const recording = createRecordingProtocol();
+    const runtime = await AgentRuntime.create({
+      generationId: "generation-3",
+      modules: createDefaultAgentRuntimeModules({
+        protocol: recording.protocol,
+        providerFactory: () => {
+          throw new Error("provider construction failed");
+        },
+      }),
+    });
+    const factory = runtime.rootScope.resolve(AGENT_RUN_COMPOSITION_FACTORY);
+
+    await expect(factory.create({
+      sessionId: "session-1",
+      context: durableContext(),
+      latestProgramAttemptAuthority: () => undefined,
+    })).rejects.toBeInstanceOf(AgentRunCompositionMountError);
+
+    await runtime.dispose();
+    expect(recording.closeCalls()).toBe(1);
+  });
+
+  it("removes the legacy extension host from the production/public Agent composition path", () => {
     const worker = readFileSync(new URL("./agent-worker.ts", import.meta.url), "utf8");
     const profile = readFileSync(new URL("./agent-runtime-profile.ts", import.meta.url), "utf8");
+    const agentCoreIndex = readFileSync(new URL("../../agent-core/src/index.ts", import.meta.url), "utf8");
 
-    expect(worker).toContain("StaticExtensionHost");
     expect(worker).toContain("createDefaultAgentRuntimeModules");
+    expect(worker).not.toContain("StaticExtensionHost");
     expect(worker).not.toContain("createCognitionExtension");
-    expect(worker).not.toContain("TestModelProvider");
-    expect(worker).not.toContain("programProgressExtension");
+    expect(profile).toContain("ScopedAgentBehavior");
+    expect(profile).not.toContain("AgentExtension");
     expect(profile).not.toContain("ProtocolTransport");
     expect(profile).not.toContain("@alcode/host-runtime");
+    expect(agentCoreIndex).not.toContain("StaticExtensionHost");
+    expect(agentCoreIndex).not.toContain("AgentExtension");
+    expect(agentCoreIndex).not.toContain("ExtensionContext");
   });
 });

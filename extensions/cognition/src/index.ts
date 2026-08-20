@@ -1,4 +1,4 @@
-import type { AgentExtension } from "@alcode/agent-core";
+import type { AgentBehaviorContribution } from "@alcode/agent-core";
 import { createAgentEventForwarder } from "./event-adapter.ts";
 import type { CognitionHostClient } from "./host-client.ts";
 import { createProtocolProxyTool } from "./proxy-tools.ts";
@@ -12,7 +12,7 @@ export interface CognitionExtensionOptions {
   durableTranscript?: boolean;
 }
 
-export function createCognitionExtension(options: CognitionExtensionOptions): AgentExtension {
+export function createCognitionExtension(options: CognitionExtensionOptions): AgentBehaviorContribution {
   return {
     name: "cognition",
     register(context) {

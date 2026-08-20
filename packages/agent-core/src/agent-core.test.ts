@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   runAgentLoop,
-  StaticExtensionHost,
-  type AgentExtension,
   type AgentTool,
   type Message,
   type ModelRequest,
@@ -137,14 +135,5 @@ describe("agent-core contracts and loop", () => {
     expect(providerCalls).toBe(0);
     expect(messages).toHaveLength(1);
     expect(messages[0]).toHaveProperty("role", "user");
-  });
-
-  it("StaticExtensionHost collects tools from extensions", async () => {
-    const host = new StaticExtensionHost();
-    const tool: AgentTool = { name: "test", description: "test tool", inputSchema: { type: "object", properties: {} }, async execute() { return { content: [{ type: "text", text: "ok" }], details: {} }; } };
-    const ext: AgentExtension = { name: "test-ext", register(ctx) { ctx.registerTool(tool); } };
-    await host.mount([ext]);
-    expect(host.getTools().length).toBe(1);
-    expect(host.getTools()[0]!.name).toBe("test");
   });
 });
