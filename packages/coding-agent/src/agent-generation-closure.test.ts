@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ScopeNotOpenError } from "@alcode/agent-core";
+import { ScopeNotOpenError, type ModelProvider, type ModelStream } from "@alcode/agent-core";
 import {
   PROGRAM_EXECUTION_MESSAGE_VERSION,
   type ContextProvide,
@@ -11,6 +11,26 @@ import {
   createDefaultAgentRuntimeModules,
   type DefaultAgentRuntimeProfileOptions,
 } from "./agent-runtime-profile.ts";
+
+function emptyStream(): ModelStream {
+  return {
+    [Symbol.asyncIterator]() {
+      return {
+        async next() {
+          return { value: undefined, done: true } as const;
+        },
+      };
+    },
+  };
+}
+
+function deterministicProvider(): ModelProvider {
+  return {
+    async stream() {
+      return emptyStream();
+    },
+  };
+}
 
 function legacyContext(sessionId: string): ContextProvide {
   return {
@@ -89,7 +109,10 @@ describe("S-01E Agent generation replacement closure", () => {
     const recordingA = recordingProtocol();
     const runtimeA = await AgentRuntime.create({
       generationId: "generation-A",
-      modules: createDefaultAgentRuntimeModules({ protocol: recordingA.protocol }),
+      modules: createDefaultAgentRuntimeModules({
+        protocol: recordingA.protocol,
+        providerFactory: deterministicProvider,
+      }),
     });
     const factoryA = runtimeA.rootScope.resolve(AGENT_RUN_COMPOSITION_FACTORY);
     const compositionA = await factoryA.create({
@@ -113,7 +136,10 @@ describe("S-01E Agent generation replacement closure", () => {
     const recordingB = recordingProtocol();
     const runtimeB = await AgentRuntime.create({
       generationId: "generation-B",
-      modules: createDefaultAgentRuntimeModules({ protocol: recordingB.protocol }),
+      modules: createDefaultAgentRuntimeModules({
+        protocol: recordingB.protocol,
+        providerFactory: deterministicProvider,
+      }),
     });
     const factoryB = runtimeB.rootScope.resolve(AGENT_RUN_COMPOSITION_FACTORY);
     const compositionB = await factoryB.create({

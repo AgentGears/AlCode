@@ -20,7 +20,7 @@ import {
   type CognitionHostClient,
 } from "@alcode/cognition-extension";
 import type { AgentProtocolClient } from "./agent-protocol-bridge.ts";
-import { TestModelProvider } from "./test-model-provider.ts";
+import { createProductionModelProvider } from "./provider-selection.ts";
 
 interface ScriptedTurn {
   text?: string;
@@ -79,10 +79,7 @@ function createDefaultProvider(): ModelProvider {
     }
     return new ScriptedWorkerProvider(parsed as ScriptedTurn[]);
   }
-  return new TestModelProvider([
-    { match: "hello", text: "Hello from ALCODE. The agent loop is running." },
-    { match: "*", text: "ALCODE received your prompt." },
-  ]);
+  return createProductionModelProvider();
 }
 
 export interface AgentProviderFactory {
