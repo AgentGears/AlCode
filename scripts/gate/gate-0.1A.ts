@@ -26,6 +26,9 @@ import { run } from "./run.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const ALCODE_HOME = process.env.ALCODE_HOME ?? join(homedir(), ".alcode");
+const DETERMINISTIC_AGENT_SCRIPT = JSON.stringify([
+  { text: "Hello from ALCODE. The agent loop is running." },
+]);
 
 function commitSha(): string {
   try {
@@ -153,18 +156,27 @@ async function main(): Promise<void> {
 
   // 8. CLI returns deterministic offline response. Phase 1.1 keeps the
   // Phase 0.1A response proof while explicitly authorizing the CLI
-  // Application actor to accept the exact pending Program draft.
+  // Application actor to accept the exact pending Program draft. P-01 makes
+  // deterministic provider behavior explicit instead of relying on production
+  // fallback semantics.
   {
-    const result = run("npx", ["tsx", "packages/coding-agent/src/cli.ts", "-p", "hello", "--accept-program"], {
-      cwd: ROOT, throwOnError: false,
-    });
-    const output = result.stdout;
-    const hasResponse = output.includes("Hello from ALCODE") || output.includes("ALCODE");
-    checks.push({
-      id: "cli.hello.offline",
-      status: hasResponse ? "passed" : "failed",
-      evidence: hasResponse ? "deterministic offline response" : `got: ${output.slice(0, 100)}`,
-    });
+    const previousScript = process.env.ALCODE_AGENT_SCRIPT;
+    process.env.ALCODE_AGENT_SCRIPT = DETERMINISTIC_AGENT_SCRIPT;
+    try {
+      const result = run("npx", ["tsx", "packages/coding-agent/src/cli.ts", "-p", "hello", "--accept-program"], {
+        cwd: ROOT, throwOnError: false,
+      });
+      const output = result.stdout;
+      const hasResponse = output.includes("Hello from ALCODE") || output.includes("ALCODE");
+      checks.push({
+        id: "cli.hello.offline",
+        status: hasResponse ? "passed" : "failed",
+        evidence: hasResponse ? "explicit deterministic offline response" : `got: ${output.slice(0, 100)}`,
+      });
+    } finally {
+      if (previousScript === undefined) delete process.env.ALCODE_AGENT_SCRIPT;
+      else process.env.ALCODE_AGENT_SCRIPT = previousScript;
+    }
   }
 
   // Build receipt

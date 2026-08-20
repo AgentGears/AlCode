@@ -21,6 +21,7 @@
   "dependencies": {
     "@alcode/agent-core": "workspace:*",
     "@alcode/agent-protocol": "workspace:*",
+    "@alcode/ai": "workspace:*",
     "@alcode/cognition-extension": "workspace:*",
     "@alcode/context": "workspace:*",
     "@alcode/events": "workspace:*",
