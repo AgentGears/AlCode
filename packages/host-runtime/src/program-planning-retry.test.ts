@@ -40,7 +40,7 @@ function fakeStore(sessionId: string, objective: string): WorkspaceEventStore {
     async *replay() {
       for (const event of events) yield event;
     },
-  } as WorkspaceEventStore;
+  } as unknown as WorkspaceEventStore;
 }
 
 function proposal(objective: string, duplicate = false) {
