@@ -25,6 +25,7 @@ interface ProgramPlanningEpisodeV1 {
   agentGeneration: number;
   objective: string;
   sourceObjectiveEventId: string;
+  planningCatalogDigest: string;
   planningReads: TrackedPlanningReads;
   submitted: boolean;
 }
@@ -127,6 +128,7 @@ export class ProgramPlanningServiceV1 {
     const previous = this.activeBySession.get(sessionId);
     if (previous !== undefined) this.episodes.delete(previous);
 
+    const planningCatalog = this.options.planningReads.catalog();
     const planningEpisodeId = uuidv7();
     const episode: ProgramPlanningEpisodeV1 = {
       planningEpisodeId,
@@ -135,6 +137,7 @@ export class ProgramPlanningServiceV1 {
       agentGeneration: input.agentGeneration,
       objective: input.objective,
       sourceObjectiveEventId,
+      planningCatalogDigest: planningCatalog.digest,
       planningReads: this.options.planningReads.track(this.options.store.workspaceId),
       submitted: false,
     };
@@ -147,6 +150,7 @@ export class ProgramPlanningServiceV1 {
       sessionId,
       planningEpisodeId,
       objective: input.objective,
+      planningCatalog,
     };
   }
 
@@ -173,6 +177,11 @@ export class ProgramPlanningServiceV1 {
         || episode.agentGeneration !== input.agentGeneration
         || !this.options.agents.isCurrent(String(input.sessionId), input.connectionGenerationId, input.agentGeneration)) {
       const result = this.failureFor(message, "stale", "program_planning_stale", "Planning episode or Agent authority is stale");
+      this.cache(cacheKey, result);
+      return result;
+    }
+    if (episode.planningCatalogDigest !== this.options.planningReads.catalog().digest) {
+      const result = this.failureFor(message, "stale", "program_planning_catalog_stale", "Planning catalog changed during the episode");
       this.cache(cacheKey, result);
       return result;
     }

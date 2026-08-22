@@ -9,6 +9,7 @@ import {
   type HostToAgentMessage,
   type ProgramAttemptAuthorityV1,
   type ProgramCreationProposalWireV1,
+  type ProgramPlanningReadResult,
   type ProgramProgressAdvisoryBlockerV1,
   type ProgramProgressEvidenceProposalV1,
   type ProgramProgressResult,
@@ -30,6 +31,14 @@ export interface ProgramProposalRequest {
   proposal: ProgramCreationProposalWireV1;
 }
 
+export interface ProgramPlanningReadClientRequest {
+  sessionId: string;
+  planningEpisodeId: string;
+  readContractId: string;
+  readContractVersion: number;
+  args: unknown;
+}
+
 export interface ProgramProgressRequest {
   sessionId: string;
   authority: ProgramAttemptAuthorityV1;
@@ -45,6 +54,7 @@ export interface AgentProtocolClient extends CognitionHostClient {
   announceHello(generationId: string, capabilities: readonly string[]): Promise<void>;
   reportError(message: string, sessionId?: string): Promise<void>;
   requestContextUpdate(sessionId: string, signal: AbortSignal): Promise<ContextUpdate>;
+  requestProgramPlanningRead(request: ProgramPlanningReadClientRequest): Promise<ProgramPlanningReadResult>;
   submitProgramProposal(request: ProgramProposalRequest): Promise<ProgramProposalResult>;
   submitProgramProgress(request: ProgramProgressRequest): Promise<ProgramProgressResult>;
   onHostMessage(handler: HostMessageHandler): () => void;
@@ -117,6 +127,30 @@ class AgentProtocolBridge implements AgentProtocolClient {
         && message.requestId === requestId
         && message.sessionId === sessionId,
       { signal },
+    );
+  }
+
+  requestProgramPlanningRead(
+    request: ProgramPlanningReadClientRequest,
+  ): Promise<ProgramPlanningReadResult> {
+    const requestId = randomUUID();
+    return this.request(
+      requestId,
+      {
+        type: "program.planning.read",
+        version: PROGRAM_EXECUTION_MESSAGE_VERSION,
+        requestId,
+        sessionId: request.sessionId,
+        planningEpisodeId: request.planningEpisodeId,
+        readContractId: request.readContractId,
+        readContractVersion: request.readContractVersion,
+        args: structuredClone(request.args),
+      },
+      (message): message is ProgramPlanningReadResult => message.type === "program.planning.read.result"
+        && message.requestId === requestId
+        && message.sessionId === request.sessionId
+        && message.planningEpisodeId === request.planningEpisodeId,
+      { timeoutMs: 10_000, timeoutMessage: "Program planning read timed out" },
     );
   }
 

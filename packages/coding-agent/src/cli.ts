@@ -13,7 +13,6 @@ import {
   DefaultHostPolicy,
   HostArtifactStore,
   HostVerificationOperationRegistryV1,
-  PlanningReadRegistry,
   createProgramExecutionRuntimeV1,
   type ProgramExecutionObservationSourceV1,
 } from "@alcode/host-runtime";
@@ -21,6 +20,7 @@ import { openLockedWorkspaceStore } from "@alcode/storage";
 import { WorkspaceRegistry } from "@alcode/workspace";
 import { createDefaultHostCapabilities } from "./host-capabilities.ts";
 import { createLocalWorkspace } from "./capabilities/local-workspace.ts";
+import { createLocalPlanningReadRegistry } from "./planning-read-catalog.ts";
 
 const SYSTEM_PROMPT = "You are ALCODE, a memory-native coding agent.";
 const APPLICATION_PROTOCOL_VERSION = 1 as const;
@@ -174,7 +174,7 @@ async function main(): Promise<void> {
       capabilities,
       policy: new DefaultHostPolicy({ knownTools: capabilities.map((capability) => capability.name), allowMutations: true }),
     },
-    planningReads: new PlanningReadRegistry("alcode-cli-planning-v1", 1, []),
+    planningReads: createLocalPlanningReadRegistry(workspace),
     creationPolicy: {
       current: () => ({ generation: "alcode-cli-policy-v1", digest: "alcode-cli-policy-v1", requirements: [] }),
     },

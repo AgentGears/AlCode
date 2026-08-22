@@ -1,4 +1,8 @@
 import { createHash } from "node:crypto";
+import type {
+  ProgramPlanningCatalogV1,
+  ProgramPlanningReadDescriptorV1,
+} from "@alcode/agent-protocol";
 import {
   canonicalStringify,
   type Json,
@@ -10,6 +14,11 @@ export const TRACKED_PLANNING_PROFILE_VERSION = 1 as const;
 export const PLANNING_PROVENANCE_LIMITS = Object.freeze({
   dependencies: 1_024,
   serializedIdentityBytes: 1024 * 1024,
+});
+
+export const PLANNING_CATALOG_LIMITS = Object.freeze({
+  reads: 64,
+  serializedBytes: 64 * 1024,
 });
 
 export interface PlanningReadDependencyV1 {
@@ -28,6 +37,8 @@ export interface PlanningObservationIdentityV1 {
   workspaceIdentity: string;
   planningCoverageProfileId: string;
   planningCoverageProfileVersion: number;
+  /** P-01 planning episodes seal the exact model-facing planning catalog. */
+  planningCatalogDigest?: string;
   dependencies: PlanningReadDependencyV1[];
   digest: string;
 }
@@ -104,18 +115,25 @@ function identityBody(
   return identity;
 }
 
+function descriptorKey(descriptor: ProgramPlanningReadDescriptorV1): string {
+  return `${descriptor.definition.name}\u0000${descriptor.readContractId}\u0000${descriptor.readContractVersion}`;
+}
+
 export class PlanningReadRegistry {
   private readonly contracts = new Map<string, PlanningReadContractV1>();
   private readonly issuedTrackers = new WeakSet<TrackedPlanningReads>();
+  private readonly planningCatalog: ProgramPlanningCatalogV1;
 
   constructor(
     public readonly planningCoverageProfileId: string,
     public readonly planningCoverageProfileVersion: number,
     contracts: readonly PlanningReadContractV1[],
+    planningCatalog: readonly ProgramPlanningReadDescriptorV1[] = [],
   ) {
     requireNonEmpty("planningCoverageProfileId", planningCoverageProfileId);
     requireVersion("planningCoverageProfileVersion", planningCoverageProfileVersion);
     for (const contract of contracts) this.register(contract);
+    this.planningCatalog = this.buildPlanningCatalog(planningCatalog);
   }
 
   private register(contract: PlanningReadContractV1): void {
@@ -132,6 +150,54 @@ export class PlanningReadRegistry {
       throw new PlanningReadError(`Duplicate planning read contract ${contract.readContractId}@${contract.readContractVersion}`);
     }
     this.contracts.set(key, contract);
+  }
+
+  private buildPlanningCatalog(
+    descriptors: readonly ProgramPlanningReadDescriptorV1[],
+  ): ProgramPlanningCatalogV1 {
+    if (descriptors.length > PLANNING_CATALOG_LIMITS.reads) {
+      throw new PlanningReadError(`Planning catalog exceeds ${PLANNING_CATALOG_LIMITS.reads} reads`);
+    }
+    const names = new Set<string>();
+    const bindings = new Set<string>();
+    const reads = descriptors.map((source) => {
+      const descriptor = structuredClone(source);
+      requireNonEmpty("planningCatalog.definition.name", descriptor.definition.name);
+      requireNonEmpty("planningCatalog.definition.description", descriptor.definition.description);
+      requireNonEmpty("planningCatalog.readContractId", descriptor.readContractId);
+      requireVersion("planningCatalog.readContractVersion", descriptor.readContractVersion);
+      if (descriptor.definition.inputSchema.type !== "object"
+          || typeof descriptor.definition.inputSchema.properties !== "object"
+          || descriptor.definition.inputSchema.properties === null) {
+        throw new PlanningReadError(`Invalid planning input schema for ${descriptor.definition.name}`);
+      }
+      this.get(descriptor.readContractId, descriptor.readContractVersion);
+      if (names.has(descriptor.definition.name)) {
+        throw new PlanningReadError(`Duplicate planning model read ${descriptor.definition.name}`);
+      }
+      const binding = contractKey(descriptor.readContractId, descriptor.readContractVersion);
+      if (bindings.has(binding)) {
+        throw new PlanningReadError(`Duplicate planning read binding ${descriptor.readContractId}@${descriptor.readContractVersion}`);
+      }
+      names.add(descriptor.definition.name);
+      bindings.add(binding);
+      return descriptor;
+    }).sort((left, right) => {
+      const a = descriptorKey(left);
+      const b = descriptorKey(right);
+      return a < b ? -1 : a > b ? 1 : 0;
+    });
+    if (canonicalBytes(reads) > PLANNING_CATALOG_LIMITS.serializedBytes) {
+      throw new PlanningReadError(`Planning catalog exceeds ${PLANNING_CATALOG_LIMITS.serializedBytes} canonical bytes`);
+    }
+    return {
+      digest: planningCanonicalDigest(reads),
+      reads,
+    };
+  }
+
+  catalog(): ProgramPlanningCatalogV1 {
+    return structuredClone(this.planningCatalog);
   }
 
   track(workspaceIdentity: string): TrackedPlanningReads {
@@ -196,6 +262,13 @@ export class PlanningReadRegistry {
 
   async recheck(identity: PlanningObservationIdentityV1): Promise<void> {
     assertPlanningObservationIdentity(identity);
+    if (identity.planningCatalogDigest === undefined) {
+      if (this.planningCatalog.reads.length > 0) {
+        throw new PlanningBaseStaleError("Planning model-facing catalog changed or is unavailable");
+      }
+    } else if (identity.planningCatalogDigest !== this.planningCatalog.digest) {
+      throw new PlanningBaseStaleError("Planning model-facing catalog changed or is unavailable");
+    }
     if (identity.planningCoverageProfileId !== this.planningCoverageProfileId ||
         identity.planningCoverageProfileVersion !== this.planningCoverageProfileVersion) {
       throw new PlanningBaseStaleError("Planning coverage profile changed or is unavailable");
@@ -236,6 +309,7 @@ export class PlanningReadRegistry {
 
 export class TrackedPlanningReads {
   private readonly dependencies: PlanningReadDependencyV1[] = [];
+  private readonly planningCatalogDigest: string;
   private sealed = false;
   private inFlight = 0;
 
@@ -244,6 +318,7 @@ export class TrackedPlanningReads {
     private readonly workspaceIdentity: string,
   ) {
     requireNonEmpty("workspaceIdentity", workspaceIdentity);
+    this.planningCatalogDigest = registry.catalog().digest;
   }
 
   async read(
@@ -301,6 +376,7 @@ export class TrackedPlanningReads {
       workspaceIdentity: this.workspaceIdentity,
       planningCoverageProfileId: this.registry.planningCoverageProfileId,
       planningCoverageProfileVersion: this.registry.planningCoverageProfileVersion,
+      planningCatalogDigest: this.planningCatalogDigest,
       dependencies,
     };
     const identity: PlanningObservationIdentityV1 = {
@@ -320,6 +396,9 @@ export function assertPlanningObservationIdentity(identity: PlanningObservationI
   requireNonEmpty("workspaceIdentity", identity.workspaceIdentity);
   requireNonEmpty("planningCoverageProfileId", identity.planningCoverageProfileId);
   requireVersion("planningCoverageProfileVersion", identity.planningCoverageProfileVersion);
+  if (identity.planningCatalogDigest !== undefined) {
+    requireNonEmpty("planningCatalogDigest", identity.planningCatalogDigest);
+  }
   if (identity.dependencies.length > PLANNING_PROVENANCE_LIMITS.dependencies) {
     throw new PlanningReadError(`Planning dependency count exceeds ${PLANNING_PROVENANCE_LIMITS.dependencies}`);
   }
@@ -347,6 +426,9 @@ export function assertPlanningObservationIdentity(identity: PlanningObservationI
     workspaceIdentity: identity.workspaceIdentity,
     planningCoverageProfileId: identity.planningCoverageProfileId,
     planningCoverageProfileVersion: identity.planningCoverageProfileVersion,
+    ...(identity.planningCatalogDigest !== undefined
+      ? { planningCatalogDigest: identity.planningCatalogDigest }
+      : {}),
     dependencies: identity.dependencies,
   }));
   if (identity.digest !== expectedDigest) {
