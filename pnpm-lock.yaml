@@ -75,6 +75,9 @@ importers:
       '@alcode/agent-protocol':
         specifier: workspace:*
         version: link:../agent-protocol
+      '@alcode/ai':
+        specifier: workspace:*
+        version: link:../ai
       '@alcode/cognition-extension':
         specifier: workspace:*
         version: link:../../extensions/cognition

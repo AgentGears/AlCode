@@ -14,11 +14,14 @@ afterEach(() => {
 
 const cliPath = fileURLToPath(new URL("./cli.ts", import.meta.url));
 const repoRoot = resolve(fileURLToPath(new URL("../../../", import.meta.url)));
+const deterministicAgentScript = JSON.stringify([
+  { text: "Hello from ALCODE. The agent loop is running." },
+]);
 
 function runCli(home: string, args: string[]) {
   return spawnSync(process.execPath, ["--import", "tsx", cliPath, ...args], {
     cwd: repoRoot,
-    env: { ...process.env, ALCODE_HOME: home, ALCODE_AGENT_SCRIPT: "" },
+    env: { ...process.env, ALCODE_HOME: home, ALCODE_AGENT_SCRIPT: deterministicAgentScript },
     encoding: "utf8",
     timeout: 60_000,
   });

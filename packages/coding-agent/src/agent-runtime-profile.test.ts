@@ -226,9 +226,17 @@ describe("S-01E default Agent runtime profile", () => {
 
   it("holds generation disposal until the active run releases its lifecycle admission", async () => {
     const recording = createRecordingProtocol();
+    const provider: ModelProvider = {
+      async stream() {
+        return emptyStream();
+      },
+    };
     const runtime = await AgentRuntime.create({
       generationId: "generation-2",
-      modules: createDefaultAgentRuntimeModules({ protocol: recording.protocol }),
+      modules: createDefaultAgentRuntimeModules({
+        protocol: recording.protocol,
+        providerFactory: () => provider,
+      }),
     });
     const factory = runtime.rootScope.resolve(AGENT_RUN_COMPOSITION_FACTORY);
     const composition = await factory.create({
@@ -275,7 +283,7 @@ describe("S-01E default Agent runtime profile", () => {
     expect(recording.closeCalls()).toBe(1);
   });
 
-  it("removes the legacy extension host from the production/public Agent composition path", () => {
+  it("removes the legacy extension host and silent test provider from the production/public Agent composition path", () => {
     const worker = readFileSync(new URL("./agent-worker.ts", import.meta.url), "utf8");
     const profile = readFileSync(new URL("./agent-runtime-profile.ts", import.meta.url), "utf8");
     const agentCoreIndex = readFileSync(new URL("../../agent-core/src/index.ts", import.meta.url), "utf8");
@@ -284,6 +292,8 @@ describe("S-01E default Agent runtime profile", () => {
     expect(worker).not.toContain("StaticExtensionHost");
     expect(worker).not.toContain("createCognitionExtension");
     expect(profile).toContain("ScopedAgentBehavior");
+    expect(profile).toContain("createProductionModelProvider");
+    expect(profile).not.toContain("TestModelProvider");
     expect(profile).not.toContain("AgentExtension");
     expect(profile).not.toContain("ProtocolTransport");
     expect(profile).not.toContain("@alcode/host-runtime");
