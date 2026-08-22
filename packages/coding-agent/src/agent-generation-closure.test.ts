@@ -51,6 +51,21 @@ function recordingProtocol() {
     async close() {
       closeCalls += 1;
     },
+    onHostMessage() {
+      return () => undefined;
+    },
+    async requestProgramPlanningRead(request) {
+      return {
+        type: "program.planning.read.result",
+        version: PROGRAM_EXECUTION_MESSAGE_VERSION,
+        requestId: "planning-read-result",
+        sessionId: request.sessionId,
+        planningEpisodeId: request.planningEpisodeId,
+        outcome: "denied",
+        errorCode: "unexpected_planning_read",
+        error: "This generation-closure fixture does not run planning",
+      };
+    },
     async submitProgramProposal(request) {
       return {
         type: "program.proposal.result",
