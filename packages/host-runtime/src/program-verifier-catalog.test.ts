@@ -9,7 +9,10 @@ function operationSpecs(): HostVerificationOperationRegistryV1 {
     specVersion: 1,
     capabilityName: "bash",
     workspaceAccessClass: "may_write",
-    isSuccessful: (result) => result.exitCode === 0,
+    isSuccessful: (result) => {
+      const payload = result.result as { details?: { exitCode?: number | null } } | undefined;
+      return result.outcome === "succeeded" && payload?.details?.exitCode === 0;
+    },
   }]);
 }
 
