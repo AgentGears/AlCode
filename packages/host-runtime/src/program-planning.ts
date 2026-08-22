@@ -5,8 +5,13 @@ import {
   type ProgramPlanningReadResult,
   type ProgramProposalResult,
 } from "@alcode/agent-protocol";
-import { uuidv7, type PersistedDomainEvent, type SessionId } from "@alcode/events";
-import type { Json } from "@alcode/program-state";
+import { mkProgramStateId, uuidv7, type PersistedDomainEvent, type SessionId } from "@alcode/events";
+import {
+  asProgramStateId,
+  createProgramState,
+  type Json,
+  type ProgramCreationInput,
+} from "@alcode/program-state";
 import type { WorkspaceEventStore } from "@alcode/storage";
 import {
   ProgramCreationControlError,
@@ -97,6 +102,31 @@ function objectiveSourceEventId(
 function requireNonEmpty(label: string, value: string): void {
   if (typeof value !== "string" || value.length === 0) {
     throw new ProgramPlanningControlError(`${label} must be a non-empty string`);
+  }
+}
+
+function prevalidateProposal(
+  episode: ProgramPlanningEpisodeV1,
+  proposal: ProgramCreationProposalV1,
+): void {
+  if (proposal.objective !== episode.objective) {
+    throw new ProgramPlanningControlError("Program proposal objective differs from the Host planning objective");
+  }
+  try {
+    createProgramState({
+      programStateId: asProgramStateId(String(mkProgramStateId())),
+      sourceSessionId: String(episode.sourceSessionId) as ProgramCreationInput["sourceSessionId"],
+      objective: proposal.objective,
+      workItems: proposal.workItems,
+      verification: proposal.verification,
+      outputSlots: proposal.outputSlots,
+      productionSteps: proposal.productionSteps,
+      creationPolicyRequirements: [],
+    });
+  } catch (error) {
+    throw new ProgramPlanningControlError(
+      `Program proposal failed structural validation: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
@@ -218,9 +248,20 @@ export class ProgramPlanningServiceV1 {
     } else {
       if (episode.submitted) {
         response = this.failureFor(message, "stale", "program_planning_closed", "Planning proposal was already submitted");
-      } else if (message.proposal.objective !== episode.objective) {
-        response = this.failureFor(message, "denied", "program_planning_objective_mismatch", "Program proposal objective differs from the Host planning objective");
       } else {
+        try {
+          prevalidateProposal(episode, message.proposal as ProgramCreationProposalV1);
+        } catch (error) {
+          response = this.failureFor(
+            message,
+            "denied",
+            "program_proposal_invalid",
+            error instanceof Error ? error.message : String(error),
+          );
+          this.cache(cacheKey, response);
+          return response;
+        }
+
         episode.submitted = true;
         try {
           await this.options.creation.sealDraft({
@@ -243,20 +284,24 @@ export class ProgramPlanningServiceV1 {
           response = this.failureFor(
             message,
             stale ? "stale" : controlled ? "denied" : "failed",
-            stale ? "program_planning_stale" : controlled ? "program_proposal_invalid" : "program_proposal_failed",
+            stale ? "program_planning_stale" : controlled ? "program_proposal_terminal_invalid" : "program_proposal_failed",
             error instanceof Error ? error.message : String(error),
           );
         } finally {
-          this.episodes.delete(episode.planningEpisodeId);
-          if (this.activeBySession.get(String(episode.sourceSessionId)) === episode.planningEpisodeId) {
-            this.activeBySession.delete(String(episode.sourceSessionId));
-          }
+          this.closeEpisode(episode);
         }
       }
     }
 
     this.cache(cacheKey, response);
     return response;
+  }
+
+  private closeEpisode(episode: ProgramPlanningEpisodeV1): void {
+    this.episodes.delete(episode.planningEpisodeId);
+    if (this.activeBySession.get(String(episode.sourceSessionId)) === episode.planningEpisodeId) {
+      this.activeBySession.delete(String(episode.sourceSessionId));
+    }
   }
 
   private failureFor(

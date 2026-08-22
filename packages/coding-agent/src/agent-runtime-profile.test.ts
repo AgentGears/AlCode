@@ -3,13 +3,16 @@ import { describe, expect, it } from "vitest";
 import {
   AgentRuntime,
   ScopeNotOpenError,
+  type ModelEvent,
   type ModelProvider,
+  type ModelRequest,
   type ModelStream,
 } from "@alcode/agent-core";
 import {
   PROGRAM_EXECUTION_MESSAGE_VERSION,
   VERBATIM_COMPILER_VERSION,
   type ContextProvide,
+  type HostToAgentMessage,
   type ProgramAttemptProjectionV1,
 } from "@alcode/agent-protocol";
 import {
@@ -19,15 +22,62 @@ import {
   createDefaultAgentRuntimeModules,
   type DefaultAgentRuntimeProfileOptions,
 } from "./agent-runtime-profile.ts";
+import { PROGRAM_PROPOSAL_TOOL_NAME } from "./program-planner.ts";
 
-function emptyStream(): ModelStream {
+function streamOf(events: readonly ModelEvent[]): ModelStream {
   return {
     [Symbol.asyncIterator]() {
+      let index = 0;
       return {
-        async next() {
-          return { value: undefined, done: true } as const;
+        async next(): Promise<IteratorResult<ModelEvent>> {
+          const value = events[index++];
+          return value === undefined
+            ? { value: undefined, done: true }
+            : { value, done: false };
         },
       };
+    },
+  };
+}
+
+function emptyStream(): ModelStream {
+  return streamOf([]);
+}
+
+function objectiveFromRequest(request: ModelRequest): string {
+  const user = [...request.messages].reverse().find((message) => message.role === "user");
+  const text = user?.role === "user"
+    ? user.content.find((content) => content.type === "text")?.text
+    : undefined;
+  return text ?? "missing objective";
+}
+
+function createPlanningAwareProvider(): ModelProvider {
+  return {
+    async stream(request) {
+      if (!request.tools.some((tool) => tool.name === PROGRAM_PROPOSAL_TOOL_NAME)) return emptyStream();
+      const objective = objectiveFromRequest(request);
+      return streamOf([
+        {
+          type: "tool_call",
+          id: "planning-proposal-1",
+          name: PROGRAM_PROPOSAL_TOOL_NAME,
+          arguments: {
+            objective,
+            workItems: [{
+              workItemId: "work-1",
+              creationOrder: 0,
+              description: objective,
+              dependencyIds: [],
+              affectedPaths: [],
+            }],
+            verification: [],
+            outputSlots: [],
+            productionSteps: [],
+          },
+        },
+        { type: "done", stopReason: "tool_use" },
+      ]);
     },
   };
 }
@@ -39,11 +89,28 @@ function createRecordingProtocol() {
   const toolResults: unknown[] = [];
   const idle: unknown[] = [];
   const capabilities: unknown[] = [];
+  const hostHandlers = new Set<(message: HostToAgentMessage) => void | Promise<void>>();
   let closeCalls = 0;
 
   const protocol: DefaultAgentRuntimeProfileOptions["protocol"] = {
     async close() {
       closeCalls += 1;
+    },
+    onHostMessage(handler) {
+      hostHandlers.add(handler);
+      return () => hostHandlers.delete(handler);
+    },
+    async requestProgramPlanningRead(request) {
+      return {
+        type: "program.planning.read.result",
+        version: PROGRAM_EXECUTION_MESSAGE_VERSION,
+        requestId: "planning-read-result",
+        sessionId: request.sessionId,
+        planningEpisodeId: request.planningEpisodeId,
+        outcome: "denied",
+        errorCode: "unexpected_planning_read",
+        error: "No planning reads are advertised in this test",
+      };
     },
     async submitProgramProposal(request) {
       proposals.push(structuredClone(request));
@@ -122,11 +189,7 @@ function durableContext(): ContextProvide {
 describe("S-01E default Agent runtime profile", () => {
   it("preserves cognition and Program wire semantics on the scoped run path", async () => {
     const recording = createRecordingProtocol();
-    const provider: ModelProvider = {
-      async stream() {
-        return emptyStream();
-      },
-    };
+    const provider = createPlanningAwareProvider();
     const runtime = await AgentRuntime.create({
       generationId: "generation-1",
       modules: createDefaultAgentRuntimeModules({
@@ -150,6 +213,7 @@ describe("S-01E default Agent runtime profile", () => {
       sessionId: "session-1",
       planningEpisodeId: "episode-1",
       objective: "Implement the objective",
+      planningCatalog: { digest: "planning-empty", reads: [] },
     });
     expect(recording.proposals).toEqual([{
       sessionId: "session-1",
@@ -224,6 +288,60 @@ describe("S-01E default Agent runtime profile", () => {
     expect(recording.closeCalls()).toBe(1);
   });
 
+  it("cancels an active planning scope without waiting for a provider turn to complete normally", async () => {
+    const recording = createRecordingProtocol();
+    let started!: () => void;
+    const startedPromise = new Promise<void>((resolve) => { started = resolve; });
+    let observedSignal: AbortSignal | undefined;
+    const planningProvider: ModelProvider = {
+      async stream(request) {
+        observedSignal = request.signal;
+        started();
+        return {
+          [Symbol.asyncIterator]() {
+            return {
+              async next(): Promise<IteratorResult<ModelEvent>> {
+                return new Promise((_, reject) => {
+                  const signal = request.signal;
+                  if (signal?.aborted) {
+                    reject(signal.reason);
+                    return;
+                  }
+                  signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+                });
+              },
+            };
+          },
+        };
+      },
+    };
+    const executionProvider: ModelProvider = { async stream() { return emptyStream(); } };
+    const runtime = await AgentRuntime.create({
+      generationId: "generation-planning-cancel",
+      modules: createDefaultAgentRuntimeModules({
+        protocol: recording.protocol,
+        providerFactory: () => executionProvider,
+        planningProviderFactory: () => planningProvider,
+      }),
+    });
+    const programBehavior = runtime.rootScope.resolve(AGENT_PROGRAM_BEHAVIOR);
+    const planning = programBehavior.submitPlanningProposal({
+      type: "program.planning.begin",
+      version: PROGRAM_EXECUTION_MESSAGE_VERSION,
+      requestId: "planning-cancel",
+      sessionId: "session-1",
+      planningEpisodeId: "episode-cancel",
+      objective: "Cancel this planning run",
+      planningCatalog: { digest: "planning-empty", reads: [] },
+    });
+    await startedPromise;
+    await programBehavior.cancelPlanning("session-1");
+    await planning;
+    expect(observedSignal?.aborted).toBe(true);
+    expect(recording.proposals).toHaveLength(0);
+    await runtime.dispose();
+  });
+
   it("holds generation disposal until the active run releases its lifecycle admission", async () => {
     const recording = createRecordingProtocol();
     const provider: ModelProvider = {
@@ -283,20 +401,24 @@ describe("S-01E default Agent runtime profile", () => {
     expect(recording.closeCalls()).toBe(1);
   });
 
-  it("removes the legacy extension host and silent test provider from the production/public Agent composition path", () => {
+  it("removes deterministic proposal fallback and legacy extension authority from the production/public Agent path", () => {
     const worker = readFileSync(new URL("./agent-worker.ts", import.meta.url), "utf8");
     const profile = readFileSync(new URL("./agent-runtime-profile.ts", import.meta.url), "utf8");
+    const planner = readFileSync(new URL("./program-planner.ts", import.meta.url), "utf8");
     const agentCoreIndex = readFileSync(new URL("../../agent-core/src/index.ts", import.meta.url), "utf8");
 
     expect(worker).toContain("createDefaultAgentRuntimeModules");
     expect(worker).not.toContain("StaticExtensionHost");
     expect(worker).not.toContain("createCognitionExtension");
     expect(profile).toContain("ScopedAgentBehavior");
+    expect(profile).toContain("runProgramPlanner");
     expect(profile).toContain("createProductionModelProvider");
     expect(profile).not.toContain("TestModelProvider");
     expect(profile).not.toContain("AgentExtension");
     expect(profile).not.toContain("ProtocolTransport");
     expect(profile).not.toContain("@alcode/host-runtime");
+    expect(profile).not.toContain('workItemId: "work-1"');
+    expect(planner).toContain("submit_program_proposal");
     expect(agentCoreIndex).not.toContain("StaticExtensionHost");
     expect(agentCoreIndex).not.toContain("AgentExtension");
     expect(agentCoreIndex).not.toContain("ExtensionContext");

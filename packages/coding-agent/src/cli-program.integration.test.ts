@@ -17,11 +17,37 @@ const repoRoot = resolve(fileURLToPath(new URL("../../../", import.meta.url)));
 const deterministicAgentScript = JSON.stringify([
   { text: "Hello from ALCODE. The agent loop is running." },
 ]);
+const deterministicPlanningScript = JSON.stringify([
+  {
+    toolCalls: [{
+      id: "planning-proposal-1",
+      name: "submit_program_proposal",
+      arguments: {
+        objective: "hello",
+        workItems: [{
+          workItemId: "work-1",
+          creationOrder: 0,
+          description: "hello",
+          dependencyIds: [],
+          affectedPaths: [],
+        }],
+        verification: [],
+        outputSlots: [],
+        productionSteps: [],
+      },
+    }],
+  },
+]);
 
 function runCli(home: string, args: string[]) {
   return spawnSync(process.execPath, ["--import", "tsx", cliPath, ...args], {
     cwd: repoRoot,
-    env: { ...process.env, ALCODE_HOME: home, ALCODE_AGENT_SCRIPT: deterministicAgentScript },
+    env: {
+      ...process.env,
+      ALCODE_HOME: home,
+      ALCODE_AGENT_SCRIPT: deterministicAgentScript,
+      ALCODE_PLANNING_SCRIPT: deterministicPlanningScript,
+    },
     encoding: "utf8",
     timeout: 60_000,
   });
