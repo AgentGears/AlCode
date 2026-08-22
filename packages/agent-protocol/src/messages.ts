@@ -134,6 +134,19 @@ export interface ProgramCreationProposalWireV1 {
   productionSteps: unknown[];
 }
 
+/** Host-owned semantic planning read advertised for exactly one planning episode. */
+export interface ProgramPlanningReadDescriptorV1 {
+  definition: ModelToolDefinition;
+  readContractId: string;
+  readContractVersion: number;
+}
+
+/** Canonically ordered model-facing planning catalog. */
+export interface ProgramPlanningCatalogV1 {
+  digest: string;
+  reads: ProgramPlanningReadDescriptorV1[];
+}
+
 export interface ProgramPlanningReadRequest {
   type: "program.planning.read";
   version: typeof PROGRAM_EXECUTION_MESSAGE_VERSION;
@@ -201,6 +214,8 @@ export interface ProgramPlanningBegin {
   sessionId: string;
   planningEpisodeId: string;
   objective: string;
+  /** Optional on the v1 wire for legacy compatibility; P-01 Hosts always provide it. */
+  planningCatalog?: ProgramPlanningCatalogV1;
 }
 
 export interface ProgramPlanningReadResult {

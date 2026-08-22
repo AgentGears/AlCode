@@ -24,6 +24,8 @@ export {
   type ProgramAttemptExecutionBaseV1,
   type ProgramAttemptProjectionV1,
   type ProgramCreationProposalWireV1,
+  type ProgramPlanningReadDescriptorV1,
+  type ProgramPlanningCatalogV1,
   type ProgramPlanningReadRequest,
   type ProgramProposalSubmitted,
   type ProgramProgressEvidenceProposalV1,
