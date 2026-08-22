@@ -29,6 +29,27 @@ const ALCODE_HOME = process.env.ALCODE_HOME ?? join(homedir(), ".alcode");
 const DETERMINISTIC_AGENT_SCRIPT = JSON.stringify([
   { text: "Hello from ALCODE. The agent loop is running." },
 ]);
+const DETERMINISTIC_PLANNING_SCRIPT = JSON.stringify([
+  {
+    toolCalls: [{
+      id: "planning-proposal-1",
+      name: "submit_program_proposal",
+      arguments: {
+        objective: "hello",
+        workItems: [{
+          workItemId: "work-1",
+          creationOrder: 0,
+          description: "hello",
+          dependencyIds: [],
+          affectedPaths: [],
+        }],
+        verification: [],
+        outputSlots: [],
+        productionSteps: [],
+      },
+    }],
+  },
+]);
 
 function commitSha(): string {
   try {
@@ -44,7 +65,6 @@ function commitSha(): string {
   }
 }
 
-/** Compute SHA-256 hex of a file. */
 function fileSha256(path: string): string {
   const content = readFileSync(path);
   return createHash("sha256").update(content).digest("hex");
@@ -55,7 +75,6 @@ async function main(): Promise<void> {
   const sha = commitSha();
   const checks: GateCheck[] = [];
 
-  // 0. Compose Phase 0.0 gate (a phase-exit command includes its dependencies)
   {
     const result = run("npx", ["tsx", "scripts/gate/gate-0.0.ts"], {
       cwd: ROOT, throwOnError: false,
@@ -69,7 +88,6 @@ async function main(): Promise<void> {
     });
   }
 
-  // 1. Provenance manifest exists and points to the exact tag and commit
   {
     const manifestPath = join(ROOT, "docs/provenance/pi-v0.81.1.import.json");
     const manifestExists = existsSync(manifestPath);
@@ -87,7 +105,6 @@ async function main(): Promise<void> {
     });
   }
 
-  // 2. Imported-file checksums: compute SHA-256 of all manifest files and compare
   {
     const manifestPath = join(ROOT, "docs/provenance/pi-v0.81.1.import.json");
     const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
@@ -114,7 +131,6 @@ async function main(): Promise<void> {
     });
   }
 
-  // 3. Agent-core + coding-agent typecheck
   for (const pkg of ["agent-core", "coding-agent"]) {
     const result = run("npx", ["tsc", "--noEmit", "-p", `packages/${pkg}/tsconfig.json`], {
       cwd: ROOT, throwOnError: false,
@@ -127,7 +143,6 @@ async function main(): Promise<void> {
     });
   }
 
-  // 4+5. Agent-core + coding-agent tests pass (offline)
   for (const pkg of ["agent-core", "coding-agent"]) {
     const result = run("npx", ["vitest", "run", `packages/${pkg}/src`], {
       cwd: ROOT, throwOnError: false,
@@ -142,7 +157,6 @@ async function main(): Promise<void> {
     });
   }
 
-  // 7. Imported files exist (quarantined, not compiled but present)
   {
     const allPresent = ["agent-loop.ts", "agent.ts", "types.ts", "stream-fn.ts"].every((f) =>
       existsSync(join(ROOT, "packages/agent-core/src/imported", f)),
@@ -154,14 +168,11 @@ async function main(): Promise<void> {
     });
   }
 
-  // 8. CLI returns deterministic offline response. Phase 1.1 keeps the
-  // Phase 0.1A response proof while explicitly authorizing the CLI
-  // Application actor to accept the exact pending Program draft. P-01 makes
-  // deterministic provider behavior explicit instead of relying on production
-  // fallback semantics.
   {
-    const previousScript = process.env.ALCODE_AGENT_SCRIPT;
+    const previousAgentScript = process.env.ALCODE_AGENT_SCRIPT;
+    const previousPlanningScript = process.env.ALCODE_PLANNING_SCRIPT;
     process.env.ALCODE_AGENT_SCRIPT = DETERMINISTIC_AGENT_SCRIPT;
+    process.env.ALCODE_PLANNING_SCRIPT = DETERMINISTIC_PLANNING_SCRIPT;
     try {
       const result = run("npx", ["tsx", "packages/coding-agent/src/cli.ts", "-p", "hello", "--accept-program"], {
         cwd: ROOT, throwOnError: false,
@@ -171,15 +182,16 @@ async function main(): Promise<void> {
       checks.push({
         id: "cli.hello.offline",
         status: hasResponse ? "passed" : "failed",
-        evidence: hasResponse ? "explicit deterministic offline response" : `got: ${output.slice(0, 100)}`,
+        evidence: hasResponse ? "explicit deterministic planning + execution response" : `got: ${output.slice(0, 100)}`,
       });
     } finally {
-      if (previousScript === undefined) delete process.env.ALCODE_AGENT_SCRIPT;
-      else process.env.ALCODE_AGENT_SCRIPT = previousScript;
+      if (previousAgentScript === undefined) delete process.env.ALCODE_AGENT_SCRIPT;
+      else process.env.ALCODE_AGENT_SCRIPT = previousAgentScript;
+      if (previousPlanningScript === undefined) delete process.env.ALCODE_PLANNING_SCRIPT;
+      else process.env.ALCODE_PLANNING_SCRIPT = previousPlanningScript;
     }
   }
 
-  // Build receipt
   const receipt = buildReceipt({
     gate: "0.1A",
     commitSha: sha,

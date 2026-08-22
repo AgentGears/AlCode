@@ -9,6 +9,7 @@ import {
   type ModelRequest,
   type ModelStream,
   type RuntimeModule,
+  type RuntimeScope,
 } from "@alcode/agent-core";
 import type {
   ContextProvide,
@@ -20,6 +21,7 @@ import {
   type CognitionHostClient,
 } from "@alcode/cognition-extension";
 import type { AgentProtocolClient } from "./agent-protocol-bridge.ts";
+import { runProgramPlanner } from "./program-planner.ts";
 import { createProductionModelProvider } from "./provider-selection.ts";
 
 interface ScriptedTurn {
@@ -70,15 +72,23 @@ class ScriptedWorkerProvider implements ModelProvider {
   }
 }
 
+function scriptedProviderFromEnvironment(name: string, raw: string): ModelProvider {
+  const parsed = JSON.parse(raw) as unknown;
+  if (!Array.isArray(parsed)) {
+    throw new Error(`${name} must be a JSON array`);
+  }
+  return new ScriptedWorkerProvider(parsed as ScriptedTurn[]);
+}
+
 function createDefaultProvider(): ModelProvider {
   const raw = process.env.ALCODE_AGENT_SCRIPT;
-  if (raw) {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) {
-      throw new Error("ALCODE_AGENT_SCRIPT must be a JSON array");
-    }
-    return new ScriptedWorkerProvider(parsed as ScriptedTurn[]);
-  }
+  if (raw) return scriptedProviderFromEnvironment("ALCODE_AGENT_SCRIPT", raw);
+  return createProductionModelProvider();
+}
+
+function createDefaultPlanningProvider(): ModelProvider {
+  const raw = process.env.ALCODE_PLANNING_SCRIPT;
+  if (raw) return scriptedProviderFromEnvironment("ALCODE_PLANNING_SCRIPT", raw);
   return createProductionModelProvider();
 }
 
@@ -90,6 +100,7 @@ export interface AgentProgramBehavior {
   submitPlanningProposal(
     begin: Extract<HostToAgentMessage, { type: "program.planning.begin" }>,
   ): Promise<void>;
+  cancelPlanning(sessionId: string): Promise<void>;
   createProgressContribution(options: {
     sessionId: string;
     latestProgramAttemptAuthority: () => ProgramAttemptProjectionV1["authority"] | undefined;
@@ -134,6 +145,8 @@ export const AGENT_RUN_COMPOSITION_FACTORY = createServiceToken<AgentRunComposit
 type DefaultProfileProtocolClient = Pick<
   AgentProtocolClient,
   | "close"
+  | "onHostMessage"
+  | "requestProgramPlanningRead"
   | "submitProgramProposal"
   | "submitProgramProgress"
   | "requestCapability"
@@ -145,6 +158,7 @@ type DefaultProfileProtocolClient = Pick<
 export interface DefaultAgentRuntimeProfileOptions {
   protocol: DefaultProfileProtocolClient;
   providerFactory?: () => ModelProvider;
+  planningProviderFactory?: () => ModelProvider;
 }
 
 function createProtocolLifecycleModule(
@@ -169,37 +183,58 @@ function createProviderModule(
   };
 }
 
+interface ActivePlanningRun {
+  planningEpisodeId: string;
+  scope: RuntimeScope;
+}
+
 function createProgramBehaviorModule(
-  protocol: Pick<DefaultProfileProtocolClient, "submitProgramProposal" | "submitProgramProgress">,
+  protocol: Pick<
+    DefaultProfileProtocolClient,
+    "onHostMessage" | "requestProgramPlanningRead" | "submitProgramProposal" | "submitProgramProgress"
+  >,
+  planningProviderFactory: () => ModelProvider,
 ): RuntimeModule {
   return {
     id: "coding-agent.program-behavior.v1",
     mount(scope) {
+      const activePlanning = new Map<string, ActivePlanningRun>();
+
+      const cancelPlanning = async (sessionId: string): Promise<void> => {
+        const active = activePlanning.get(sessionId);
+        if (active === undefined) return;
+        activePlanning.delete(sessionId);
+        await active.scope.dispose();
+      };
+
       const behavior: AgentProgramBehavior = {
         async submitPlanningProposal(begin) {
-          const result = await protocol.submitProgramProposal({
-            sessionId: begin.sessionId,
+          await cancelPlanning(begin.sessionId);
+          const planningScope = scope.child("agent_run");
+          const admission = planningScope.admit();
+          const active: ActivePlanningRun = {
             planningEpisodeId: begin.planningEpisodeId,
-            proposal: {
-              objective: begin.objective,
-              workItems: [{
-                workItemId: "work-1",
-                creationOrder: 0,
-                description: begin.objective,
-                dependencyIds: [],
-                affectedPaths: [],
-              }],
-              verification: [],
-              outputSlots: [],
-              productionSteps: [],
-            },
-          });
-          if (result.outcome !== "sealed") {
-            throw new Error(
-              `Program proposal was not sealed: ${result.outcome}${result.error ? ` (${result.error})` : ""}`,
-            );
+            scope: planningScope,
+          };
+          activePlanning.set(begin.sessionId, active);
+          try {
+            await runProgramPlanner({
+              begin,
+              provider: planningProviderFactory(),
+              protocol,
+              signal: admission.signal,
+            });
+          } catch (error) {
+            if (planningScope.signal.aborted) return;
+            throw error;
+          } finally {
+            if (activePlanning.get(begin.sessionId) === active) activePlanning.delete(begin.sessionId);
+            admission.release();
+            await planningScope.dispose();
           }
         },
+
+        cancelPlanning,
 
         createProgressContribution(options) {
           return {
@@ -226,6 +261,12 @@ function createProgramBehaviorModule(
           };
         },
       };
+
+      const unsubscribe = protocol.onHostMessage((message) => {
+        if (message.type !== "cancel") return;
+        return behavior.cancelPlanning(message.sessionId).catch(() => undefined);
+      });
+      scope.register(unsubscribe);
       scope.provide(AGENT_PROGRAM_BEHAVIOR, behavior);
     },
   };
@@ -297,10 +338,14 @@ function createRunCompositionModule(
 export function createDefaultAgentRuntimeModules(
   options: DefaultAgentRuntimeProfileOptions,
 ): readonly RuntimeModule[] {
+  const executionProviderFactory = options.providerFactory ?? createDefaultProvider;
+  const planningProviderFactory = options.planningProviderFactory
+    ?? options.providerFactory
+    ?? createDefaultPlanningProvider;
   return [
     createProtocolLifecycleModule(options.protocol),
-    createProviderModule(options.providerFactory ?? createDefaultProvider),
-    createProgramBehaviorModule(options.protocol),
+    createProviderModule(executionProviderFactory),
+    createProgramBehaviorModule(options.protocol, planningProviderFactory),
     createRunCompositionModule(options.protocol),
   ];
 }
