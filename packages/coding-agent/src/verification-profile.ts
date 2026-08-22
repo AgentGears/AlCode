@@ -8,12 +8,13 @@ import {
   type ProgramExecutionObservationSourceV1,
   type ProgramWorkspacePathObservationSourceV1,
 } from "@alcode/host-runtime";
-import type { WorkspacePathState } from "@alcode/program-state";
 
 export const COMMAND_EXIT_ZERO_SPEC_ID = "command_exit_zero";
 export const COMMAND_EXIT_ZERO_SPEC_VERSION = 1;
 export const WORKSPACE_PATH_STATE_SPEC_ID = "workspace_path_state";
 export const WORKSPACE_PATH_STATE_SPEC_VERSION = 1;
+
+type WorkspacePathState = "file" | "directory" | "symlink" | "absent";
 
 export interface DefaultProgramVerifierConfigurationV1 {
   operationSpecs: HostVerificationOperationRegistryV1;
