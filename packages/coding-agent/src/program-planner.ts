@@ -123,16 +123,44 @@ function proposalFromArguments(
   return proposal;
 }
 
-function proposalTool(): ToolDefinition {
+function verifierProposalSchema(begin: ProgramPlanningBegin): Record<string, unknown> {
+  const catalog = begin.verifierCatalog;
+  if (catalog === undefined) return { type: "object" };
+  return {
+    type: "object",
+    properties: {
+      obligationId: { type: "string" },
+      verifier: {
+        oneOf: catalog.verifiers.map((descriptor) => ({
+          type: "object",
+          properties: {
+            specId: { const: descriptor.specId },
+            specVersion: { const: descriptor.specVersion },
+          },
+          required: ["specId", "specVersion"],
+        })),
+      },
+      args: { type: "object" },
+      freshnessScope: { type: "object" },
+    },
+    required: ["obligationId", "verifier", "args", "freshnessScope"],
+  };
+}
+
+function proposalTool(begin: ProgramPlanningBegin): ToolDefinition {
   return {
     name: PROGRAM_PROPOSAL_TOOL_NAME,
-    description: "Submit one candidate canonical Program to the Host for validation and sealing. The Host, not the model, owns admission and acceptance.",
+    description: "Submit one candidate canonical Program to the Host for validation and sealing. The Host, not the model, owns admission, verifier canonicalization, and acceptance.",
     inputSchema: {
       type: "object",
       properties: {
         objective: { type: "string" },
         workItems: { type: "array", items: { type: "object" } },
-        verification: { type: "array", items: { type: "object" } },
+        verification: {
+          type: "array",
+          ...(begin.verifierCatalog !== undefined ? { minItems: 1 } : {}),
+          items: verifierProposalSchema(begin),
+        },
         outputSlots: { type: "array", items: { type: "object" } },
         productionSteps: { type: "array", items: { type: "object" } },
       },
@@ -166,15 +194,24 @@ function planningTools(begin: ProgramPlanningBegin): {
       inputSchema: cloned.definition.inputSchema,
     });
   }
-  tools.push(proposalTool());
+  tools.push(proposalTool(begin));
   return { tools, reads };
 }
 
 function planningSystemPrompt(begin: ProgramPlanningBegin): string {
+  const verifierLines = begin.verifierCatalog === undefined
+    ? []
+    : [
+        "Declare at least one verification obligation using only the exact Host verifier catalog below.",
+        "Each verification entry must be {obligationId, verifier:{specId,specVersion}, args, freshnessScope}. The Host canonicalizes verifier arguments and computes trusted digests; do not invent verifier identities or claim verifier satisfaction.",
+        `Verifier catalog digest: ${begin.verifierCatalog.digest}`,
+        `Verifier catalog: ${stringify(begin.verifierCatalog.verifiers)}`,
+      ];
   return [
     "You are the ALCODE Program planner operating inside one bounded Host planning episode.",
     "Use only the planning tools advertised in this request to inspect the workspace.",
     `You must eventually call ${PROGRAM_PROPOSAL_TOOL_NAME} with one candidate Program whose objective exactly matches the caller objective.`,
+    ...verifierLines,
     "The Host validates every semantic read and proposal. A tool rejection may provide correctable facts; correct and resubmit only while this same episode remains current.",
     "A sealed proposal ends planning immediately. Do not claim that the Program is accepted, executed, verified, or complete; those decisions remain Host/Application authority.",
     `Planning episode: ${begin.planningEpisodeId}`,

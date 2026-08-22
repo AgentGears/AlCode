@@ -147,6 +147,23 @@ export interface ProgramPlanningCatalogV1 {
   reads: ProgramPlanningReadDescriptorV1[];
 }
 
+export type ProgramVerifierPredicateKindV1 = "operation_result" | "workspace_path_state";
+
+/** Host-owned verifier contract advertised for exactly one planning episode. */
+export interface ProgramVerifierDescriptorV1 {
+  specId: string;
+  specVersion: number;
+  predicateKind: ProgramVerifierPredicateKindV1;
+  description: string;
+  inputSchema: ModelToolDefinition["inputSchema"];
+}
+
+/** Canonically ordered planning-time verifier catalog. Capability names remain Host-internal. */
+export interface ProgramVerifierCatalogV1 {
+  digest: string;
+  verifiers: ProgramVerifierDescriptorV1[];
+}
+
 export interface ProgramPlanningReadRequest {
   type: "program.planning.read";
   version: typeof PROGRAM_EXECUTION_MESSAGE_VERSION;
@@ -216,6 +233,8 @@ export interface ProgramPlanningBegin {
   objective: string;
   /** Optional on the v1 wire for legacy compatibility; P-01 Hosts always provide it. */
   planningCatalog?: ProgramPlanningCatalogV1;
+  /** Optional on the v1 wire for legacy compatibility; P-01 product Hosts always provide it. */
+  verifierCatalog?: ProgramVerifierCatalogV1;
 }
 
 export interface ProgramPlanningReadResult {

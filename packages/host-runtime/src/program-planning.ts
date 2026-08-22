@@ -1,6 +1,7 @@
 import {
   PROGRAM_EXECUTION_MESSAGE_VERSION,
   type AgentToHostMessage,
+  type ProgramCreationProposalWireV1,
   type ProgramPlanningBegin,
   type ProgramPlanningReadResult,
   type ProgramProposalResult,
@@ -20,6 +21,7 @@ import {
   type ProgramCreationProposalV1,
 } from "./program-creation.ts";
 import { PlanningReadError, PlanningReadRegistry, TrackedPlanningReads } from "./planning-read.ts";
+import type { HostProgramVerifierCatalogV1 } from "./program-verifier-catalog.ts";
 
 export const PROGRAM_PLANNING_MAX_CACHED_RESPONSES = 256;
 
@@ -31,6 +33,7 @@ interface ProgramPlanningEpisodeV1 {
   objective: string;
   sourceObjectiveEventId: string;
   planningCatalogDigest: string;
+  verifierCatalogDigest?: string;
   planningReads: TrackedPlanningReads;
   submitted: boolean;
 }
@@ -46,6 +49,8 @@ export interface ProgramPlanningServiceOptionsV1 {
   planningReads: PlanningReadRegistry;
   creation: ProgramCreationServiceV1;
   agents: ProgramPlanningAgentAuthorityV1;
+  /** Optional only for legacy direct-service fixtures. P-01 product runtime always supplies it. */
+  verifiers?: HostProgramVerifierCatalogV1;
 }
 
 export class ProgramPlanningControlError extends Error {
@@ -107,20 +112,30 @@ function requireNonEmpty(label: string, value: string): void {
 
 function prevalidateProposal(
   episode: ProgramPlanningEpisodeV1,
-  proposal: ProgramCreationProposalV1,
-): void {
+  proposal: ProgramCreationProposalWireV1,
+  verifiers: HostProgramVerifierCatalogV1 | undefined,
+): ProgramCreationProposalV1 {
   if (proposal.objective !== episode.objective) {
     throw new ProgramPlanningControlError("Program proposal objective differs from the Host planning objective");
   }
+  const candidate: ProgramCreationProposalV1 = {
+    objective: proposal.objective,
+    workItems: structuredClone(proposal.workItems) as ProgramCreationProposalV1["workItems"],
+    verification: verifiers === undefined
+      ? structuredClone(proposal.verification) as ProgramCreationProposalV1["verification"]
+      : verifiers.canonicalizeVerification(proposal.verification),
+    outputSlots: structuredClone(proposal.outputSlots) as ProgramCreationProposalV1["outputSlots"],
+    productionSteps: structuredClone(proposal.productionSteps) as ProgramCreationProposalV1["productionSteps"],
+  };
   try {
     createProgramState({
       programStateId: asProgramStateId(String(mkProgramStateId())),
       sourceSessionId: String(episode.sourceSessionId) as ProgramCreationInput["sourceSessionId"],
-      objective: proposal.objective,
-      workItems: proposal.workItems,
-      verification: proposal.verification,
-      outputSlots: proposal.outputSlots,
-      productionSteps: proposal.productionSteps,
+      objective: candidate.objective,
+      workItems: candidate.workItems,
+      verification: candidate.verification,
+      outputSlots: candidate.outputSlots,
+      productionSteps: candidate.productionSteps,
       creationPolicyRequirements: [],
     });
   } catch (error) {
@@ -128,6 +143,7 @@ function prevalidateProposal(
       `Program proposal failed structural validation: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+  return candidate;
 }
 
 export class ProgramPlanningServiceV1 {
@@ -159,6 +175,7 @@ export class ProgramPlanningServiceV1 {
     if (previous !== undefined) this.episodes.delete(previous);
 
     const planningCatalog = this.options.planningReads.catalog();
+    const verifierCatalog = this.options.verifiers?.catalog();
     const planningEpisodeId = uuidv7();
     const episode: ProgramPlanningEpisodeV1 = {
       planningEpisodeId,
@@ -168,6 +185,7 @@ export class ProgramPlanningServiceV1 {
       objective: input.objective,
       sourceObjectiveEventId,
       planningCatalogDigest: planningCatalog.digest,
+      ...(verifierCatalog !== undefined ? { verifierCatalogDigest: verifierCatalog.digest } : {}),
       planningReads: this.options.planningReads.track(this.options.store.workspaceId),
       submitted: false,
     };
@@ -181,6 +199,7 @@ export class ProgramPlanningServiceV1 {
       planningEpisodeId,
       objective: input.objective,
       planningCatalog,
+      ...(verifierCatalog !== undefined ? { verifierCatalog } : {}),
     };
   }
 
@@ -212,6 +231,12 @@ export class ProgramPlanningServiceV1 {
     }
     if (episode.planningCatalogDigest !== this.options.planningReads.catalog().digest) {
       const result = this.failureFor(message, "stale", "program_planning_catalog_stale", "Planning catalog changed during the episode");
+      this.cache(cacheKey, result);
+      return result;
+    }
+    if (episode.verifierCatalogDigest !== undefined
+        && this.options.verifiers?.catalog().digest !== episode.verifierCatalogDigest) {
+      const result = this.failureFor(message, "stale", "program_verifier_catalog_stale", "Verifier catalog changed during the episode");
       this.cache(cacheKey, result);
       return result;
     }
@@ -249,8 +274,9 @@ export class ProgramPlanningServiceV1 {
       if (episode.submitted) {
         response = this.failureFor(message, "stale", "program_planning_closed", "Planning proposal was already submitted");
       } else {
+        let canonicalProposal: ProgramCreationProposalV1;
         try {
-          prevalidateProposal(episode, message.proposal as ProgramCreationProposalV1);
+          canonicalProposal = prevalidateProposal(episode, message.proposal, this.options.verifiers);
         } catch (error) {
           response = this.failureFor(
             message,
@@ -266,7 +292,7 @@ export class ProgramPlanningServiceV1 {
         try {
           await this.options.creation.sealDraft({
             sourceSessionId: episode.sourceSessionId,
-            proposal: message.proposal as ProgramCreationProposalV1,
+            proposal: canonicalProposal,
             planningReads: episode.planningReads,
             sourceObjectiveEventId: episode.sourceObjectiveEventId,
           });

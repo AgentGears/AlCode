@@ -12,7 +12,6 @@ import {
   AgentSupervisor,
   DefaultHostPolicy,
   HostArtifactStore,
-  HostVerificationOperationRegistryV1,
   createProgramExecutionRuntimeV1,
   type ProgramExecutionObservationSourceV1,
 } from "@alcode/host-runtime";
@@ -21,6 +20,7 @@ import { WorkspaceRegistry } from "@alcode/workspace";
 import { createDefaultHostCapabilities } from "./host-capabilities.ts";
 import { createLocalWorkspace } from "./capabilities/local-workspace.ts";
 import { createLocalPlanningReadRegistry } from "./planning-read-catalog.ts";
+import { createDefaultProgramVerifierConfiguration } from "./verification-profile.ts";
 
 const SYSTEM_PROMPT = "You are ALCODE, a memory-native coding agent.";
 const APPLICATION_PROTOCOL_VERSION = 1 as const;
@@ -168,6 +168,12 @@ async function main(): Promise<void> {
     },
   };
 
+  const verifierConfiguration = createDefaultProgramVerifierConfiguration({
+    root,
+    capabilities,
+    observations,
+  });
+
   const runtime = createProgramExecutionRuntimeV1({
     host: {
       store: locked,
@@ -183,8 +189,9 @@ async function main(): Promise<void> {
       validate: () => undefined,
     },
     observations,
-    pathObservations: { observePath: async () => ({ status: "unknown", reason: "No CLI path-state verification obligation was requested" }) },
-    operationSpecs: new HostVerificationOperationRegistryV1([]),
+    pathObservations: verifierConfiguration.pathObservations,
+    operationSpecs: verifierConfiguration.operationSpecs,
+    verifierCatalog: verifierConfiguration.verifierCatalog,
     artifactStore: new HostArtifactStore({ root: join(dirname(workspaceEntry.dbPath), "artifacts") }),
   });
 
