@@ -383,13 +383,30 @@ class AgentProtocolBridge implements AgentProtocolClient {
   }
 }
 
+function createSemanticClientFacade(bridge: AgentProtocolBridge): AgentProtocolClient {
+  return Object.freeze({
+    announceHello: bridge.announceHello.bind(bridge),
+    reportError: bridge.reportError.bind(bridge),
+    requestContextUpdate: bridge.requestContextUpdate.bind(bridge),
+    requestProgramPlanningRead: bridge.requestProgramPlanningRead.bind(bridge),
+    submitProgramProposal: bridge.submitProgramProposal.bind(bridge),
+    submitProgramProgress: bridge.submitProgramProgress.bind(bridge),
+    requestCapability: bridge.requestCapability.bind(bridge),
+    recordAssistant: bridge.recordAssistant.bind(bridge),
+    recordToolResult: bridge.recordToolResult.bind(bridge),
+    reportIdle: bridge.reportIdle.bind(bridge),
+    onHostMessage: bridge.onHostMessage.bind(bridge),
+    close: bridge.close.bind(bridge),
+  });
+}
+
 /** Test seam only; the production worker uses `createProcessAgentProtocolBridge`. */
 export function createAgentProtocolBridgeForTransport(
   transport: ProtocolTransport<AgentToHostMessage, HostToAgentMessage>,
 ): AgentProtocolClient {
-  return new AgentProtocolBridge(transport);
+  return createSemanticClientFacade(new AgentProtocolBridge(transport));
 }
 
 export function createProcessAgentProtocolBridge(): AgentProtocolClient {
-  return new AgentProtocolBridge(createProcessAgentTransport());
+  return createSemanticClientFacade(new AgentProtocolBridge(createProcessAgentTransport()));
 }
