@@ -17,6 +17,7 @@ import {
 } from "@alcode/host-runtime";
 import { openLockedWorkspaceStore } from "@alcode/storage";
 import { WorkspaceRegistry } from "@alcode/workspace";
+import { agentErrorStillTargetsLiveConnection } from "./agent-error-arbitration.ts";
 import { createDefaultHostCapabilities } from "./host-capabilities.ts";
 import { createLocalWorkspace } from "./capabilities/local-workspace.ts";
 import { createLocalPlanningReadRegistry } from "./planning-read-catalog.ts";
@@ -309,7 +310,14 @@ async function main(): Promise<void> {
     try {
       while (Date.now() < driveDeadline) {
         const fatal = agentError;
-        if (fatal !== undefined) throw fatal;
+        if (fatal !== undefined) {
+          const sameConnectionStillLive = await agentErrorStillTargetsLiveConnection(
+            supervisor,
+            PROGRAM_REDRIVE_INTERVAL_MS,
+          );
+          if (sameConnectionStillLive) throw fatal;
+          agentError = undefined;
+        }
 
         const current = await readProgram();
         const program = current.program;
