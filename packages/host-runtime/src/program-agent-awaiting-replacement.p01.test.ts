@@ -99,6 +99,8 @@ describeLocked("P-01 awaiting-verification Agent replacement", () => {
       observations: { observe: async () => ({ status: "complete" as const, base: observedBase }) },
       capabilities: [],
     });
+    const initialRecovery = await recovery.recover();
+    expect(initialRecovery.clear).toBe(true);
     const dispatch = new ProgramDispatchServiceV1({
       store: locked.store,
       admission,

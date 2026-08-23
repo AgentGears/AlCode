@@ -148,6 +148,8 @@ async function fixture(quiescenceAvailable: boolean) {
     observations: { observe: async () => ({ status: "complete" as const, base: observedBase }) },
     capabilities: [recoveryCapability(quiescenceAvailable)],
   });
+  const initialRecovery = await recovery.recover();
+  if (!initialRecovery.clear) throw new Error(`initial recovery blocked: ${initialRecovery.reason ?? "unknown"}`);
   const dispatch = new ProgramDispatchServiceV1({
     store: locked.store,
     admission,
