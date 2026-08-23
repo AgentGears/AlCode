@@ -87,8 +87,8 @@ function maxHistoricalAgentGeneration(
   let max = 0;
   for (const event of events) {
     if (!isProgramStateEvent(event.type)) continue;
-    const state = record(event.payload).state as ProgramState | undefined;
-    const attempt = state?.activeAttempt;
+    const state = record(event.payload) as { state?: ProgramState };
+    const attempt = state.state?.activeAttempt;
     if (attempt !== null && attempt !== undefined && String(attempt.sessionId) === sessionId) {
       max = Math.max(max, attempt.agentGeneration);
     }
@@ -115,6 +115,33 @@ function replacementTransitionDraft(
     payload: {
       state,
       transitionKind: "attempt.interrupt",
+      reason: "agent_replaced",
+      replacementAgentGeneration: newGeneration,
+    },
+    payloadSchemaVersion: 1,
+    producer: { kind: "runtime", component: "program-agent" },
+  };
+}
+
+function replacementPendingTransitionDraft(
+  store: WorkspaceEventStore,
+  sessionId: EventSessionId,
+  state: ProgramState,
+  oldAttemptId: string,
+  newGeneration: number,
+): EventDraft<string, unknown> {
+  return {
+    eventId: mkEventId(),
+    idempotencyKey: `program.agent_replaced.pending:${String(state.programStateId)}:${oldAttemptId}:${newGeneration}`,
+    correlationId: oldAttemptId,
+    workspaceId: asWorkspaceId(store.workspaceId),
+    sessionId,
+    programStateId: asEventProgramStateId(String(state.programStateId)),
+    occurredAt: new Date().toISOString(),
+    type: "program.transitioned",
+    payload: {
+      state,
+      transitionKind: "work.lifecycle.set:pending",
       reason: "agent_replaced",
       replacementAgentGeneration: newGeneration,
     },
@@ -479,15 +506,38 @@ export class ProgramAgentServiceV1 implements ProgramAgentGenerationAuthorityV1 
           state.activeAttempt.agentGeneration === newGeneration) {
         return;
       }
-      const oldAttemptId = String(state.activeAttempt.programAttemptId);
-      const next = applyProgramTransition(state, {
+      const oldAttempt = state.activeAttempt;
+      const oldAttemptId = String(oldAttempt.programAttemptId);
+      const oldWork = state.workItems.find((work) => work.workItemId === oldAttempt.workItemId);
+      if (oldWork === undefined) {
+        throw new ProgramAgentControlError("Active replacement work item is missing");
+      }
+      const interrupted = applyProgramTransition(state, {
         kind: "attempt.interrupt",
         expectedProgramRevision: state.revision,
-        programAttemptId: state.activeAttempt.programAttemptId,
+        programAttemptId: oldAttempt.programAttemptId,
       });
-      await this.store.append([
-        replacementTransitionDraft(this.store, sessionId, next, oldAttemptId, newGeneration),
-      ]);
+      const drafts: EventDraft<string, unknown>[] = [
+        replacementTransitionDraft(this.store, sessionId, interrupted, oldAttemptId, newGeneration),
+      ];
+      if (oldWork.lifecycle === "awaiting_verification") {
+        const pending = applyProgramTransition(interrupted, {
+          kind: "work.lifecycle.set",
+          expectedProgramRevision: interrupted.revision,
+          workItemId: oldAttempt.workItemId,
+          lifecycle: "pending",
+        });
+        if (pending !== interrupted) {
+          drafts.push(replacementPendingTransitionDraft(
+            this.store,
+            sessionId,
+            pending,
+            oldAttemptId,
+            newGeneration,
+          ));
+        }
+      }
+      await this.store.append(drafts);
     });
   }
 }
