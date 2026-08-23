@@ -193,6 +193,18 @@ export class HostRuntime {
       throw new Error(`Agent missing required capability: ${DURABLE_TRANSCRIPT_CAPABILITY}`);
     }
 
+    if (resumeReason === "agent_replaced") {
+      // Agent-process loss is a crash boundary. Before generation B can become
+      // current, turn every nonterminal Operation into an explicit interrupted
+      // recovery fact and close any dangling durable transcript tool calls with
+      // a non-authoritative recovery error. Phase-1 recovery still exclusively
+      // decides external effect certainty before any fresh Attempt is issued.
+      await this.store.store.recoverInterruptedOperations();
+      if (durableTranscript) {
+        await this.transcriptAdmission.recoverInterruptedToolResults(session.sessionId);
+      }
+    }
+
     await this.programAgents.attach(
       session.sessionId,
       connection.generationId,
