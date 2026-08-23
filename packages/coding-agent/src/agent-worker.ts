@@ -36,6 +36,7 @@ import {
   PROGRAM_EXECUTION_PROMPT,
   renderProgramAttemptContext,
 } from "./program-attempt-context.ts";
+import { RecoverableRunQueueV1 } from "./recoverable-run-queue.ts";
 
 class ProgramAttemptExecutionStaleError extends Error {
   constructor(message: string) {
@@ -76,7 +77,7 @@ async function main(): Promise<void> {
   let context: ContextProvide | null = null;
   let history: Message[] = [];
   let abortController = new AbortController();
-  let runChain: Promise<void> = Promise.resolve();
+  const runQueue = new RecoverableRunQueueV1();
   const inFlightProgramAttempts = new Set<string>();
 
   const reportError = async (message: string, activeSessionId?: string): Promise<void> => {
@@ -245,14 +246,19 @@ async function main(): Promise<void> {
         const attemptKey = `${message.authority.programStateId}:${message.authority.programAttemptId}:${message.authority.agentGeneration}`;
         if (inFlightProgramAttempts.has(attemptKey)) break;
         inFlightProgramAttempts.add(attemptKey);
-        runChain = runChain
-          .then(() => runInput(PROGRAM_EXECUTION_PROMPT, undefined, structuredClone(message.authority)))
-          .finally(() => { inFlightProgramAttempts.delete(attemptKey); });
+        void runQueue.enqueue(
+          () => runInput(PROGRAM_EXECUTION_PROMPT, undefined, structuredClone(message.authority)),
+          (error) => reportError(error instanceof Error ? error.message : String(error), message.sessionId),
+          () => { inFlightProgramAttempts.delete(attemptKey); },
+        );
         break;
       }
       case "input.admitted":
         if (message.sessionId !== sessionId) throw new Error("input.admitted session mismatch");
-        runChain = runChain.then(() => runInput(message.text, message.timestamp));
+        void runQueue.enqueue(
+          () => runInput(message.text, message.timestamp),
+          (error) => reportError(error instanceof Error ? error.message : String(error), message.sessionId),
+        );
         break;
       case "cancel":
         if (message.sessionId === sessionId) {

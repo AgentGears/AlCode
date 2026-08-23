@@ -18,6 +18,7 @@ import {
 import { openLockedWorkspaceStore } from "@alcode/storage";
 import { WorkspaceRegistry } from "@alcode/workspace";
 import { agentErrorStillTargetsLiveConnection } from "./agent-error-arbitration.ts";
+import { recoverAfterAgentReplacement } from "./agent-replacement-recovery.ts";
 import { createDefaultHostCapabilities } from "./host-capabilities.ts";
 import { createLocalWorkspace } from "./capabilities/local-workspace.ts";
 import { createLocalPlanningReadRegistry } from "./planning-read-catalog.ts";
@@ -330,7 +331,7 @@ async function main(): Promise<void> {
         if (supervisor.getCurrent() === null) {
           connection = await supervisor.start();
           await attachConnection(connection, "agent_replaced");
-          await runtime.recovery.recover();
+          await recoverAfterAgentReplacement(locked.store, runtime.recovery);
         }
 
         if (program.activeAttempt === undefined) {
