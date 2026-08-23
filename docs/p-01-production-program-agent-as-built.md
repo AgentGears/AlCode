@@ -29,10 +29,10 @@ This document records the as-built implementation of AC-P01-01 through AC-P01-12
 | AC-P01-06 | the product publishes a real Host verifier catalog, enforces nonempty verification, and executes Host-owned path/operation verification rather than model self-judgment. |
 | AC-P01-07 | Host→Agent `program.attempt.execute` carries exact Session/Program/Attempt/work/generation authority. The worker refreshes Host context before inference, coalesces only live duplicate execution, permits later re-drive, and fails stale authority closed. |
 | AC-P01-08 | negative verification records durable bounded `program.verification.failed` facts, retires the old Attempt, returns work pending, and projects the latest Host failure fact into the fresh retry Attempt. |
-| AC-P01-09 | successful verification can dispatch the next structurally-ready work item and the runtime re-requests execution without new caller input. |
-| AC-P01-10 | Agent replacement retires dead-generation Attempt authority before fresh authority. Interrupted Operations and transcript gaps are recovered through Host-owned truth; certain/quiescent settlement can continue while indeterminate mutation recovery blocks redispatch. |
+| AC-P01-09 | successful verification dispatches the next structurally-ready work item and Host idle routing immediately sends that fresh Attempt's `program.attempt.execute` request without new caller input. |
+| AC-P01-10 | Agent replacement retires dead-generation Attempt authority before fresh authority. Awaiting-verification work is returned pending before B is scheduled; interrupted Operations are recovered through Host-owned truth, certain/quiescent settlement can continue, and indeterminate mutation recovery blocks redispatch. |
 | AC-P01-11 | execution-base/effect uncertainty and Completion Oracle semantics remain unchanged. Stale first dispatch and finite product-drive exhaustion cancel/fail explicitly; same-Session automatic replan is not introduced. |
-| AC-P01-12 | `scripts/gate/gate-product-agent.ts` composes `gate:1.1`, P-01-specific AC01–11 proofs, relevant S-01 lifecycle/authority tests, and ownership typechecks. `.github/workflows/p-01-product-agent.yml` checks out the exact PR head and runs that authoritative gate against that exact identity. |
+| AC-P01-12 | `scripts/gate/gate-product-agent.ts` composes `gate:1.1`, P-01-specific AC01–11 proofs, relevant S-01 lifecycle/authority tests, and ownership typechecks. `.github/workflows/p-01-product-agent.yml` checks out the exact PR head, triggers for production Agent package and extension changes, and runs that authoritative gate against that exact identity. |
 
 ## Default product flow
 
@@ -51,13 +51,14 @@ caller objective
   → Host verifier execution
       fail → old Attempt retired + bounded Host failure fact → fresh retry Attempt
       pass → work complete → fresh successor Attempt if structurally ready
+  → Host sends successor program.attempt.execute without caller input
   → Completion Oracle
   → Program.completed
 ```
 
 ## Exact closure gate
 
-`pnpm gate:product-agent` is the authoritative P-01 closure command. In pull-request CI the workflow explicitly checks out `github.event.pull_request.head.sha`, exports that value as `ALCODE_GATE_SHA`, and the GateReceipt records that exact implementation head instead of GitHub's synthetic pull-request merge ref. On `main`, the receipt records the pushed commit SHA.
+`pnpm gate:product-agent` is the authoritative P-01 closure command. In pull-request CI the workflow explicitly checks out `github.event.pull_request.head.sha`, exports that value as `ALCODE_GATE_SHA`, and the GateReceipt records that exact implementation head instead of GitHub's synthetic pull-request merge ref. On `main`, the receipt records the pushed commit SHA. The workflow triggers on `packages/**` and `extensions/**` so changes to the production coding Agent or cognition extension cannot bypass the product gate.
 
 The gate covers:
 
@@ -67,13 +68,14 @@ The gate covers:
 - real Host verifier catalog/nonempty policy/path verification;
 - exact Attempt execution protocol/context/re-drive behavior;
 - verification failure, fresh retry authority, and bounded Host failure context;
-- multi-work successor dispatch;
-- Agent-loss/replacement retirement, transcript closure, and recovery gating;
+- multi-work successor dispatch plus the actual follow-on `program.attempt.execute` transport request;
+- Agent-loss/replacement retirement, awaiting-verification requeue, fresh-generation scheduling, transcript closure, and recovery gating;
+- certain/quiescent interrupted-mutation recovery permitting fresh B authority and indeterminate quiescence blocking redispatch;
 - execution-base/effect fail-closed behavior and Completion Oracle;
 - Phase 1.1 plus relevant S-01 lifecycle/authority composition;
 - protocol/Host/Agent type ownership.
 
-Phase 1.1 remains the authoritative composed proof for inherited Agent replacement/recovery semantics, including fresh replacement Agent authority and recovery-gated continuation. P-01 adds stable focused proofs for interrupted-operation recovery ordering and for closing dead-generation durable transcript gaps before replacement context without asserting Operation outcome or effect. Two PR-5 construction fixtures (`program-agent-awaiting-replacement.p01.test.ts` and `program-replacement-recovery.p01.test.ts`) are not part of the closure gate because their setup constructs a recovery controller without establishing a clear initial recovery state, so they now fail before the replacement scenario begins with `recovery_blocked`; this is a fixture-construction mismatch, not an accepted runtime behavior change, and the authoritative Phase 1.1 replacement/recovery scenarios remain green.
+The replacement fixtures establish an initially clear Phase-1 recovery controller before first dispatch, then exercise the replacement boundary itself. The gate therefore proves both positive continuation after certain/quiescent recovery and fail-closed blocking when exact mutation quiescence cannot be established.
 
 No live API credential, public network, third-party model availability, or provider billing is required for the blocking gate. Deterministic scripted providers are test fixtures only.
 
@@ -85,4 +87,4 @@ P-01 closure does **not** authorize Code Mode, durable child/subagent Sessions, 
 
 ## Non-blocking follow-up
 
-The frozen plan separately identifies optional future improvements such as semantic CodeIntelligence planning tools, additional provider adapters, richer verifier catalogs, richer retry summaries, read-only Program policy, improved proposal UX, and provider/model evaluation. The two stale PR-5 replacement fixture constructions can also be updated later to establish an initially clear recovery controller before their first dispatch. None is required for P-01 closure.
+The frozen plan separately identifies optional future improvements such as semantic CodeIntelligence planning tools, additional provider adapters, richer verifier catalogs, richer retry summaries, read-only Program policy, improved proposal UX, and provider/model evaluation. None is required for P-01 closure.

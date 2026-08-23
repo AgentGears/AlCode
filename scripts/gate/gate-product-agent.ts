@@ -86,18 +86,23 @@ checks.push(check(
 
 checks.push(check(
   "product-agent.ac09.successor",
-  () => vitest("packages/host-runtime/src/program-dispatch.test.ts"),
-  "the passed Phase 1.1 progress/verification proof establishes deterministic successor dispatch without new caller input; dispatch invariants remain independently green",
+  () => vitest(
+    "packages/host-runtime/src/program-dispatch.test.ts",
+    "packages/host-runtime/src/program-successor-execution.p01.test.ts",
+  ),
+  "successful verification dispatches structurally-ready successor work and Host idle routing sends the fresh program.attempt.execute request without new caller input",
 ));
 
 checks.push(check(
   "product-agent.ac10.agent-replacement",
   () => {
+    vitest("packages/host-runtime/src/program-agent-awaiting-replacement.p01.test.ts");
+    vitest("packages/host-runtime/src/program-replacement-recovery.p01.test.ts");
     vitest("packages/coding-agent/src/agent-replacement-recovery.test.ts");
     vitest("packages/host-runtime/src/host-agent-replacement-context.p01.test.ts");
     vitest("packages/host-runtime/src/transcript-agent-replacement.p01.test.ts");
   },
-  "the passed Phase 1.1 replacement/recovery scenarios prove dead-generation retirement, fresh replacement authority, and recovery gating; P-01-specific stable proofs add interrupted-operation ordering plus durable transcript closure before replacement context without inventing effect truth",
+  "end-to-end replacement proofs retire generation A before fresh B authority, requeue awaiting-verification work, issue B only after certain/quiescent recovery, and remain recovery-blocked when mutation quiescence is indeterminate",
 ));
 
 checks.push(check(
