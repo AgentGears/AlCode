@@ -7,6 +7,7 @@ import {
   PROGRAM_PROGRESS_MAX_BYTES,
   PROGRAM_PROGRESS_MAX_EVIDENCE,
   PROGRAM_PROPOSAL_MAX_BYTES,
+  PROGRAM_RETRY_FAILURE_REASON_MAX_BYTES,
   type AgentToHostMessage,
   type HostToAgentMessage,
 } from "./messages.ts";
@@ -45,6 +46,16 @@ function isProgramAttemptAuthority(value: unknown): boolean {
     && hasString(value, "programAttemptId")
     && hasString(value, "workItemId")
     && hasPositiveInteger(value, "agentGeneration");
+}
+function isProgramRetryFailureFact(value: unknown): boolean {
+  return isObject(value)
+    && hasOnlyKeys(value, ["eventId", "programAttemptId", "workItemId", "verificationObligationId", "reason", "sourceOperationId"])
+    && hasString(value, "eventId")
+    && hasString(value, "programAttemptId")
+    && hasString(value, "workItemId")
+    && (value.verificationObligationId === undefined || hasString(value, "verificationObligationId"))
+    && hasBoundedNonEmptyString(value, "reason", PROGRAM_RETRY_FAILURE_REASON_MAX_BYTES)
+    && (value.sourceOperationId === undefined || hasString(value, "sourceOperationId"));
 }
 function isProgramCreationProposalWire(value: unknown): boolean {
   return isObject(value)
@@ -133,6 +144,7 @@ function isProgramAttemptProjection(value: unknown): boolean {
   if (!Array.isArray(value.dependencies) || !Array.isArray(value.blockers) || !Array.isArray(value.verification)
       || !Array.isArray(value.outputSlots) || !Array.isArray(value.productionSteps)
       || !Array.isArray(value.decisiveEvidence) || !Array.isArray(value.artifacts)) return false;
+  if (value.retryFailure !== undefined && !isProgramRetryFailureFact(value.retryFailure)) return false;
   if (!hasNumber(value.executionBase, "workspaceEffectGeneration") || !isObject(value.executionBase.observation)) return false;
   const observation = value.executionBase.observation;
   return observation.kind === "workspace-observation-v1" && hasString(observation, "providerKind")
@@ -216,6 +228,11 @@ export function isHostToAgentMessage(value: unknown): value is HostToAgentMessag
         && (value.programRevision === undefined || hasPositiveInteger(value, "programRevision"))
         && (value.errorCode === undefined || hasString(value, "errorCode"))
         && (value.error === undefined || hasString(value, "error"));
+    case "program.attempt.execute":
+      return value.version === PROGRAM_EXECUTION_MESSAGE_VERSION
+        && hasOnlyKeys(value, ["type", "version", "requestId", "sessionId", "authority"])
+        && hasString(value, "requestId") && hasString(value, "sessionId")
+        && isProgramAttemptAuthority(value.authority);
     case "context.provide":
       return hasString(value, "requestId") && hasString(value, "sessionId") && hasString(value, "systemPrompt")
         && typeof value.orientationRequired === "boolean" && Array.isArray(value.toolNames)

@@ -6,7 +6,12 @@ import {
   type PersistedDomainEvent,
   type SessionId as EventSessionId,
 } from "@alcode/events";
-import type { ProgramAttemptAuthorityV1, ProgramAttemptProjectionV1 } from "@alcode/agent-protocol";
+import {
+  PROGRAM_RETRY_FAILURE_REASON_MAX_BYTES,
+  type ProgramAttemptAuthorityV1,
+  type ProgramAttemptProjectionV1,
+  type ProgramRetryFailureFactV1,
+} from "@alcode/agent-protocol";
 import {
   applyProgramTransition,
   assertValidProgramState,
@@ -82,8 +87,8 @@ function maxHistoricalAgentGeneration(
   let max = 0;
   for (const event of events) {
     if (!isProgramStateEvent(event.type)) continue;
-    const state = record(event.payload).state as ProgramState | undefined;
-    const attempt = state?.activeAttempt;
+    const state = record(event.payload) as { state?: ProgramState };
+    const attempt = state.state?.activeAttempt;
     if (attempt !== null && attempt !== undefined && String(attempt.sessionId) === sessionId) {
       max = Math.max(max, attempt.agentGeneration);
     }
@@ -110,6 +115,33 @@ function replacementTransitionDraft(
     payload: {
       state,
       transitionKind: "attempt.interrupt",
+      reason: "agent_replaced",
+      replacementAgentGeneration: newGeneration,
+    },
+    payloadSchemaVersion: 1,
+    producer: { kind: "runtime", component: "program-agent" },
+  };
+}
+
+function replacementPendingTransitionDraft(
+  store: WorkspaceEventStore,
+  sessionId: EventSessionId,
+  state: ProgramState,
+  oldAttemptId: string,
+  newGeneration: number,
+): EventDraft<string, unknown> {
+  return {
+    eventId: mkEventId(),
+    idempotencyKey: `program.agent_replaced.pending:${String(state.programStateId)}:${oldAttemptId}:${newGeneration}`,
+    correlationId: oldAttemptId,
+    workspaceId: asWorkspaceId(store.workspaceId),
+    sessionId,
+    programStateId: asEventProgramStateId(String(state.programStateId)),
+    occurredAt: new Date().toISOString(),
+    type: "program.transitioned",
+    payload: {
+      state,
+      transitionKind: "work.lifecycle.set:pending",
       reason: "agent_replaced",
       replacementAgentGeneration: newGeneration,
     },
@@ -154,7 +186,54 @@ function clipReason(reason: string): { reason: string; truncated: boolean } {
   return { reason: reason.slice(0, MAX_BLOCKER_REASON_CHARS), truncated: true };
 }
 
-function buildProjection(state: ProgramState): ProgramAttemptProjectionV1 {
+function clipUtf8(value: string, maxBytes: number): string {
+  if (Buffer.byteLength(value, "utf8") <= maxBytes) return value;
+  let low = 0;
+  let high = value.length;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (Buffer.byteLength(value.slice(0, mid), "utf8") <= maxBytes) low = mid;
+    else high = mid - 1;
+  }
+  return value.slice(0, low);
+}
+
+function latestRetryFailure(
+  events: readonly PersistedDomainEvent<string, unknown>[],
+  state: ProgramState,
+  workItemId: string,
+): ProgramRetryFailureFactV1 | undefined {
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index]!;
+    if (event.type !== "program.verification.failed"
+        || String(event.programStateId ?? "") !== String(state.programStateId)) continue;
+    const payload = record(event.payload);
+    if (String(payload.workItemId ?? "") !== workItemId) continue;
+    const programAttemptId = String(payload.programAttemptId ?? "");
+    const reason = String(payload.reason ?? "");
+    if (!programAttemptId || !reason) continue;
+    const verificationObligationId = typeof payload.verificationObligationId === "string"
+      ? payload.verificationObligationId
+      : undefined;
+    const sourceOperationId = typeof payload.sourceOperationId === "string"
+      ? payload.sourceOperationId
+      : undefined;
+    return {
+      eventId: String(event.eventId),
+      programAttemptId,
+      workItemId,
+      ...(verificationObligationId !== undefined ? { verificationObligationId } : {}),
+      reason: clipUtf8(reason, PROGRAM_RETRY_FAILURE_REASON_MAX_BYTES),
+      ...(sourceOperationId !== undefined ? { sourceOperationId } : {}),
+    };
+  }
+  return undefined;
+}
+
+function buildProjection(
+  state: ProgramState,
+  events: readonly PersistedDomainEvent<string, unknown>[],
+): ProgramAttemptProjectionV1 {
   const attempt = state.activeAttempt;
   if (attempt === null) throw new ProgramAgentControlError("Cannot project a Program without an active Attempt");
   const work = state.workItems.find((item) => item.workItemId === attempt.workItemId);
@@ -233,6 +312,7 @@ function buildProjection(state: ProgramState): ProgramAttemptProjectionV1 {
     outputSlotId: artifact.outputSlotId === null ? null : String(artifact.outputSlotId),
     productionStepId: artifact.productionStepId === null ? null : String(artifact.productionStepId),
   }));
+  const retryFailure = latestRetryFailure(events, state, String(work.workItemId));
 
   const projection: ProgramAttemptProjectionV1 = {
     version: 1,
@@ -259,6 +339,7 @@ function buildProjection(state: ProgramState): ProgramAttemptProjectionV1 {
     productionSteps,
     decisiveEvidence,
     artifacts,
+    ...(retryFailure !== undefined ? { retryFailure } : {}),
     control: {
       executionBaseMismatch: state.executionBaseMismatch !== null,
       executionBaseUnavailable: state.executionBaseUnavailable,
@@ -392,7 +473,8 @@ export class ProgramAgentServiceV1 implements ProgramAgentGenerationAuthorityV1 
       return undefined;
     }
 
-    const states = latestStates(await replayAll(this.store));
+    const events = await replayAll(this.store);
+    const states = latestStates(events);
     const matching = [...states.values()].filter((state) =>
       state.lifecycle === "active" && state.activeAttempt !== null &&
       String(state.activeAttempt.sessionId) === String(sessionId) &&
@@ -402,7 +484,7 @@ export class ProgramAgentServiceV1 implements ProgramAgentGenerationAuthorityV1 
         `Multiple current ProgramAttempts claim session ${String(sessionId)}`,
       );
     }
-    return matching[0] === undefined ? undefined : buildProjection(matching[0]);
+    return matching[0] === undefined ? undefined : buildProjection(matching[0], events);
   }
 
   private async interruptSupersededAttempt(
@@ -424,15 +506,38 @@ export class ProgramAgentServiceV1 implements ProgramAgentGenerationAuthorityV1 
           state.activeAttempt.agentGeneration === newGeneration) {
         return;
       }
-      const oldAttemptId = String(state.activeAttempt.programAttemptId);
-      const next = applyProgramTransition(state, {
+      const oldAttempt = state.activeAttempt;
+      const oldAttemptId = String(oldAttempt.programAttemptId);
+      const oldWork = state.workItems.find((work) => work.workItemId === oldAttempt.workItemId);
+      if (oldWork === undefined) {
+        throw new ProgramAgentControlError("Active replacement work item is missing");
+      }
+      const interrupted = applyProgramTransition(state, {
         kind: "attempt.interrupt",
         expectedProgramRevision: state.revision,
-        programAttemptId: state.activeAttempt.programAttemptId,
+        programAttemptId: oldAttempt.programAttemptId,
       });
-      await this.store.append([
-        replacementTransitionDraft(this.store, sessionId, next, oldAttemptId, newGeneration),
-      ]);
+      const drafts: EventDraft<string, unknown>[] = [
+        replacementTransitionDraft(this.store, sessionId, interrupted, oldAttemptId, newGeneration),
+      ];
+      if (oldWork.lifecycle === "awaiting_verification") {
+        const pending = applyProgramTransition(interrupted, {
+          kind: "work.lifecycle.set",
+          expectedProgramRevision: interrupted.revision,
+          workItemId: oldAttempt.workItemId,
+          lifecycle: "pending",
+        });
+        if (pending !== interrupted) {
+          drafts.push(replacementPendingTransitionDraft(
+            this.store,
+            sessionId,
+            pending,
+            oldAttemptId,
+            newGeneration,
+          ));
+        }
+      }
+      await this.store.append(drafts);
     });
   }
 }

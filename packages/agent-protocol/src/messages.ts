@@ -17,6 +17,7 @@ export const PROGRAM_PROGRESS_MAX_BYTES = 128 * 1024;
 export const PROGRAM_PROGRESS_MAX_EVIDENCE = 32;
 export const PROGRAM_PROGRESS_MAX_ADVISORIES = 16;
 export const PROGRAM_PROGRESS_ADVISORY_REASON_MAX_BYTES = 4 * 1024;
+export const PROGRAM_RETRY_FAILURE_REASON_MAX_BYTES = 4 * 1024;
 export const VERBATIM_COMPILER_VERSION = "verbatim-v1" as const;
 
 export type ProtocolRequestId = string;
@@ -58,6 +59,16 @@ export interface ProgramAttemptAuthorityV1 {
   programAttemptId: string;
   workItemId: string;
   agentGeneration: number;
+}
+
+/** Durable bounded Host fact explaining why the immediately preceding Attempt was retired. */
+export interface ProgramRetryFailureFactV1 {
+  eventId: string;
+  programAttemptId: string;
+  workItemId: string;
+  verificationObligationId?: string;
+  reason: string;
+  sourceOperationId?: string;
 }
 
 export interface ProgramExecutionObservationIdentityV1 {
@@ -117,6 +128,8 @@ export interface ProgramAttemptProjectionV1 {
     subjectGeneration: number | null;
   }>;
   artifacts: Array<{ artifactRef: string; outputSlotId: string | null; productionStepId: string | null }>;
+  /** Most recent durable Host verification-failure fact for this work item, if any. */
+  retryFailure?: ProgramRetryFailureFactV1;
   control: { executionBaseMismatch: boolean; executionBaseUnavailable: boolean };
   omissions: { verification: number; blockers: number; evidence: number; artifacts: number };
   stopConditions: {
@@ -272,6 +285,15 @@ export interface ProgramProgressResult {
   error?: string;
 }
 
+/** Host request to execute exactly the current canonical ProgramAttempt. */
+export interface ProgramAttemptExecute {
+  type: "program.attempt.execute";
+  version: typeof PROGRAM_EXECUTION_MESSAGE_VERSION;
+  requestId: ProtocolRequestId;
+  sessionId: string;
+  authority: ProgramAttemptAuthorityV1;
+}
+
 export interface HostHello { type: "host.hello"; protocolVersion: typeof AGENT_PROTOCOL_VERSION; hostInstanceId: string; }
 export interface SessionOpen { type: "session.open"; requestId: ProtocolRequestId; sessionId: string; workspaceId: string; }
 export interface SessionResume { type: "session.resume"; requestId: ProtocolRequestId; sessionId: string; workspaceId: string; reason: "agent_replaced" | "host_reopened" | "reattach"; }
@@ -308,5 +330,5 @@ export interface CapabilityResult { type: "capability.result"; requestId: Protoc
 export interface Cancel { type: "cancel"; requestId: ProtocolRequestId; sessionId: string; reason?: string; }
 export interface Shutdown { type: "shutdown"; requestId: ProtocolRequestId; sessionId?: string; reason: "completed" | "cancelled" | "host_shutdown" | "replaced"; }
 
-export type HostToAgentMessage = HostHello | SessionOpen | SessionResume | InputAdmitted | ProgramPlanningBegin | ProgramPlanningReadResult | ProgramProposalResult | ProgramProgressResult | ContextProvide | ContextUpdate | TranscriptAdmitted | CapabilityResult | Cancel | Shutdown;
+export type HostToAgentMessage = HostHello | SessionOpen | SessionResume | InputAdmitted | ProgramPlanningBegin | ProgramPlanningReadResult | ProgramProposalResult | ProgramProgressResult | ProgramAttemptExecute | ContextProvide | ContextUpdate | TranscriptAdmitted | CapabilityResult | Cancel | Shutdown;
 export type AgentProtocolMessage = AgentToHostMessage | HostToAgentMessage;
