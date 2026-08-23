@@ -42,6 +42,7 @@ import {
 import { Phase1RecoveryControllerV1 } from "./program-recovery.ts";
 import type { HostSessionHandle } from "./session-manager.ts";
 import { ProgramTerminalServiceV1 } from "./program-terminal.ts";
+import type { HostProgramVerifierCatalogV1 } from "./program-verifier-catalog.ts";
 import {
   HostVerificationOperationRegistryV1,
   ProgramVerificationServiceV1,
@@ -80,6 +81,8 @@ export interface ProgramExecutionRuntimeOptionsV1 {
   observations: ProgramExecutionObservationSourceV1;
   pathObservations: ProgramWorkspacePathObservationSourceV1;
   operationSpecs: HostVerificationOperationRegistryV1;
+  /** Optional for legacy runtime fixtures. P-01 product callers supply an exact Host verifier catalog. */
+  verifierCatalog?: HostProgramVerifierCatalogV1;
   artifactStore: HostArtifactStore;
   workspaceCoordinator?: ProgramDispatchWorkspaceCoordinatorV1 & PlanningReadBarrierV1;
 }
@@ -130,6 +133,7 @@ export class ProgramExecutionRuntimeV1 {
       planningReads: options.planningReads,
       creation: this.creation,
       agents: executionAgents,
+      ...(options.verifierCatalog !== undefined ? { verifiers: options.verifierCatalog } : {}),
     });
     this.progress = new ProgramProgressServiceV1({
       store: this.store,

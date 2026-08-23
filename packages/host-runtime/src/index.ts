@@ -130,6 +130,10 @@ export {
   type PlanningReadDeliveryV1,
 } from "./planning-read.ts";
 export {
+  HostProgramVerifierCatalogV1,
+  ProgramVerifierCatalogError,
+} from "./program-verifier-catalog.ts";
+export {
   ProgramPlanningServiceV1,
   ProgramPlanningControlError,
   ProgramPlanningStaleError,
