@@ -4,6 +4,7 @@ on:
     branches: [main]
     paths:
       - 'packages/**'
+      - 'extensions/**'
       - 'scripts/gate/**'
       - 'docs/p-01*'
       - 'pnpm-lock.yaml'
@@ -12,6 +13,7 @@ on:
   pull_request:
     paths:
       - 'packages/**'
+      - 'extensions/**'
       - 'scripts/gate/**'
       - 'docs/p-01*'
       - 'pnpm-lock.yaml'
