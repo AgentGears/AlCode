@@ -130,6 +130,12 @@ checks.push(check(
 ));
 
 checks.push(check(
+  "product-agent.compose.cognition-extension",
+  () => command("--filter", "@alcode/cognition-extension", "test"),
+  "the cognition extension behavioral suite remains green so extension-only authority/runtime regressions cannot produce a false passing product receipt",
+));
+
+checks.push(check(
   "product-agent.ownership",
   () => {
     command("--filter", "@alcode/agent-protocol", "typecheck");
