@@ -67,18 +67,22 @@ governed by one codebase.
 
 ## Status
 
-Phases 0.0 through 0.8 are **closed**. The durable event/recovery spine, memory
-and reasoning semantic engines, Host control plane, durable cognition
-integration, replaceable-Agent property, durable transcript reconstruction,
-governed selective context, Host-owned Application Protocol, and React
-Experience Plane are proven under their executable phase gates. Phase 0.8 source
-PR #19 final head `99ea7dc524e8a3be608c6ab8f4aaf0e631a3cb14` passed
-`gate:0.8` and full composed CI, then squash-merged as
-`c4d41028d964155e0f5bb808f49e57385fed80fb`. Phase 0.9 is the next planned
-roadmap unit and is not authorized by Phase 0.8 closure. `verbatim-v1` remains
-the product default and `graph-v1` remains opt-in. See `docs/roadmap.md` for
-architecture orientation and `docs/phase-0-spec.md` for the executable
-specification.
+The closed product baseline now includes Phases 0.0 through 0.9, Phase 1.0
+Durable ProgramState, Phase 1.1 Default Program Execution, S-01 Replaceable
+Agent Runtime, and P-01 Production Program Agent. P-01 closed at
+`e6a9025b767a8fc9026bcd72670a338e8a37c059` under the authoritative
+`pnpm gate:product-agent` proof surface. These later objectives extend the same
+ownership doctrine rather than amending the ten principles: the Host remains
+canonical; Program/session/Agent lifetimes remain distinct; environmental
+effects and recovery remain Host-governed; verification and completion remain
+Host authority; and clients/Agents remain replaceable consumers of durable
+truth. `verbatim-v1` remains the product default and `graph-v1` remains opt-in.
+
+The durable forward direction is recorded in `docs/roadmap.md`. A1 — Adaptive
+Program Revision and Progressive Decomposition — is the recommended next design
+objective, but the roadmap does not authorize implementation. P-01 closure does
+not authorize a successor objective. See
+`docs/p-01-production-program-agent-as-built.md` for the current closure record.
 
 ## Relationship to the prior work
 
