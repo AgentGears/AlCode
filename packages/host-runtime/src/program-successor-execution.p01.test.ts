@@ -22,6 +22,7 @@ import {
   asProgramStateId,
   asProgramWorkItemId,
   asSessionId,
+  asVerificationObligationId,
   createProgramState,
   type ProgramAttemptExecutionBase,
   type ProgramState,
@@ -73,7 +74,7 @@ async function latestState(store: LockedWorkspaceStore, programStateId: string):
 type AttemptExecuteMessage = Extract<HostToAgentMessage, { type: "program.attempt.execute" }>;
 
 describeLocked("P-01 successor Attempt execution", () => {
-  it("routes successful verification through idle handling and sends the successor execute request without caller input", async () => {
+  it("crosses real Host verification and sends the successor execute request without caller input", async () => {
     const dir = mkdtempSync(join(tmpdir(), "alcode-p01-successor-execution-"));
     dirs.push(dir);
     const locked = await openLockedWorkspaceStore({
@@ -87,6 +88,8 @@ describeLocked("P-01 successor Attempt execution", () => {
     const base = executionBase(locked.store.workspaceId);
     const planningReads = new PlanningReadRegistry("p01-successor-execution", 1, []);
     const acceptedPlanningBase = planningReads.track(locked.store.workspaceId).seal();
+    const verifiedPath = "verified.txt";
+    let pathVerificationCalls = 0;
     const runtime = createProgramExecutionRuntimeV1({
       host: { store: locked, capabilities: [] },
       planningReads,
@@ -96,7 +99,13 @@ describeLocked("P-01 successor Attempt execution", () => {
         validate: () => undefined,
       },
       observations: { observe: async () => ({ status: "complete", base }) },
-      pathObservations: { observePath: async () => ({ status: "unknown", reason: "not used" }) },
+      pathObservations: {
+        observePath: async (path) => {
+          pathVerificationCalls += 1;
+          expect(path).toBe(verifiedPath);
+          return { status: "complete" as const, base, pathState: "file" as const };
+        },
+      },
       operationSpecs: new HostVerificationOperationRegistryV1([]),
       artifactStore: new HostArtifactStore({ root: join(dir, "artifacts") }),
     });
@@ -119,27 +128,32 @@ describeLocked("P-01 successor Attempt execution", () => {
     const programStateId = asProgramStateId(String(mkProgramStateId()));
     const firstWorkItemId = asProgramWorkItemId("work-first");
     const secondWorkItemId = asProgramWorkItemId("work-second");
+    const verificationObligationId = asVerificationObligationId("verify-first-work");
     const initial = createProgramState({
       programStateId,
       sourceSessionId: asSessionId(String(session.sessionId)),
-      objective: "Execute dependent work without new caller input",
+      objective: "Verify first work and execute dependent work without new caller input",
       workItems: [
         {
           workItemId: firstWorkItemId,
           creationOrder: 0,
-          description: "First work",
+          description: "Produce the verified path",
           dependencyIds: [],
-          affectedPaths: [],
+          affectedPaths: [verifiedPath],
         },
         {
           workItemId: secondWorkItemId,
           creationOrder: 1,
           description: "Dependent successor",
           dependencyIds: [firstWorkItemId],
-          affectedPaths: [],
+          affectedPaths: ["successor.txt"],
         },
       ],
-      verification: [],
+      verification: [{
+        obligationId: verificationObligationId,
+        predicate: { kind: "workspace_path_state", path: verifiedPath, requiredState: "file" },
+        freshnessScope: { kind: "paths", entries: [{ path: verifiedPath, mode: "exact" }] },
+      }],
       outputSlots: [],
       productionSteps: [],
     });
@@ -215,11 +229,13 @@ describeLocked("P-01 successor Attempt execution", () => {
     const successorExecute = await executeRequest;
     unsubscribe();
 
+    expect(pathVerificationCalls).toBe(1);
     expect(String(successorExecute.authority.workItemId)).toBe(String(secondWorkItemId));
     expect(String(successorExecute.authority.programAttemptId)).not.toBe(String(issued.programAttemptId));
     expect(successorExecute.authority.agentGeneration).toBe(agentGeneration);
 
     const final = await latestState(locked, String(programStateId));
+    expect(final.verification[0]?.satisfaction).not.toBeNull();
     expect(final.workItems.find((work) => work.workItemId === firstWorkItemId)?.lifecycle).toBe("completed");
     expect(final.workItems.find((work) => work.workItemId === secondWorkItemId)?.lifecycle).toBe("in_progress");
     expect(String(final.activeAttempt?.programAttemptId)).toBe(String(successorExecute.authority.programAttemptId));
