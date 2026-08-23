@@ -1,0 +1,30 @@
+name: P-01 Product Agent
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/**'
+      - 'scripts/gate/**'
+      - 'docs/p-01*'
+      - 'pnpm-lock.yaml'
+      - 'package.json'
+      - '.github/workflows/p-01-product-agent.yml'
+  pull_request:
+    paths:
+      - 'packages/**'
+      - 'scripts/gate/**'
+      - 'docs/p-01*'
+      - 'pnpm-lock.yaml'
+      - 'package.json'
+      - '.github/workflows/p-01-product-agent.yml'
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10.13.1 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22.17.0, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm gate:product-agent
