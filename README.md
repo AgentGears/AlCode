@@ -1,51 +1,33 @@
 # ALCODE
 
-A memory-native, verifier-driven coding agent. TypeScript end-to-end.
+A memory-native, verifier-driven coding agent and durable autonomous software-engineering runtime. TypeScript end-to-end.
 
-ALCODE replaces a prior host-dependent plugin topology (Ola + Ouroboros as
-ZCode MCP sidecars) with an owned, integrated product in which memory,
-reasoning, tools, model access, persistence, and UI are governed by one
-codebase. The append-only event log is the canonical durable record; the Host
-owns admission, policy, execution lifecycle, recovery, transcript/context
-truth, and completion, while the Agent and Experience Plane consume Host-owned
-protocols and disposable projections.
+ALCODE replaces a prior host-dependent plugin topology (Ola + Ouroboros as ZCode MCP sidecars) with an owned, integrated product in which memory, reasoning, tools, model access, persistence, UI, durable Program state, execution, verification, and recovery are governed by one codebase. The append-only event log is the canonical durable record; the Host owns admission, policy, execution lifecycle, recovery, transcript/context truth, Program truth, verification, and completion, while the Agent and Experience Plane consume Host-owned protocols and disposable projections.
 
-**Status:** Phases 0.0 through 0.9 are **closed**. Phase 0.9 established the
-Host-governed extension and code-observation layer: Agent Plugins package
-semantics, immutable digest-bound installed generations, dynamic generation-bound
-Host capabilities, MCP Tools, monotonic lifecycle hooks, stable ACP v1, semantic
-CodeIntelligence with freshness/synchronization fencing, and Host-projected
-plugin management. Phase 0.9 source head `8b8620599660b639cef1205450f7f65afaa8af62`
-passed the composed `gate:0.9` in PR run `31829969975`; the required Ubuntu and
-Windows platform proof passed in run `31829969938`, and full CI passed in run
-`31829969982`. `verbatim-v1` remains the product default; `graph-v1` remains
-opt-in. Phase 0.9 closure does not authorize a successor phase. See
-[`docs/roadmap.md`](docs/roadmap.md) for architecture orientation and
-[`docs/phase-0.9-closure.md`](docs/phase-0.9-closure.md) for closure evidence.
+**Status:** the closed product baseline includes Phases 0.0–0.9, Phase 1.0 Durable ProgramState, Phase 1.1 Default Program Execution, S-01 Replaceable Agent Runtime, and P-01 Production Program Agent. P-01 closed at `e6a9025b767a8fc9026bcd72670a338e8a37c059` under the exact `pnpm gate:product-agent` proof surface. The current architecture is a fixed-topology autonomous Program runtime: a real model plans through Host-tracked reads, proposes a bounded Program, executes fresh ProgramAttempts through Host capabilities, receives Host-owned verification failure context, retries under fresh authority, advances structurally-ready successor work without another caller prompt, survives Agent replacement under recovery rules, and completes only through the Host Completion Oracle.
+
+The forward architecture is recorded in [`docs/roadmap.md`](docs/roadmap.md). **A1 — Adaptive Program Revision and Progressive Decomposition** is the recommended next design objective, but roadmap direction does not authorize implementation. The authoritative P-01 closure record is [`docs/p-01-production-program-agent-as-built.md`](docs/p-01-production-program-agent-as-built.md).
+
+`verbatim-v1` remains the product default; `graph-v1` remains opt-in.
 
 `ref/` (gitignored) holds studied reference codebases — not part of this repo.
 
 ## Read first
 
-1. [`docs/constitution.md`](docs/constitution.md) — the 10 frozen principles.
-2. [`docs/roadmap.md`](docs/roadmap.md) — architecture orientation and sequencing.
-3. [`docs/phase-0-spec.md`](docs/phase-0-spec.md) — the executable build order,
-   with gate-receipt schema and per-phase `pnpm gate:X.Y` exit gates.
-4. [`docs/event-contract.md`](docs/event-contract.md) — the domain event
-   envelope, producer, identity, versioning semantics, and ownership rules.
-5. [`docs/rules.md`](docs/rules.md) — hard constraints applying to every phase.
-6. [`docs/non-goals.md`](docs/non-goals.md) — what Phase 0 deliberately does not do.
-7. [`docs/backlog.md`](docs/backlog.md) — deferred items with reactivation conditions.
-8. [`docs/phase-0.6-plan.md`](docs/phase-0.6-plan.md) — frozen and completed
-   durable verbatim context reconstruction plan and closure evidence.
-9. [`docs/phase-0.7-plan.md`](docs/phase-0.7-plan.md) — frozen and completed
-   governed selective-context / `graph-v1` contract and closure evidence.
-10. [`docs/phase-0.8-plan.md`](docs/phase-0.8-plan.md) — frozen and completed
-    Application Protocol + React Experience contract and closure evidence.
-11. [`docs/phase-0.9-closure.md`](docs/phase-0.9-closure.md) — as-built extension/
-    observation contract summary and executable closure evidence.
+1. [`docs/constitution.md`](docs/constitution.md) — the frozen architectural principles.
+2. [`docs/roadmap.md`](docs/roadmap.md) — durable architecture direction, current position, and A1–A11 sequencing.
+3. [`docs/rules.md`](docs/rules.md) — hard runtime, storage, effect, cognition, context, Application, and extension rules.
+4. [`docs/event-contract.md`](docs/event-contract.md) — canonical event envelope, producer, identity, versioning, and ownership semantics.
+5. [`docs/phase-1.0-freeze.md`](docs/phase-1.0-freeze.md) — frozen Durable ProgramState contract decision.
+6. [`docs/phase-1.0-as-built.md`](docs/phase-1.0-as-built.md) — Phase 1.0 implementation mapping.
+7. [`docs/phase-1.1-as-built.md`](docs/phase-1.1-as-built.md) — default Program execution implementation mapping.
+8. [`docs/s-01e-agent-generation-closure-contract.md`](docs/s-01e-agent-generation-closure-contract.md) — S-01 generation closure boundary.
+9. [`docs/p-01-production-program-agent-as-built.md`](docs/p-01-production-program-agent-as-built.md) — Production Program Agent closure and exact product gate.
+10. [`docs/backlog.md`](docs/backlog.md) — deferred work with reactivation conditions.
 
-### Architecture decisions (ADRs)
+Historical Phase 0 plans and closure records remain under `docs/` and retain their original frozen/closure roles.
+
+### Architecture decisions
 
 - [`docs/adr/0001-event-and-projection-commit-semantics.md`](docs/adr/0001-event-and-projection-commit-semantics.md)
 - [`docs/adr/0002-workspace-identity-and-locking.md`](docs/adr/0002-workspace-identity-and-locking.md)
@@ -59,77 +41,78 @@ opt-in. Phase 0.9 closure does not authorize a successor phase. See
 - [`docs/operation-recovery.md`](docs/operation-recovery.md)
 - [`docs/provenance/`](docs/provenance/) — per-import provenance records.
 
+## Current product path
+
+```text
+caller objective
+  → durable Host input admission
+  → Host planning episode
+  → model planning through tracked Host reads + exact verifier catalog
+  → bounded Program proposal
+  → Host validation / seal
+  → explicit Application acceptance
+  → fresh ProgramAttempt
+  → Host-requested Agent execution
+  → Host-mediated coding capabilities
+  → Host verifier execution
+      fail → retire Attempt + durable failure fact → fresh retry Attempt
+      pass → complete work → fresh successor Attempt when ready
+  → Completion Oracle
+  → Program.completed
+```
+
+The Agent remains replaceable cognition. It does not own canonical ProgramState, ProgramAttempt currency, capability admission, Operation/effect truth, recovery, verification, execution-base identity, or completion.
+
 ## What ALCODE is built from
 
-- **Agent loop:** pi (MIT) — acquired as licensed source, converted to owned infrastructure. Provenance: [`docs/provenance/pi.md`](docs/provenance/pi.md).
-- **Memory:** Ola's contracts (JS→TS) — Ebbinghaus strength, reinforcement doctrine, lifecycle, retrieval scoring.
-- **Reasoning:** Ouroboros's core (Py→TS) — reasoning graph, falsifiers, verification contracts, critic, diagnostics.
-- **Host/runtime:** ALCODE-owned Agent Protocol, Host runtime, cognition runtime,
-  canonical admission, capability brokerage, recovery, and bounded durable work.
-- **Transcript/context baseline:** ALCODE-owned rich transcript domain,
-  Host-acknowledged transcript admission, `verbatim-v1` reconstruction, and
-  replaceable-Agent hydration from canonical events.
-- **Selective context:** ALCODE-owned `@alcode/context` compiler and Host context
-  service with per-inference authorization, `graph-v1`, trust/provenance
-  containment, objective-scoped reasoning, relevance-gated memory, bounded
-  workspace observations and receipts, deterministic fallback, and isolated
-  preregistered evaluation.
-- **Application Protocol + React experience:** ALCODE-owned
-  `@alcode/application-protocol`, Host Application service/controller, replaceable
-  local loopback transport seam, public snapshot/event reducer, and
-  `@alcode/web` React 19 client. The Host remains canonical; React is a disposable
-  projection client. The current Agent Protocol has no safe mid-turn steering
-  seam, so `GUIDE` is explicitly rejected as `guide_not_supported` rather than
-  silently becoming `START_NOW` or `QUEUE`.
-- **Extension and observation adapters:** ALCODE-owned `@alcode/plugins`,
-  `@alcode/mcp`, `@alcode/hooks`, `@alcode/acp`, and
-  `@alcode/code-intelligence`, coordinated by Host-owned runtime services. External
-  packages/protocols/providers remain replaceable adapters; they do not own
-  canonical ALCODE state or bypass Host policy.
+- **Agent loop:** pi (MIT), acquired as licensed source and converted into ALCODE-owned infrastructure. Provenance: [`docs/provenance/pi.md`](docs/provenance/pi.md).
+- **Memory:** Ola-derived semantic contracts — retrieval, strength, reinforcement, lifecycle, and consolidation semantics.
+- **Reasoning:** Ouroboros-derived semantic core — reasoning graph, falsifiers, verification contracts, critic, and diagnostics.
+- **Host/runtime:** ALCODE-owned Agent Protocol, Host runtime, canonical admission, capability brokerage, durable Program authority, execution/recovery, verification, and completion.
+- **Transcript/context:** ALCODE-owned rich transcript domain, durable reconstruction, `verbatim-v1`, governed `graph-v1`, Host context authority, receipts, and replaceable-Agent hydration.
+- **Application Protocol + React experience:** Host-authored public state/commands consumed by disposable clients.
+- **Extension and observation adapters:** Host-governed plugins, MCP, hooks, ACP, and CodeIntelligence adapters that do not become a second control plane.
 
 ## Why this shape
 
-The prior topology ran Ola and Ouroboros as per-session MCP servers under a
-closed-source host. That caused accidental distribution: process lifecycle
-session-owned, configuration shared, state path shared, task ownership
-cross-session, deployment control outside the plugin. ALCODE removes that
-accidental distribution by owning the cognitive loop and placing durable
-authority in a Host runtime. Phase 0.8 extends the same ownership model through
-the public Application Protocol: clients may disconnect and rebuild their
-projection without becoming execution or persistence authorities. Phase 0.9
-extends the boundary outward again: packages and external protocols compose
-around the privileged Host instead of becoming a second control plane. See
-[`docs/constitution.md`](docs/constitution.md) and ADR 0005 for the ownership
-model.
+The prior topology ran cognition as per-session sidecars beneath an external host. ALCODE removes that accidental distribution by owning the cognitive loop and placing durable execution authority in the Host. Sessions, Agent processes, provider inference, clients, plugins, and later workers are replaceable participants around durable Host-owned truth.
 
-## Phase 0 at a glance
+The current load-bearing hierarchy is:
 
 ```text
-0.0  Architecture foundation:                    [CLOSED]
-0.1A Minimal agent loop + offline provider:      [CLOSED]
-0.1B Capability/provider layer:                  [CLOSED]
-0.2  Durable event/recovery spine:               [CLOSED]
-0.3  Memory semantic engine:                     [CLOSED]
-0.4  Reasoning semantic engine:                  [CLOSED]
-0.5  Host + cognition integration:               [CLOSED]
-0.6  Durable verbatim context reconstruction:    [CLOSED]
-0.7  Governed selective context / graph-v1:      [CLOSED]
-0.8  React GUI / Application Protocol:           [CLOSED]
-0.9  Extension & observation adapters:           [CLOSED]
+ProgramState
+     ↓
+fixed accepted work topology
+     ↓
+ProgramAttempt
+     ↓
+Agent Generation / Agent Run / Inference Scope
+     ↓
+CapabilityBroker
+     ↓
+Host Operation
+     ↓
+effect / recovery / verification
 ```
 
-Every implemented phase ends with an **executable gate** (`pnpm gate:X.Y`)
-that emits a machine-readable `GateReceipt` — see `docs/phase-0-spec.md` for
-the schema. Gates drive sequencing, not calendars.
+The next architectural problem is to make Program meaning itself safely revisionable without invalidating unrelated execution or evidence. See [`docs/roadmap.md`](docs/roadmap.md).
+
+## Closed milestones
+
+```text
+0.0–0.9  Owned foundation, durability, cognition, context, UI, adapters [CLOSED]
+1.0      Durable ProgramState                                         [CLOSED]
+1.1      Default Program-backed execution                             [CLOSED]
+S-01     Replaceable Agent runtime                                    [CLOSED]
+P-01     Production Program Agent                                     [CLOSED]
+```
+
+Every closed objective is backed by an executable gate and/or exact closure record. Gates drive sequencing, not calendars.
 
 ## Next
 
-The completed Phase 0 foundation is Phase 0.0 through Phase 0.9. No successor
-phase is authorized by Phase 0.9 closure. Deferred work remains in
-[`docs/backlog.md`](docs/backlog.md) and requires a distinct client objective
-before implementation.
+The repository is at the boundary between a **fixed-topology autonomous Program** and an **adaptive long-horizon Program**.
 
-`verbatim-v1` remains the product default and Phase 0.9 closure does not promote
-`graph-v1`. See [`docs/roadmap.md`](docs/roadmap.md),
-[`docs/phase-0-spec.md`](docs/phase-0-spec.md), and
-[`docs/phase-0.9-closure.md`](docs/phase-0.9-closure.md).
+A1 is not yet an implementation-authorized objective. Its separate candidate plan must define and freeze ProgramRevision transactions, WorkItem identity/generation, progressive decomposition, revision impact, Attempt invalidation, verification invalidation, recovery/rebuild, and Completion Oracle interaction before production implementation begins.
+
+See [`docs/roadmap.md`](docs/roadmap.md) for the durable forward architecture. Successor implementation requires its own explicit plan/freeze; completion of P-01 does not implicitly authorize it.
