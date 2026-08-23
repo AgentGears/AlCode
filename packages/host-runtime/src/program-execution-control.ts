@@ -48,6 +48,12 @@ export class ProgramExecutionControlError extends Error {
   }
 }
 
+interface VerificationFailureInputV1 {
+  verificationObligationId: string;
+  reason: string;
+  sourceOperationId?: string;
+}
+
 function record(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -102,6 +108,35 @@ function transitionDraft(
     occurredAt: new Date().toISOString(),
     type: "program.transitioned",
     payload: { state, transitionKind },
+    payloadSchemaVersion: 1,
+    producer: { kind: "runtime", component: "program-execution-control" },
+  };
+}
+
+function verificationFailureDraft(
+  store: WorkspaceEventStore,
+  sessionId: SessionId,
+  state: ProgramState,
+  programAttemptId: string,
+  workItemId: string,
+  failure: VerificationFailureInputV1,
+): EventDraft<string, unknown> {
+  return {
+    eventId: mkEventId(),
+    idempotencyKey: `program.verification.failed:${programAttemptId}:${failure.verificationObligationId}`,
+    correlationId: programAttemptId,
+    workspaceId: asWorkspaceId(store.workspaceId),
+    sessionId,
+    programStateId: asEventProgramStateId(String(state.programStateId)),
+    occurredAt: new Date().toISOString(),
+    type: "program.verification.failed",
+    payload: {
+      programAttemptId,
+      workItemId,
+      verificationObligationId: failure.verificationObligationId,
+      reason: failure.reason,
+      ...(failure.sourceOperationId !== undefined ? { sourceOperationId: failure.sourceOperationId } : {}),
+    },
     payloadSchemaVersion: 1,
     producer: { kind: "runtime", component: "program-execution-control" },
   };
@@ -216,24 +251,37 @@ export class ProgramExecutionControlV1 {
       }
 
       const result = await this.verifyOne(state, pending, input.sessionId);
-      if (result === "satisfied") continue;
+      if (result.status === "satisfied") continue;
       await this.returnCurrentWorkToPending(
         String(state.programStateId),
         input.sessionId,
         String(currentAttempt.programAttemptId),
+        {
+          verificationObligationId: String(pending.obligationId),
+          reason: result.status === "not_satisfied"
+            ? result.reason
+            : "verification became stale while the Host was evaluating the obligation",
+          ...(result.operationId !== undefined ? { sourceOperationId: result.operationId } : {}),
+        },
       );
       return {
         status: "handled",
         terminal: "none",
-        reason: result === "stale_generation" ? "verification_stale_generation" : "verification_not_satisfied",
+        reason: result.status === "stale_generation" ? "verification_stale_generation" : "verification_not_satisfied",
       };
     }
 
-    await this.returnCurrentWorkToPending(
-      String(state.programStateId),
-      input.sessionId,
-      String(state.activeAttempt?.programAttemptId ?? ""),
-    );
+    if (state.activeAttempt !== null) {
+      await this.returnCurrentWorkToPending(
+        String(state.programStateId),
+        input.sessionId,
+        String(state.activeAttempt.programAttemptId),
+        {
+          verificationObligationId: "verification_loop",
+          reason: `Host verification did not converge within ${maxVerificationPasses} passes`,
+        },
+      );
+    }
     return { status: "handled", terminal: "none", reason: "verification_did_not_converge" };
   }
 
@@ -241,7 +289,7 @@ export class ProgramExecutionControlV1 {
     state: ProgramState,
     obligation: VerificationObligation,
     sessionId: SessionId,
-  ): Promise<"satisfied" | "not_satisfied" | "stale_generation"> {
+  ): Promise<ProgramVerificationResultV1> {
     let current = state;
     const predicate = obligation.predicate;
     if (predicate.kind === "artifact_present" && !artifactBound(current, obligation)) {
@@ -251,11 +299,16 @@ export class ProgramExecutionControlV1 {
         outputSlotId: String(predicate.outputSlotId),
         sessionId,
       });
-      if (produced.status !== "bound") return "not_satisfied";
+      if (produced.status !== "bound") {
+        return {
+          status: "not_satisfied",
+          reason: produced.reason,
+          ...(produced.operationId !== undefined ? { operationId: produced.operationId } : {}),
+        };
+      }
       current = produced.state;
     }
 
-    let result!: ProgramVerificationResultV1;
     const command = {
       programStateId: String(current.programStateId),
       expectedProgramRevision: current.revision,
@@ -264,18 +317,13 @@ export class ProgramExecutionControlV1 {
     };
     switch (predicate.kind) {
       case "operation_result":
-        result = await this.options.verification.satisfyOperationResult(command);
-        break;
+        return this.options.verification.satisfyOperationResult(command);
       case "workspace_path_state":
-        result = await this.options.verification.satisfyWorkspacePathState(command);
-        break;
+        return this.options.verification.satisfyWorkspacePathState(command);
       case "artifact_present":
-        result = await this.options.verification.satisfyArtifactPresent(command);
-        break;
+        return this.options.verification.satisfyArtifactPresent(command);
     }
-    if (result.status === "satisfied") return "satisfied";
-    if (result.status === "stale_generation") return "stale_generation";
-    return "not_satisfied";
+    throw new ProgramExecutionControlError(`Unsupported verification predicate kind: ${String((predicate as { kind?: unknown }).kind)}`);
   }
 
   private async completeCurrentWork(
@@ -323,6 +371,7 @@ export class ProgramExecutionControlV1 {
     programStateId: string,
     sessionId: SessionId,
     programAttemptId: string,
+    failure: VerificationFailureInputV1,
   ): Promise<ProgramState> {
     return this.options.admission.enqueue(async () => {
       const state = attachedProgramState(await replayAll(this.options.store), String(sessionId));
@@ -345,7 +394,15 @@ export class ProgramExecutionControlV1 {
         workItemId: work.workItemId,
         lifecycle: "pending",
       });
-      const drafts = [
+      const drafts: EventDraft<string, unknown>[] = [
+        verificationFailureDraft(
+          this.options.store,
+          sessionId,
+          state,
+          programAttemptId,
+          String(work.workItemId),
+          failure,
+        ),
         transitionDraft(this.options.store, sessionId, retired, "attempt.interrupt:verification_failed", programAttemptId),
       ];
       if (pending !== retired) {

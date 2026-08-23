@@ -1,7 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
   PROGRAM_EXECUTION_CAPABILITY,
+  PROGRAM_EXECUTION_MESSAGE_VERSION,
   PROGRAM_STATE_CAPABILITY,
+  type ProgramAttemptExecute,
   type ProgramPlanningBegin,
 } from "@alcode/agent-protocol";
 import { uuidv7 } from "@alcode/events";
@@ -248,7 +250,33 @@ export class ProgramExecutionRuntimeV1 {
       }
       return;
     }
-    if (decision.terminal === "none") return;
+    if (decision.terminal === "none") {
+      const retryReady = decision.reason === "verification_not_satisfied"
+        || decision.reason === "verification_stale_generation"
+        || decision.reason === "verification_did_not_converge";
+      if (retryReady) {
+        const current = await this.host.programAgents.currentAttemptAuthority(session.sessionId);
+        if (current === undefined) {
+          const snapshot = await this.productApplication.getSnapshot(String(session.sessionId));
+          const program = snapshot.programs.find((candidate) =>
+            candidate.lifecycle === "active" && candidate.attachedSessionIds.includes(String(session.sessionId)));
+          if (program !== undefined) {
+            await this.scheduler.dispatchNext({
+              programStateId: program.programStateId,
+              sessionId: session.sessionId,
+            });
+          }
+        }
+      }
+      if (decision.reason === "successor_dispatched" || retryReady) {
+        try {
+          await this.requestCurrentAttemptExecution(connection, session);
+        } catch (error) {
+          if (this.currentPlanningConnections.get(String(session.sessionId)) === connection.generationId) throw error;
+        }
+      }
+      return;
+    }
 
     const sessionState = await this.host.sessions.getState(session.sessionId);
     if (sessionState.started && !sessionState.stopped) {
@@ -328,6 +356,39 @@ export class ProgramExecutionRuntimeV1 {
         attached.detach();
       },
     };
+  }
+
+  async requestCurrentAttemptExecution(
+    connection: AgentConnection,
+    session: HostSessionHandle,
+  ): Promise<ProgramAttemptExecute | undefined> {
+    const sessionId = String(session.sessionId);
+    if (this.currentPlanningConnections.get(sessionId) !== connection.generationId
+        || !this.host.programAgents.isCurrentConnection(sessionId, connection.generationId)) {
+      throw new ProgramPlanningControlError("Program execution connection is not the current Agent connection");
+    }
+    const capabilities = connection.capabilities ?? [];
+    if (!capabilities.includes(PROGRAM_STATE_CAPABILITY)
+        || !capabilities.includes(PROGRAM_EXECUTION_CAPABILITY)) {
+      throw new ProgramPlanningControlError(
+        `Program execution requires ${PROGRAM_STATE_CAPABILITY} and ${PROGRAM_EXECUTION_CAPABILITY}`,
+      );
+    }
+    const authority = await this.host.programAgents.currentAttemptAuthority(session.sessionId);
+    if (authority === undefined) return undefined;
+    const currentGeneration = this.host.programAgents.currentExecutionAgentGeneration(sessionId);
+    if (currentGeneration === null || authority.agentGeneration !== currentGeneration) {
+      throw new ProgramPlanningControlError("Current ProgramAttempt does not belong to the current execution Agent generation");
+    }
+    const request: ProgramAttemptExecute = {
+      type: "program.attempt.execute",
+      version: PROGRAM_EXECUTION_MESSAGE_VERSION,
+      requestId: uuidv7(),
+      sessionId,
+      authority: structuredClone(authority),
+    };
+    await connection.transport.send(request);
+    return request;
   }
 
   async beginPlanning(

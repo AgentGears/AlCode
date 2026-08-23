@@ -27,6 +27,8 @@ const APPLICATION_PROTOCOL_VERSION = 1 as const;
 const LOCAL_OBSERVATION_PROVIDER = "alcode-local-workspace-v1";
 const LOCAL_COVERAGE_IDENTITY = "alcode-local-workspace-complete-v1";
 const WAIT_TIMEOUT_MS = 20_000;
+const PROGRAM_DRIVE_TIMEOUT_MS = 5 * 60_000;
+const PROGRAM_REDRIVE_INTERVAL_MS = 100;
 const FALLBACK_MAX_ENTRIES = 20_000;
 const FALLBACK_MAX_BYTES = 64 * 1024 * 1024;
 
@@ -200,20 +202,34 @@ async function main(): Promise<void> {
     cwd: root,
     execArgv: ["--import", "tsx"],
   });
-  let attached: Awaited<ReturnType<typeof runtime.attachAgent>> | undefined;
+  const attachedAgents: Array<Awaited<ReturnType<typeof runtime.attachAgent>>> = [];
+  const unsubscribeAgentErrors: Array<() => void> = [];
+  let currentConnectionGeneration = "";
   let agentError: Error | undefined;
-  let unsubscribeAgentErrors: (() => void) | undefined;
+  let completedSuccessfully = false;
   try {
     await runtime.host.startup();
     const session = await runtime.host.sessions.openOrResume();
-    const connection = await supervisor.start();
-    unsubscribeAgentErrors = connection.transport.onMessage((message) => {
-      if (message.type === "agent.error" && (message.sessionId === undefined || message.sessionId === String(session.sessionId))) {
-        agentError = new Error(`Agent error: ${message.message}`);
-      }
-    });
-    attached = await runtime.attachAgent(connection, session, SYSTEM_PROMPT);
-    const admitted = await runtime.host.admitInput(session.sessionId, prompt);
+    let connection = await supervisor.start();
+
+    const attachConnection = async (
+      nextConnection: typeof connection,
+      reason: "agent_replaced" | "host_reopened" | "reattach" = "reattach",
+    ): Promise<void> => {
+      currentConnectionGeneration = nextConnection.generationId;
+      agentError = undefined;
+      unsubscribeAgentErrors.push(nextConnection.transport.onMessage((message) => {
+        if (nextConnection.generationId !== currentConnectionGeneration) return;
+        if (message.type === "agent.error"
+            && (message.sessionId === undefined || message.sessionId === String(session.sessionId))) {
+          agentError = new Error(`Agent error: ${message.message}`);
+        }
+      }));
+      attachedAgents.push(await runtime.attachAgent(nextConnection, session, SYSTEM_PROMPT, reason));
+    };
+
+    await attachConnection(connection);
+    await runtime.host.admitInput(session.sessionId, prompt);
     await runtime.beginPlanning(connection, session, prompt);
     const application = runtime.createApplicationService({
       start: async () => false,
@@ -246,43 +262,114 @@ async function main(): Promise<void> {
     if (acceptance.decision !== "accepted" && acceptance.decision !== "duplicate") {
       throw new Error(`Program creation acceptance failed: ${acceptance.decision}${acceptance.reasonCode ? ` (${acceptance.reasonCode})` : ""}`);
     }
+    if (acceptance.programStateId === undefined) {
+      throw new Error("Program creation acceptance did not return a ProgramState ID");
+    }
+    const programStateId = acceptance.programStateId;
 
-    await waitFor(
-      "the first ProgramAttempt",
-      async () => {
-        const program = (await application.getSnapshot(String(session.sessionId))).programs?.[0];
-        return program?.activeAttempt ? program : undefined;
-      },
-      () => agentError,
-    );
+    const readProgram = async () => {
+      const snapshot = await application.getSnapshot(String(session.sessionId));
+      return {
+        snapshot,
+        program: snapshot.programs?.find((candidate) => candidate.programStateId === programStateId),
+      };
+    };
 
-    await connection.transport.send({
-      type: "input.admitted",
-      requestId: randomUUID(),
-      sessionId: String(session.sessionId),
-      text: prompt,
-      timestamp: admitted.timestamp,
-    });
+    const cancelActiveProgram = async (reason: string): Promise<void> => {
+      for (let pass = 0; pass < 2; pass++) {
+        const { program } = await readProgram();
+        if (program === undefined || program.lifecycle !== "active") return;
+        const result = await application.execute({
+          protocolVersion: APPLICATION_PROTOCOL_VERSION,
+          commandId: randomUUID(),
+          clientId: "alcode-cli",
+          sessionId: String(session.sessionId),
+          issuedAt: new Date().toISOString(),
+          type: "program.cancel",
+          programStateId,
+          expectedProgramRevision: program.revision,
+          reason,
+        });
+        if (result.decision === "accepted" || result.decision === "duplicate" || result.decision === "noop") return;
+        if (result.decision !== "stale") {
+          throw new Error(`Program cancellation failed: ${result.decision}${result.reasonCode ? ` (${result.reasonCode})` : ""}`);
+        }
+      }
+      const { program } = await readProgram();
+      if (program?.lifecycle === "active") throw new Error("Program remained active after bounded cancellation retries");
+    };
 
-    const terminalSnapshot = await waitFor(
-      "Program terminal state",
-      async () => {
-        const snapshot = await application.getSnapshot(String(session.sessionId));
-        const program = snapshot.programs?.[0];
-        return program && program.lifecycle !== "active" ? snapshot : undefined;
-      },
-      () => agentError,
-    );
-    const program = terminalSnapshot.programs?.[0];
+    if (acceptance.reasonCode === "first_dispatch_stale") {
+      await cancelActiveProgram("first_dispatch_stale");
+      throw new Error("Accepted Program first dispatch became stale and was cancelled");
+    }
+
+    let terminalSnapshot: Awaited<ReturnType<typeof application.getSnapshot>> | undefined;
+    const driveDeadline = Date.now() + PROGRAM_DRIVE_TIMEOUT_MS;
+    try {
+      while (Date.now() < driveDeadline) {
+        const fatal = agentError;
+        if (fatal !== undefined) throw fatal;
+
+        const current = await readProgram();
+        const program = current.program;
+        if (program === undefined) throw new Error(`Accepted Program ${programStateId} is missing from Application snapshot`);
+        if (program.lifecycle !== "active") {
+          terminalSnapshot = current.snapshot;
+          break;
+        }
+
+        if (supervisor.getCurrent() === null) {
+          connection = await supervisor.start();
+          await attachConnection(connection, "agent_replaced");
+          await runtime.recovery.recover();
+        }
+
+        if (program.activeAttempt === undefined) {
+          const scheduled = await runtime.scheduler.dispatchNext({
+            programStateId,
+            sessionId: session.sessionId,
+          });
+          if (scheduled.status === "program_not_active") continue;
+        }
+
+        try {
+          await runtime.requestCurrentAttemptExecution(connection, session);
+        } catch (error) {
+          if (supervisor.getCurrent() === null) continue;
+          throw error;
+        }
+        await new Promise((resolve) => setTimeout(resolve, PROGRAM_REDRIVE_INTERVAL_MS));
+      }
+
+      if (terminalSnapshot === undefined) {
+        await cancelActiveProgram("program_drive_timeout");
+        throw new Error(`Program execution exceeded the ${PROGRAM_DRIVE_TIMEOUT_MS}ms product bound and was cancelled`);
+      }
+    } catch (error) {
+      await cancelActiveProgram("program_driver_failure").catch(() => undefined);
+      const afterFailure = await readProgram();
+      if (afterFailure.program !== undefined && afterFailure.program.lifecycle !== "active") {
+        terminalSnapshot = afterFailure.snapshot;
+      } else {
+        throw error;
+      }
+    }
+
+    if (terminalSnapshot === undefined) {
+      throw new Error("Program driver exited without a terminal Application snapshot");
+    }
+    const program = terminalSnapshot.programs?.find((candidate) => candidate.programStateId === programStateId);
     if (!program || program.lifecycle !== "completed") {
       throw new Error(`Program terminated without completion: ${program?.lifecycle ?? "missing"}`);
     }
+    completedSuccessfully = true;
     const assistantText = [...terminalSnapshot.transcript].reverse().find((message) => message.role === "assistant")?.text;
     if (assistantText) console.log(assistantText);
   } finally {
-    unsubscribeAgentErrors?.();
-    attached?.detach();
-    await supervisor.shutdown(process.exitCode ? "cancelled" : "completed").catch(() => undefined);
+    for (const unsubscribe of unsubscribeAgentErrors.splice(0)) unsubscribe();
+    for (const attached of attachedAgents.splice(0).reverse()) attached.detach();
+    await supervisor.shutdown(completedSuccessfully ? "completed" : "cancelled").catch(() => undefined);
     locked.close();
   }
 }
