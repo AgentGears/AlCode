@@ -193,7 +193,7 @@ function decomposeB(state: ProgramSemanticStateV1): ProgramSemanticRevisionEditV
   return edit(state, {
     workItems: [
       state.workItems[0]!,
-      { ...state.workItems[1]!, workItemGeneration: 2, topologyState: "decomposed" },
+      { ...state.workItems[1]!, workItemGeneration: 2, topologyState: "decomposed", satisfactionState: "pending" },
       work(childId, {
         workItemId: childId,
         creationOrder: 2,
@@ -246,7 +246,7 @@ describe("A1 atomic semantic revision transaction", () => {
     });
     const childId = asProgramWorkItemId("work-a-child");
     const nextWork = [
-      { ...previous.workItems[0]!, workItemGeneration: 2, topologyState: "decomposed" as const },
+      { ...previous.workItems[0]!, workItemGeneration: 2, topologyState: "decomposed" as const, satisfactionState: "pending" as const },
       previous.workItems[1]!,
       work(childId, { workItemId: childId, creationOrder: 2, description: "child-a", parentWorkItemId: workAId }),
     ];
