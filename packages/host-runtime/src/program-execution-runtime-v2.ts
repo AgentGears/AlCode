@@ -21,17 +21,16 @@ import type { SessionId } from "@alcode/events";
 import type { AgentConnection } from "./agent-supervisor.ts";
 import type { CapabilityBrokerRequest, CapabilityBrokerResult } from "./capability-broker.ts";
 import { COGNITION_TOOL_NAMES } from "./cognition-service.ts";
-import {
+import type {
+  AgentResumeReason,
+  AttachedAgent,
   HostRuntime,
-  type AgentResumeReason,
-  type AttachedAgent,
-  type HostRuntimeOptions,
 } from "./host.ts";
 import {
   ProgramAgentServiceV2,
   type ProgramAgentServiceV2Options,
 } from "./program-agent-v2.ts";
-import type { ProgramRootOperationAuthorityV1 } from "./program-dispatch.ts";
+import type { ProgramExecutionRuntimeV1 } from "./program-execution-runtime.ts";
 import type { HostSessionHandle } from "./session-manager.ts";
 
 function cognitionDescriptors(): AuthorizedToolDescriptor[] {
@@ -91,31 +90,32 @@ function progressFailure(
 }
 
 export interface ProgramExecutionRuntimeOptionsV2 {
-  host: HostRuntimeOptions;
-  adaptive: ProgramAgentServiceV2Options;
-  /** Canonical routing decision. False delegates the session to HostRuntime unchanged. */
-  isAdaptiveProgramSession(sessionId: string): Promise<boolean>;
   /**
-   * Canonical P-01 operation authority used after semantic V2 currentness is
-   * revalidated. It owns operation.requested admission and mutation settlement;
-   * semantic ProgramRevision identity is never translated into its CAS lease.
+   * The already-composed production V1 runtime is the compatibility and
+   * operational-authority foundation. A1 layers adaptive routing around this
+   * exact Host instead of creating a second or reduced Host authority graph.
    */
-  operationAuthority: ProgramRootOperationAuthorityV1;
+  fixedTopology: ProgramExecutionRuntimeV1;
+  adaptive: ProgramAgentServiceV2Options;
+  /** Canonical routing decision. False delegates through ProgramExecutionRuntimeV1 unchanged. */
+  isAdaptiveProgramSession(sessionId: string): Promise<boolean>;
 }
 
 /**
  * Operational A1 adapter. It deliberately does not own adaptive Completion,
- * eligibility, semantic baseline adoption, or scheduler policy.
+ * eligibility, semantic baseline adoption, or scheduler policy. Fixed-topology
+ * Programs retain the production V1 runtime exactly.
  */
 export class ProgramExecutionRuntimeV2 {
+  readonly fixedTopology: ProgramExecutionRuntimeV1;
   readonly host: HostRuntime;
   readonly agent: ProgramAgentServiceV2;
   private readonly isAdaptiveProgramSession: (sessionId: string) => Promise<boolean>;
   private readonly contextCache = new Map<string, ContextUpdateV2>();
 
   constructor(options: ProgramExecutionRuntimeOptionsV2) {
-    this.host = new HostRuntime(options.host);
-    this.host.setProgramOperationAuthority(options.operationAuthority);
+    this.fixedTopology = options.fixedTopology;
+    this.host = this.fixedTopology.host;
     this.isAdaptiveProgramSession = options.isAdaptiveProgramSession;
     this.agent = new ProgramAgentServiceV2(options.adaptive);
   }
@@ -173,9 +173,9 @@ export class ProgramExecutionRuntimeV2 {
   ): Promise<AttachedAgent> {
     const sessionId = String(session.sessionId);
     if (!await this.isAdaptiveProgramSession(sessionId)) {
-      // Ordinary sessions retain the existing Host path exactly: unqualified
-      // capabilities and ordinary agent.idle are not captured by A1 routing.
-      return this.host.attachAgent(connection, session, systemPrompt, resumeReason);
+      // Preserve the complete production V1 Program execution path: planning,
+      // progress, idle/Completion, scheduler, recovery, and dispatch authority.
+      return this.fixedTopology.attachAgent(connection, session, systemPrompt, resumeReason);
     }
 
     const capabilities = connection.capabilities ?? [];
@@ -353,11 +353,15 @@ export class ProgramExecutionRuntimeV2 {
     };
   }
 
-  requestCurrentAttemptExecution(
+  async requestCurrentAttemptExecution(
     connection: AgentConnection,
     session: HostSessionHandle,
   ) {
-    return this.agent.requestCurrentAttemptExecution(String(session.sessionId), connection.generationId);
+    const sessionId = String(session.sessionId);
+    if (!await this.isAdaptiveProgramSession(sessionId)) {
+      return this.fixedTopology.requestCurrentAttemptExecution(connection, session);
+    }
+    return this.agent.requestCurrentAttemptExecution(sessionId, connection.generationId);
   }
 }
 

@@ -2,11 +2,15 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const source = readFileSync(new URL("./program-execution-runtime-v2.ts", import.meta.url), "utf8");
+const v1Source = readFileSync(new URL("./program-execution-runtime.ts", import.meta.url), "utf8");
 
 describe("A1 adaptive Program runtime V2 authority composition", () => {
-  it("installs explicit canonical Program operation authority before adaptive capability execution", () => {
-    expect(source).toContain("operationAuthority: ProgramRootOperationAuthorityV1");
-    expect(source).toContain("this.host.setProgramOperationAuthority(options.operationAuthority);");
+  it("wraps the exact production V1 authority graph instead of creating a parallel bare Host", () => {
+    expect(source).toContain("fixedTopology: ProgramExecutionRuntimeV1");
+    expect(source).toContain("this.fixedTopology = options.fixedTopology;");
+    expect(source).toContain("this.host = this.fixedTopology.host;");
+    expect(source).not.toContain("new HostRuntime(");
+    expect(v1Source).toContain("this.host.setProgramOperationAuthority(this.dispatch);");
     expect(source).toContain("this.host.capabilityBroker.execute(prepared)");
   });
 
@@ -18,11 +22,18 @@ describe("A1 adaptive Program runtime V2 authority composition", () => {
   it("classifies session ownership before installing adaptive interception", () => {
     expect(source).toContain("isAdaptiveProgramSession(sessionId: string): Promise<boolean>");
     expect(source).toContain("if (!await this.isAdaptiveProgramSession(sessionId))");
-    expect(source).toContain("return this.host.attachAgent(connection, session, systemPrompt, resumeReason);");
+    expect(source).toContain("return this.fixedTopology.attachAgent(connection, session, systemPrompt, resumeReason);");
     const classification = source.indexOf("if (!await this.isAdaptiveProgramSession(sessionId))");
     const interception = source.indexOf("this.hostConnectionWithoutAdaptiveAuthorityMessages(connection)");
     expect(classification).toBeGreaterThan(-1);
     expect(interception).toBeGreaterThan(classification);
+  });
+
+  it("preserves V1 attempt execution routing for non-adaptive Program sessions", () => {
+    expect(source).toContain("return this.fixedTopology.requestCurrentAttemptExecution(connection, session);");
+    expect(v1Source).toContain("this.planning.handleAgentMessage");
+    expect(v1Source).toContain("this.progress.handleAgentMessage");
+    expect(v1Source).toContain("this.handleProgramAgentIdle(connection, session)");
   });
 
   it("withholds ordinary Host capability and idle routing only after adaptive ownership is established", () => {
