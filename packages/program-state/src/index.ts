@@ -6,5 +6,6 @@ export * from "./validation.ts";
 export * from "./creation.ts";
 export * from "./eligibility.ts";
 export * from "./verification.ts";
+export * from "./semantic.ts";
 export * from "./completion.ts";
 export * from "./reducer.ts";

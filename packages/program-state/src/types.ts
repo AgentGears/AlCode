@@ -16,6 +16,7 @@ export type ProgramOutputSlotId = Branded<"ProgramOutputSlotId">;
 export type ProgramArtifactProductionStepId = Branded<"ProgramArtifactProductionStepId">;
 export type ProgramEvidenceRefId = Branded<"ProgramEvidenceRefId">;
 export type ExecutionBaseMismatchReceiptId = Branded<"ExecutionBaseMismatchReceiptId">;
+export type ProgramRevisionId = Branded<"ProgramRevisionId">;
 
 export type ProgramLifecycle = "active" | "completed" | "cancelled";
 export type ProgramWorkLifecycle =
@@ -24,6 +25,22 @@ export type ProgramWorkLifecycle =
   | "awaiting_verification"
   | "blocked"
   | "completed";
+
+/** A1 semantic state is orthogonal to the legacy execution lifecycle. */
+export type ProgramRequirementState = "required" | "withdrawn" | "superseded";
+export type ProgramTopologyState = "leaf" | "decomposed";
+export type ProgramSatisfactionState =
+  | "pending"
+  | "active"
+  | "blocked"
+  | "awaiting_verification"
+  | "satisfied";
+export type ProgramChangeClass = "initial" | "refinement" | "correction" | "scope_amendment";
+export type WorkItemIdentityDisposition =
+  | "preserve_identity_and_advance_generation"
+  | "new_identity_supersedes_old"
+  | "withdraw_identity"
+  | "unchanged";
 
 export type WorkspacePathState = "file" | "directory" | "symlink" | "absent";
 export type FreshnessPathMode = "exact" | "subtree";
@@ -76,6 +93,70 @@ export interface ProgramWorkDefinition {
 
 export interface ProgramWorkItem extends ProgramWorkDefinition {
   lifecycle: ProgramWorkLifecycle;
+}
+
+/**
+ * Frozen A1 mechanically comparable authority. Collection order is canonical
+ * and therefore part of the durable representation.
+ */
+export interface WorkAuthorityEnvelopeV1 {
+  objectiveBoundaryRef: {
+    programStateId: ProgramStateId;
+    rootProgramRevisionId: ProgramRevisionId;
+    anchorWorkItemId: ProgramWorkItemId | null;
+  };
+  allowedRepositoryRoots: string[];
+  allowedEffectClasses: string[];
+  allowedExternalSystems: string[];
+  capabilityCeiling: string[];
+  maximumTopologyExpansion: number;
+  mandatoryVerificationIds: VerificationObligationId[];
+  forbiddenChangeKinds: string[];
+}
+
+/** Current semantic representation of one durable WorkItem in adaptive mode. */
+export interface ProgramSemanticWorkItemV1 extends ProgramWorkDefinition {
+  workItemGeneration: number;
+  requirementState: ProgramRequirementState;
+  topologyState: ProgramTopologyState;
+  satisfactionState: ProgramSatisfactionState;
+  parentWorkItemId: ProgramWorkItemId | null;
+  authorityEnvelope: WorkAuthorityEnvelopeV1;
+}
+
+/** Immutable semantic-revision lineage record. */
+export interface ProgramRevision {
+  programRevisionId: ProgramRevisionId;
+  parentProgramRevisionId: ProgramRevisionId | null;
+  ordinal: number;
+  changeClass: ProgramChangeClass;
+  acceptedAtStateRevision: number;
+  admissionEventId: string;
+  sourceDraftId: string | null;
+  sourceDraftDigest: string | null;
+}
+
+/**
+ * Semantic subject identity is distinct from verification subjectGeneration,
+ * which continues to represent proof freshness for one exact semantic subject.
+ */
+export type VerificationSubjectV1 =
+  | { kind: "program" }
+  | {
+      kind: "work_item";
+      workItemId: ProgramWorkItemId;
+      workItemGeneration: number;
+    }
+  | {
+      kind: "output";
+      outputSlotId: ProgramOutputSlotId;
+      producerWorkItemId: ProgramWorkItemId;
+      producerWorkItemGeneration: number;
+    };
+
+export interface VerificationSemanticBindingV1 {
+  obligationId: VerificationObligationId;
+  subject: VerificationSubjectV1;
 }
 
 export interface VerificationDefinition {
