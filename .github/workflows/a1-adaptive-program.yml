@@ -38,4 +38,4 @@ jobs:
       - name: Typecheck Host semantic revision admission
         run: pnpm --filter @alcode/host-runtime exec tsc --noEmit -p tsconfig.json
       - name: Verify Host planning, sealed draft, and exact Application admission
-        run: pnpm --filter @alcode/host-runtime exec vitest run src/program-revision.test.ts
+        run: pnpm exec vitest run packages/host-runtime/src/program-revision.test.ts
