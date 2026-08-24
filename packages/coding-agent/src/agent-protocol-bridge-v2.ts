@@ -129,7 +129,7 @@ class AgentProtocolBridgeV2 implements AgentProtocolClientV2 {
       (message): message is ContextUpdateAny => message.type === "context.update"
         && message.requestId === requestId
         && message.sessionId === sessionId,
-      { signal },
+      { signal, timeoutMs: 10_000, timeoutMessage: "Context refresh timed out" },
     );
   }
 
@@ -224,6 +224,7 @@ class AgentProtocolBridgeV2 implements AgentProtocolClientV2 {
         && message.sessionId === request.sessionId
         && message.toolCallId === request.toolCallId
         && message.toolName === request.toolName,
+      { timeoutMs: 10_000, timeoutMessage: "Capability request timed out" },
     );
   }
 

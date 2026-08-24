@@ -26,6 +26,7 @@ import {
 } from "./program-attempt-authority-v2.ts";
 
 const PROGRAM_V2_REPLAY_CACHE_MAX_ENTRIES = 256;
+const PROGRAM_V2_RUNTIME_FAILURE_MAX_CHARS = 4096;
 
 export interface ProgramAdaptiveExecutionCutV2 {
   facts: ProgramAttemptAuthorityFactsV2;
@@ -72,6 +73,14 @@ export class ProgramAgentV2ControlError extends Error {
     super(message);
     this.name = "ProgramAgentV2ControlError";
   }
+}
+
+function runtimeFailure(error: unknown, fallback: string): string {
+  const text = error instanceof Error ? error.message : typeof error === "string" ? error : fallback;
+  const normalized = text.length > 0 ? text : fallback;
+  return normalized.length <= PROGRAM_V2_RUNTIME_FAILURE_MAX_CHARS
+    ? normalized
+    : `${normalized.slice(0, PROGRAM_V2_RUNTIME_FAILURE_MAX_CHARS - 3)}...`;
 }
 
 function capabilityResult(
@@ -323,7 +332,11 @@ export class ProgramAgentServiceV2 {
         error: "Adaptive Program progress replay window is full",
       });
     }
-    const pending = this.computeProgress(message, generationId);
+    const pending = this.computeProgress(message, generationId).catch((error) =>
+      progressResult(message, "failed", {
+        errorCode: "program_execution_runtime_failure",
+        error: runtimeFailure(error, "Adaptive Program progress handling failed"),
+      }));
     this.progressInFlight.set(key, pending);
     try {
       const result = await pending;
@@ -401,7 +414,12 @@ export class ProgramAgentServiceV2 {
         "Adaptive Program capability replay window is full",
       );
     }
-    const pending = this.computeCapability(input, execute);
+    const pending = this.computeCapability(input, execute).catch((error) => capabilityResult(
+      input.message,
+      "failed",
+      "program_execution_runtime_failure",
+      runtimeFailure(error, "Adaptive Program capability handling failed"),
+    ));
     this.capabilityInFlight.set(key, pending);
     try {
       const result = await pending;

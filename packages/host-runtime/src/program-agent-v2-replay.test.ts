@@ -361,4 +361,73 @@ describe("A1 adaptive V2 replay-window and generation safety", () => {
     expect(service.isCurrentConnection(sessionId, "generation-2")).toBe(true);
     expect(service.isCurrentConnection(sessionId, "generation-1")).toBe(false);
   });
+
+  it("caches capability runtime failures so replay cannot re-execute uncertain work", async () => {
+    const cut = makeCut();
+    let executions = 0;
+    const service = new ProgramAgentServiceV2({
+      cuts: cuts(() => cut),
+      progress: { admit: async () => ({ outcome: "admitted" }) },
+    });
+    service.attach({
+      generationId: "generation-1",
+      sessionId,
+      capabilities: [PROGRAM_STATE_V2_CAPABILITY, PROGRAM_EXECUTION_V2_CAPABILITY],
+      transport: transport(),
+    });
+    const authority = (await service.currentAttemptProjection(sessionId, "generation-1"))!.authority;
+    const request = capability(authority, 900);
+    const invoke = () => service.handleCapability({
+      message: request,
+      generationId: "generation-1",
+      sessionId: asSessionId(sessionId),
+    }, async () => {
+      executions += 1;
+      throw new Error("broker exploded after uncertain work");
+    });
+
+    expect(await invoke()).toMatchObject({
+      outcome: "failed",
+      errorCode: "program_execution_runtime_failure",
+      error: "broker exploded after uncertain work",
+    });
+    expect(await invoke()).toMatchObject({
+      outcome: "failed",
+      errorCode: "program_execution_runtime_failure",
+    });
+    expect(executions).toBe(1);
+  });
+
+  it("caches progress runtime failures so duplicate progress cannot re-admit", async () => {
+    const cut = makeCut();
+    let admissions = 0;
+    const service = new ProgramAgentServiceV2({
+      cuts: cuts(() => cut),
+      progress: {
+        admit: async () => {
+          admissions += 1;
+          throw new Error("progress admission failed after uncertainty");
+        },
+      },
+    });
+    service.attach({
+      generationId: "generation-1",
+      sessionId,
+      capabilities: [PROGRAM_STATE_V2_CAPABILITY, PROGRAM_EXECUTION_V2_CAPABILITY],
+      transport: transport(),
+    });
+    const authority = (await service.currentAttemptProjection(sessionId, "generation-1"))!.authority;
+    const request = progress(authority, 900);
+
+    expect(await service.handleProgress(request, "generation-1")).toMatchObject({
+      outcome: "failed",
+      errorCode: "program_execution_runtime_failure",
+      error: "progress admission failed after uncertainty",
+    });
+    expect(await service.handleProgress(request, "generation-1")).toMatchObject({
+      outcome: "failed",
+      errorCode: "program_execution_runtime_failure",
+    });
+    expect(admissions).toBe(1);
+  });
 });

@@ -38,4 +38,11 @@ describe("A1 adaptive Program runtime V2 authority composition", () => {
     expect(source).toContain("void connection.waitForExit().then(");
     expect(source).toContain("detachAdaptiveGeneration();");
   });
+
+  it("contains adaptive callback failures and terminates failed refreshes with a Host cancel", () => {
+    expect(source).toContain("Convert failures into bounded protocol outcomes");
+    expect(source).toContain('reason: "Adaptive context refresh failed"');
+    expect(source).toContain('errorCode: "adaptive_runtime_failure"');
+    expect(source).toContain("progressFailure(message)");
+  });
 });

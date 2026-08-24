@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   type AgentToHostMessageV2Aware,
   type HostToAgentMessageV2Aware,
@@ -101,6 +101,32 @@ describe("A1 transitional Agent protocol bridge", () => {
     });
     expect(second.version).toBe(2);
     expect(h.sent.at(-1)).toMatchObject({ type: "program.progress", version: 2 });
+  });
+
+  it("bounds context refresh and capability requests when the Host cannot respond", async () => {
+    const h = harness();
+    const client = createAgentProtocolBridgeV2ForTransport(h.transport);
+    vi.useFakeTimers();
+    try {
+      const contextPending = client.requestContextUpdate("session-1", new AbortController().signal);
+      const contextExpectation = expect(contextPending).rejects.toThrow("Context refresh timed out");
+      await vi.advanceTimersByTimeAsync(10_000);
+      await contextExpectation;
+
+      const capabilityPending = client.requestCapability({
+        sessionId: "session-1",
+        toolCallId: "tool-timeout",
+        toolName: "read",
+        args: { path: "src/timeouts.ts" },
+        programAttemptAuthority: v2Authority(),
+      });
+      const capabilityExpectation = expect(capabilityPending).rejects.toThrow("Capability request timed out");
+      await vi.advanceTimersByTimeAsync(10_000);
+      await capabilityExpectation;
+    } finally {
+      vi.useRealTimers();
+      await client.close();
+    }
   });
 
   it("freezes only the semantic facade, not the mutable bridge lifecycle state", async () => {

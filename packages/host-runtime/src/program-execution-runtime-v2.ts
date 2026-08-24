@@ -2,6 +2,7 @@ import {
   DYNAMIC_CAPABILITY_BINDING_CAPABILITY,
   GRAPH_CONTEXT_CAPABILITY,
   PROGRAM_EXECUTION_V2_CAPABILITY,
+  PROGRAM_EXECUTION_V2_MESSAGE_VERSION,
   PROGRAM_STATE_V2_CAPABILITY,
   isProgramAttemptAuthorityV2,
   isProgramProgressProposalV2,
@@ -12,6 +13,7 @@ import {
   type ContextUpdateV2,
   type HostToAgentMessageV2Aware,
   type InferenceToolCatalog,
+  type ProgramProgressResultV2,
   type ProtocolTransport,
 } from "@alcode/agent-protocol";
 import { digestOf } from "@alcode/context";
@@ -72,6 +74,20 @@ function brokerResult(
     ...(result.error !== undefined ? { error: result.error } : {}),
     ...(result.errorCode !== undefined ? { errorCode: result.errorCode } : {}),
   });
+}
+
+function progressFailure(
+  message: { requestId: string; sessionId: string },
+): ProgramProgressResultV2 {
+  return {
+    type: "program.progress.result",
+    version: PROGRAM_EXECUTION_V2_MESSAGE_VERSION,
+    requestId: message.requestId,
+    sessionId: message.sessionId,
+    outcome: "failed",
+    errorCode: "adaptive_runtime_failure",
+    error: "Adaptive Program progress routing failed",
+  };
 }
 
 export interface ProgramExecutionRuntimeOptionsV2 {
@@ -196,91 +212,122 @@ export class ProgramExecutionRuntimeV2 {
     const includeDynamic = capabilities.includes(DYNAMIC_CAPABILITY_BINDING_CAPABILITY);
     const graphContext = capabilities.includes(GRAPH_CONTEXT_CAPABILITY);
     const unsubscribe = adaptiveTransport.onMessage(async (message) => {
-      if (message.type === "context.refresh.request") {
-        if (message.sessionId !== sessionId) return;
-        const cacheKey = `${connection.generationId}:${message.requestId}`;
-        let update = this.contextCache.get(cacheKey);
-        if (update === undefined) {
-          const toolCatalog = this.toolCatalog(includeDynamic);
-          const refreshed = await this.host.contextService.refresh({
-            requestId: message.requestId,
-            sessionId,
-            baseSystemPrompt: systemPrompt,
-            toolDefinitions: toolCatalog.tools.map((tool) => tool.definition),
-            graphCapable: graphContext,
-          });
-          update = await this.agent.enrichContextUpdate(
-            {
-              ...refreshed,
-              ...(includeDynamic ? { toolCatalog } : {}),
-            },
-            sessionId,
-            connection.generationId,
-          );
-          this.contextCache.set(cacheKey, update);
-        }
-        try { await adaptiveTransport.send(update); } catch {}
-        return;
-      }
-
-      if (message.type === "capability.request") {
-        if (message.sessionId !== sessionId) return;
-        if (!isProgramAttemptAuthorityV2(message.programAttemptAuthority)) {
-          try {
-            await adaptiveTransport.send(capabilityResult(
-              message,
-              "stale",
+      try {
+        if (message.type === "context.refresh.request") {
+          if (message.sessionId !== sessionId) return;
+          const cacheKey = `${connection.generationId}:${message.requestId}`;
+          let update = this.contextCache.get(cacheKey);
+          if (update === undefined) {
+            const toolCatalog = this.toolCatalog(includeDynamic);
+            const refreshed = await this.host.contextService.refresh({
+              requestId: message.requestId,
+              sessionId,
+              baseSystemPrompt: systemPrompt,
+              toolDefinitions: toolCatalog.tools.map((tool) => tool.definition),
+              graphCapable: graphContext,
+            });
+            update = await this.agent.enrichContextUpdate(
               {
-                errorCode: "program_execution_v2_authority_required",
-                error: "Adaptive Program capability requests require ProgramAttemptAuthorityV2",
+                ...refreshed,
+                ...(includeDynamic ? { toolCatalog } : {}),
               },
-            ));
+              sessionId,
+              connection.generationId,
+            );
+            this.contextCache.set(cacheKey, update);
+          }
+          try { await adaptiveTransport.send(update); } catch {}
+          return;
+        }
+
+        if (message.type === "capability.request") {
+          if (message.sessionId !== sessionId) return;
+          if (!isProgramAttemptAuthorityV2(message.programAttemptAuthority)) {
+            try {
+              await adaptiveTransport.send(capabilityResult(
+                message,
+                "stale",
+                {
+                  errorCode: "program_execution_v2_authority_required",
+                  error: "Adaptive Program capability requests require ProgramAttemptAuthorityV2",
+                },
+              ));
+            } catch {}
+            return;
+          }
+          const request = message as CapabilityRequestV2;
+          const response = await this.agent.handleCapability(
+            {
+              message: request,
+              generationId: connection.generationId,
+              sessionId: session.sessionId as SessionId,
+            },
+            async (prepared: CapabilityBrokerRequest): Promise<CapabilityResult> => {
+              if (COGNITION_TOOL_NAMES.has(request.toolName)) {
+                if (request.expectedCapabilityRevision !== undefined) {
+                  return capabilityResult(request, "stale", {
+                    errorCode: "capability_stale",
+                    error: "capability binding no longer matches; refresh before retry",
+                  });
+                }
+                try {
+                  const result = await this.host.cognition.invoke(session.sessionId, request.toolName, request.args);
+                  return capabilityResult(request, "succeeded", { result });
+                } catch (error) {
+                  return capabilityResult(request, "failed", {
+                    error: error instanceof Error ? error.message : String(error),
+                  });
+                }
+              }
+              return brokerResult(request, await this.host.capabilityBroker.execute(prepared));
+            },
+          );
+          try { await adaptiveTransport.send(response); } catch {}
+          return;
+        }
+
+        if (message.type === "program.progress" && isProgramProgressProposalV2(message)) {
+          if (message.sessionId !== sessionId) return;
+          const response = await this.agent.handleProgress(message, connection.generationId);
+          try { await adaptiveTransport.send(response); } catch {}
+          return;
+        }
+
+        if (message.type === "agent.idle" && message.sessionId === sessionId) {
+          // This session was canonically classified adaptive before attachment.
+          // A1 adaptive Completion is intentionally not implemented in this slice,
+          // so the legacy Completion Oracle must not decide this idle transition.
+          return;
+        }
+      } catch {
+        // Protocol handlers are invoked fire-and-forget by the IPC transport.
+        // Convert failures into bounded protocol outcomes so no rejection escapes
+        // the Host callback and no Agent request waits indefinitely.
+        if (message.type === "context.refresh.request" && message.sessionId === sessionId) {
+          try {
+            await adaptiveTransport.send({
+              type: "cancel",
+              requestId: message.requestId,
+              sessionId,
+              reason: "Adaptive context refresh failed",
+            });
           } catch {}
           return;
         }
-        const request = message as CapabilityRequestV2;
-        const response = await this.agent.handleCapability(
-          {
-            message: request,
-            generationId: connection.generationId,
-            sessionId: session.sessionId as SessionId,
-          },
-          async (prepared: CapabilityBrokerRequest): Promise<CapabilityResult> => {
-            if (COGNITION_TOOL_NAMES.has(request.toolName)) {
-              if (request.expectedCapabilityRevision !== undefined) {
-                return capabilityResult(request, "stale", {
-                  errorCode: "capability_stale",
-                  error: "capability binding no longer matches; refresh before retry",
-                });
-              }
-              try {
-                const result = await this.host.cognition.invoke(session.sessionId, request.toolName, request.args);
-                return capabilityResult(request, "succeeded", { result });
-              } catch (error) {
-                return capabilityResult(request, "failed", {
-                  error: error instanceof Error ? error.message : String(error),
-                });
-              }
-            }
-            return brokerResult(request, await this.host.capabilityBroker.execute(prepared));
-          },
-        );
-        try { await adaptiveTransport.send(response); } catch {}
-        return;
-      }
-
-      if (message.type === "program.progress" && isProgramProgressProposalV2(message)) {
-        if (message.sessionId !== sessionId) return;
-        const response = await this.agent.handleProgress(message, connection.generationId);
-        try { await adaptiveTransport.send(response); } catch {}
-        return;
-      }
-
-      if (message.type === "agent.idle" && message.sessionId === sessionId) {
-        // This session was canonically classified adaptive before attachment.
-        // A1 adaptive Completion is intentionally not implemented in this slice,
-        // so the legacy Completion Oracle must not decide this idle transition.
-        return;
+        if (message.type === "capability.request" && message.sessionId === sessionId) {
+          try {
+            await adaptiveTransport.send(capabilityResult(message, "failed", {
+              errorCode: "adaptive_runtime_failure",
+              error: "Adaptive Program capability routing failed",
+            }));
+          } catch {}
+          return;
+        }
+        if (message.type === "program.progress"
+            && isProgramProgressProposalV2(message)
+            && message.sessionId === sessionId) {
+          try { await adaptiveTransport.send(progressFailure(message)); } catch {}
+        }
       }
     });
 
