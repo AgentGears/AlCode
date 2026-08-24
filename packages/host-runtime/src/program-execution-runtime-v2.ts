@@ -77,6 +77,8 @@ function brokerResult(
 export interface ProgramExecutionRuntimeOptionsV2 {
   host: HostRuntimeOptions;
   adaptive: ProgramAgentServiceV2Options;
+  /** Canonical routing decision. False delegates the session to HostRuntime unchanged. */
+  isAdaptiveProgramSession(sessionId: string): Promise<boolean>;
   /**
    * Canonical P-01 operation authority used after semantic V2 currentness is
    * revalidated. It owns operation.requested admission and mutation settlement;
@@ -92,11 +94,13 @@ export interface ProgramExecutionRuntimeOptionsV2 {
 export class ProgramExecutionRuntimeV2 {
   readonly host: HostRuntime;
   readonly agent: ProgramAgentServiceV2;
+  private readonly isAdaptiveProgramSession: (sessionId: string) => Promise<boolean>;
   private readonly contextCache = new Map<string, ContextUpdateV2>();
 
   constructor(options: ProgramExecutionRuntimeOptionsV2) {
     this.host = new HostRuntime(options.host);
     this.host.setProgramOperationAuthority(options.operationAuthority);
+    this.isAdaptiveProgramSession = options.isAdaptiveProgramSession;
     this.agent = new ProgramAgentServiceV2(options.adaptive);
   }
 
@@ -145,6 +149,13 @@ export class ProgramExecutionRuntimeV2 {
     systemPrompt: string,
     resumeReason: AgentResumeReason = "reattach",
   ): Promise<AttachedAgent> {
+    const sessionId = String(session.sessionId);
+    if (!await this.isAdaptiveProgramSession(sessionId)) {
+      // Ordinary sessions retain the existing Host path exactly: unqualified
+      // capabilities and ordinary agent.idle are not captured by A1 routing.
+      return this.host.attachAgent(connection, session, systemPrompt, resumeReason);
+    }
+
     const capabilities = connection.capabilities ?? [];
     if (!capabilities.includes(PROGRAM_STATE_V2_CAPABILITY)
         || !capabilities.includes(PROGRAM_EXECUTION_V2_CAPABILITY)) {
@@ -156,7 +167,7 @@ export class ProgramExecutionRuntimeV2 {
     const adaptiveTransport = this.v2Transport(connection);
     this.agent.attach({
       generationId: connection.generationId,
-      sessionId: String(session.sessionId),
+      sessionId,
       capabilities,
       transport: adaptiveTransport,
     });
@@ -178,14 +189,14 @@ export class ProgramExecutionRuntimeV2 {
     const graphContext = capabilities.includes(GRAPH_CONTEXT_CAPABILITY);
     const unsubscribe = adaptiveTransport.onMessage(async (message) => {
       if (message.type === "context.refresh.request") {
-        if (message.sessionId !== String(session.sessionId)) return;
+        if (message.sessionId !== sessionId) return;
         const cacheKey = `${connection.generationId}:${message.requestId}`;
         let update = this.contextCache.get(cacheKey);
         if (update === undefined) {
           const toolCatalog = this.toolCatalog(includeDynamic);
           const refreshed = await this.host.contextService.refresh({
             requestId: message.requestId,
-            sessionId: String(session.sessionId),
+            sessionId,
             baseSystemPrompt: systemPrompt,
             toolDefinitions: toolCatalog.tools.map((tool) => tool.definition),
             graphCapable: graphContext,
@@ -195,7 +206,7 @@ export class ProgramExecutionRuntimeV2 {
               ...refreshed,
               ...(includeDynamic ? { toolCatalog } : {}),
             },
-            String(session.sessionId),
+            sessionId,
             connection.generationId,
           );
           this.contextCache.set(cacheKey, update);
@@ -205,7 +216,7 @@ export class ProgramExecutionRuntimeV2 {
       }
 
       if (message.type === "capability.request") {
-        if (message.sessionId !== String(session.sessionId)) return;
+        if (message.sessionId !== sessionId) return;
         if (!isProgramAttemptAuthorityV2(message.programAttemptAuthority)) {
           try {
             await adaptiveTransport.send(capabilityResult(
@@ -251,15 +262,16 @@ export class ProgramExecutionRuntimeV2 {
       }
 
       if (message.type === "program.progress" && isProgramProgressProposalV2(message)) {
-        if (message.sessionId !== String(session.sessionId)) return;
+        if (message.sessionId !== sessionId) return;
         const response = await this.agent.handleProgress(message, connection.generationId);
         try { await adaptiveTransport.send(response); } catch {}
         return;
       }
 
-      if (message.type === "agent.idle" && message.sessionId === String(session.sessionId)) {
-        // A1 adaptive Completion is intentionally not implemented in this slice.
-        // Swallow adaptive idle so the legacy Completion Oracle cannot decide it.
+      if (message.type === "agent.idle" && message.sessionId === sessionId) {
+        // This session was canonically classified adaptive before attachment.
+        // A1 adaptive Completion is intentionally not implemented in this slice,
+        // so the legacy Completion Oracle must not decide this idle transition.
         return;
       }
     });
