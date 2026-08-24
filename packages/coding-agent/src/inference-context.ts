@@ -1,17 +1,18 @@
 import type { InferenceContext, Message } from "@alcode/agent-core";
 import type {
   ContextUpdate,
+  ContextUpdateV2,
   InferenceToolCatalog,
-  ProgramAttemptProjectionV1,
+  ProgramAttemptProjectionAny,
 } from "@alcode/agent-protocol";
 
 export interface RefreshedInferenceContext extends InferenceContext {
   toolCatalog?: InferenceToolCatalog;
-  programAttempt?: ProgramAttemptProjectionV1;
+  programAttempt?: ProgramAttemptProjectionAny;
 }
 
 export interface InferenceContextClient {
-  requestContextUpdate(sessionId: string, signal: AbortSignal): Promise<ContextUpdate>;
+  requestContextUpdate(sessionId: string, signal: AbortSignal): Promise<ContextUpdate | ContextUpdateV2>;
 }
 
 /** Request the Host-owned context + capability decision for one provider inference. */

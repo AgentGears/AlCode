@@ -1,10 +1,14 @@
-import { assertHostToAgentMessage } from "./validation.ts";
+import { assertHostToAgentMessageV2Aware } from "./program-execution-v2-routing.ts";
 import type { AgentToHostMessage, HostToAgentMessage } from "./messages.ts";
 import type { MessageHandler, ProtocolTransport } from "./transport.ts";
 
 const MAX_PREHANDLER_MESSAGES = 32;
 
-/** Process-side adapter for the local Node IPC transport used in Phase 0.5. */
+/**
+ * Process-side Node IPC adapter. Runtime validation admits the negotiated A1
+ * V2 envelope, while the legacy public transport type remains V1-compatible.
+ * V2-aware callers explicitly widen this transport after capability negotiation.
+ */
 export function createProcessAgentTransport(
   proc: NodeJS.Process = process,
 ): ProtocolTransport<AgentToHostMessage, HostToAgentMessage> {
@@ -12,15 +16,14 @@ export function createProcessAgentTransport(
   const pending: HostToAgentMessage[] = [];
 
   const listener = (value: unknown) => {
-    assertHostToAgentMessage(value);
+    assertHostToAgentMessageV2Aware(value);
+    const message = value as HostToAgentMessage;
     if (handlers.size === 0) {
-      if (pending.length >= MAX_PREHANDLER_MESSAGES) {
-        throw new Error("Host IPC pre-handler buffer overflow");
-      }
-      pending.push(value);
+      if (pending.length >= MAX_PREHANDLER_MESSAGES) throw new Error("Host IPC pre-handler buffer overflow");
+      pending.push(message);
       return;
     }
-    for (const handler of [...handlers]) void Promise.resolve(handler(value));
+    for (const handler of [...handlers]) void Promise.resolve(handler(message));
   };
   proc.on("message", listener);
 

@@ -1,7 +1,7 @@
 import type { AssistantMessage, ToolResultMessage } from "@alcode/agent-core";
 import type {
   CapabilityResult,
-  ProgramAttemptAuthorityV1,
+  ProgramAttemptAuthorityAny,
 } from "@alcode/agent-protocol";
 
 export interface CognitionCapabilityRequest {
@@ -10,7 +10,7 @@ export interface CognitionCapabilityRequest {
   toolName: string;
   args: unknown;
   expectedCapabilityRevision?: string;
-  programAttemptAuthority?: ProgramAttemptAuthorityV1;
+  programAttemptAuthority?: ProgramAttemptAuthorityAny;
 }
 
 export interface CognitionAssistantRecord {

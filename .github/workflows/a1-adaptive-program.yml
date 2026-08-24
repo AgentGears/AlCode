@@ -6,13 +6,28 @@ on:
       - 'packages/program-state/**'
       - 'packages/agent-protocol/src/program-execution-v2.ts'
       - 'packages/agent-protocol/src/program-execution-v2.test.ts'
+      - 'packages/agent-protocol/src/program-execution-v2-routing.ts'
+      - 'packages/agent-protocol/src/program-execution-v2-routing.test.ts'
+      - 'packages/agent-protocol/src/node-process-transport.ts'
       - 'packages/agent-protocol/src/index.ts'
+      - 'extensions/cognition/src/host-client.ts'
+      - 'packages/coding-agent/src/agent-protocol-bridge-v2.ts'
+      - 'packages/coding-agent/src/agent-protocol-bridge-v2.test.ts'
+      - 'packages/coding-agent/src/agent-worker.ts'
+      - 'packages/coding-agent/src/inference-context.ts'
+      - 'packages/coding-agent/src/inference-runtime.ts'
+      - 'packages/coding-agent/src/program-attempt-context.ts'
       - 'packages/host-runtime/src/program-revision.ts'
       - 'packages/host-runtime/src/program-revision.test.ts'
       - 'packages/host-runtime/src/program-revision-race.test.ts'
       - 'packages/host-runtime/src/program-attempt-authority-v2.ts'
       - 'packages/host-runtime/src/program-attempt-authority-v2.test.ts'
-      - 'packages/host-runtime/src/index.ts'
+      - 'packages/host-runtime/src/program-agent-v2.ts'
+      - 'packages/host-runtime/src/program-agent-v2.test.ts'
+      - 'packages/host-runtime/src/program-execution-runtime-v2.ts'
+      - 'packages/host-runtime/src/adaptive-v2.ts'
+      - 'packages/host-runtime/src/node-ipc-transport.ts'
+      - 'packages/host-runtime/package.json'
       - 'docs/a1-adaptive-program-*'
       - 'pnpm-lock.yaml'
       - 'package.json'
@@ -22,13 +37,28 @@ on:
       - 'packages/program-state/**'
       - 'packages/agent-protocol/src/program-execution-v2.ts'
       - 'packages/agent-protocol/src/program-execution-v2.test.ts'
+      - 'packages/agent-protocol/src/program-execution-v2-routing.ts'
+      - 'packages/agent-protocol/src/program-execution-v2-routing.test.ts'
+      - 'packages/agent-protocol/src/node-process-transport.ts'
       - 'packages/agent-protocol/src/index.ts'
+      - 'extensions/cognition/src/host-client.ts'
+      - 'packages/coding-agent/src/agent-protocol-bridge-v2.ts'
+      - 'packages/coding-agent/src/agent-protocol-bridge-v2.test.ts'
+      - 'packages/coding-agent/src/agent-worker.ts'
+      - 'packages/coding-agent/src/inference-context.ts'
+      - 'packages/coding-agent/src/inference-runtime.ts'
+      - 'packages/coding-agent/src/program-attempt-context.ts'
       - 'packages/host-runtime/src/program-revision.ts'
       - 'packages/host-runtime/src/program-revision.test.ts'
       - 'packages/host-runtime/src/program-revision-race.test.ts'
       - 'packages/host-runtime/src/program-attempt-authority-v2.ts'
       - 'packages/host-runtime/src/program-attempt-authority-v2.test.ts'
-      - 'packages/host-runtime/src/index.ts'
+      - 'packages/host-runtime/src/program-agent-v2.ts'
+      - 'packages/host-runtime/src/program-agent-v2.test.ts'
+      - 'packages/host-runtime/src/program-execution-runtime-v2.ts'
+      - 'packages/host-runtime/src/adaptive-v2.ts'
+      - 'packages/host-runtime/src/node-ipc-transport.ts'
+      - 'packages/host-runtime/package.json'
       - 'docs/a1-adaptive-program-*'
       - 'pnpm-lock.yaml'
       - 'package.json'
@@ -47,11 +77,17 @@ jobs:
         run: pnpm --filter @alcode/program-state exec tsc --noEmit -p tsconfig.json
       - name: Verify semantic kernel and atomic revision transaction
         run: pnpm --filter @alcode/program-state exec vitest run src/semantic-a1.test.ts src/revision-a1.test.ts
-      - name: Typecheck additive Agent protocol V2 schema
+      - name: Typecheck negotiated Agent protocol V2 boundary
         run: pnpm --filter @alcode/agent-protocol exec tsc --noEmit -p tsconfig.json
-      - name: Verify capability-gated V2 Program wire schemas
-        run: pnpm exec vitest run packages/agent-protocol/src/program-execution-v2.test.ts
-      - name: Typecheck Host semantic revision admission and V2 authority
+      - name: Verify V2 wire schemas and negotiated routing
+        run: pnpm exec vitest run packages/agent-protocol/src/program-execution-v2.test.ts packages/agent-protocol/src/program-execution-v2-routing.test.ts
+      - name: Typecheck cognition and coding-Agent V2 propagation
+        run: |
+          pnpm --filter @alcode/cognition-extension exec tsc --noEmit -p tsconfig.json
+          pnpm --filter @alcode/coding-agent exec tsc --noEmit -p tsconfig.json
+      - name: Verify transitional Agent bridge
+        run: pnpm exec vitest run packages/coding-agent/src/agent-protocol-bridge-v2.test.ts
+      - name: Typecheck Host semantic admission and adaptive V2 execution
         run: pnpm --filter @alcode/host-runtime exec tsc --noEmit -p tsconfig.json
-      - name: Verify Host planning, semantic admission, and V2 Attempt authority
-        run: pnpm exec vitest run packages/host-runtime/src/program-revision.test.ts packages/host-runtime/src/program-revision-race.test.ts packages/host-runtime/src/program-attempt-authority-v2.test.ts
+      - name: Verify Host semantic admission, V2 authority, and adaptive execution routing
+        run: pnpm exec vitest run packages/host-runtime/src/program-revision.test.ts packages/host-runtime/src/program-revision-race.test.ts packages/host-runtime/src/program-attempt-authority-v2.test.ts packages/host-runtime/src/program-agent-v2.test.ts
