@@ -53,6 +53,19 @@ describe("A1 adaptive Program runtime V2 authority composition", () => {
     expect(control).toBeGreaterThan(currentness);
   });
 
+  it("rejects displaced explicit execution requests before semantic successor admission", () => {
+    const method = source.indexOf("async requestCurrentAttemptExecution(");
+    const currentness = source.indexOf(
+      "if (!this.agent.isCurrentConnection(sessionId, connection.generationId))",
+      method,
+    );
+    const scheduling = source.indexOf("const scheduled = await this.control.ensureCurrentAttempt(sessionId);", method);
+    expect(method).toBeGreaterThan(-1);
+    expect(currentness).toBeGreaterThan(method);
+    expect(scheduling).toBeGreaterThan(currentness);
+    expect(source).toContain("Adaptive Program execution connection is not current");
+  });
+
   it("routes adaptive first/successor eligibility and idle Completion through Host semantic control", () => {
     expect(source).toContain("control: ProgramAdaptiveExecutionControlV2");
     expect(source).toContain("this.control = options.control;");

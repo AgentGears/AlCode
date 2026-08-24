@@ -29,6 +29,7 @@ import type {
 import type { ProgramAdaptiveExecutionControlV2 } from "./program-adaptive-control-v2.ts";
 import {
   ProgramAgentServiceV2,
+  ProgramAgentV2ControlError,
   type ProgramAgentServiceV2Options,
 } from "./program-agent-v2.ts";
 import type { ProgramExecutionRuntimeV1 } from "./program-execution-runtime.ts";
@@ -407,6 +408,11 @@ export class ProgramExecutionRuntimeV2 {
     const sessionId = String(session.sessionId);
     if (!await this.isAdaptiveProgramSession(sessionId)) {
       return this.fixedTopology.requestCurrentAttemptExecution(connection, session);
+    }
+    // Mirror the V1 runtime's generation-currentness guard before any Host
+    // scheduler/admission call. A displaced caller cannot create a successor.
+    if (!this.agent.isCurrentConnection(sessionId, connection.generationId)) {
+      throw new ProgramAgentV2ControlError("Adaptive Program execution connection is not current");
     }
     const scheduled = await this.control.ensureCurrentAttempt(sessionId);
     if (scheduled.status !== "issued" && scheduled.status !== "already_started") return undefined;
