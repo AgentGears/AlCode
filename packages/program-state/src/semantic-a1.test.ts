@@ -109,7 +109,8 @@ describe("A1 frozen semantic kernel", () => {
     const incomplete = graph.map((item) =>
       item.workItemId === leafBId ? { ...item, satisfactionState: "pending" as const } : item);
     expect(isProgramSemanticWorkItemDischarged(rootId, incomplete)).toBe(false);
-    expect(deriveReadySemanticWorkItems(incomplete)).toEqual([]);
+    expect(deriveReadySemanticWorkItems(incomplete).map((item) => String(item.workItemId)))
+      .toEqual(["leaf-b"]);
 
     const vacuous = [work("root", { topologyState: "decomposed" })];
     expect(() => assertValidProgramSemanticWorkGraph(vacuous)).toThrow(/zero current required children/);
