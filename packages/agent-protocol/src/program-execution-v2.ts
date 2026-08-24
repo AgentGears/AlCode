@@ -1,9 +1,20 @@
+import {
+  PROGRAM_PROGRESS_ADVISORY_REASON_MAX_BYTES,
+  PROGRAM_PROGRESS_MAX_ADVISORIES,
+  PROGRAM_PROGRESS_MAX_BYTES,
+  PROGRAM_PROGRESS_MAX_EVIDENCE,
+  PROGRAM_RETRY_FAILURE_REASON_MAX_BYTES,
+  type ProgramAttemptExecutionBaseV1,
+  type ProgramRetryFailureFactV1,
+} from "./messages.ts";
+
 export const PROGRAM_STATE_V2_CAPABILITY = "program_state_v2" as const;
 export const PROGRAM_EXECUTION_V2_CAPABILITY = "program_execution_v2" as const;
 export const PROGRAM_REVISION_CAPABILITY = "program_revision_v1" as const;
 export const PROGRAM_EXECUTION_V2_MESSAGE_VERSION = 2 as const;
 export const PROGRAM_ATTEMPT_DEPENDENCY_RECEIPT_MAX_ENTRIES = 32;
 export const PROGRAM_WORK_AUTHORITY_ENVELOPE_MAX_BYTES = 8 * 1024;
+export const PROGRAM_ATTEMPT_PROJECTION_V2_MAX_BYTES = 128 * 1024;
 
 export interface ProgramWorkAuthorityEnvelopeWireV1 {
   objectiveBoundaryRef: {
@@ -33,6 +44,7 @@ export interface AttemptDependencyReceiptV1 {
 
 export interface ProgramConstraintReceiptV1 {
   workAuthorityEnvelope: ProgramWorkAuthorityEnvelopeWireV1;
+  /** No separate canonical constraint registry exists in frozen A1 v1. */
   mandatoryConstraintIds: [];
 }
 
@@ -96,13 +108,34 @@ export interface ProgramAttemptProjectionV2 {
     requirementState: "required";
     satisfiedOrDischarged: true;
   }>;
-  executionBase: unknown;
-  blockers: unknown[];
-  verification: unknown[];
-  outputSlots: unknown[];
-  productionSteps: unknown[];
-  decisiveEvidence: unknown[];
-  artifacts: unknown[];
+  blockers: Array<{ blockerId: string; workItemId: string | null; reason: string; truncated: boolean }>;
+  executionBase: ProgramAttemptExecutionBaseV1;
+  verification: Array<{
+    obligationId: string;
+    subjectGeneration: number;
+    current: boolean;
+    waived: boolean;
+    predicate: Record<string, unknown>;
+    freshnessScope: Record<string, unknown>;
+  }>;
+  outputSlots: Array<{ outputSlotId: string; productionStepId: string }>;
+  productionSteps: Array<{
+    productionStepId: string;
+    outputSlotIds: string[];
+    outputChannel: string;
+    specId: string;
+    specVersion: number;
+    canonicalArgsDigest: string;
+  }>;
+  decisiveEvidence: Array<{
+    evidenceRefId: string;
+    verificationObligationId: string | null;
+    sourceOperationId: string | null;
+    artifactRef: string | null;
+    subjectGeneration: number | null;
+  }>;
+  artifacts: Array<{ artifactRef: string; outputSlotId: string | null; productionStepId: string | null }>;
+  retryFailure?: ProgramRetryFailureFactV1;
   control: { executionBaseMismatch: boolean; executionBaseUnavailable: boolean };
   omissions: { verification: number; blockers: number; evidence: number; artifacts: number };
   stopConditions: {
@@ -153,6 +186,10 @@ function withinBytes(value: unknown, maxBytes: number): boolean {
   } catch {
     return false;
   }
+}
+
+function boundedNonEmptyString(value: unknown, maxBytes: number): value is string {
+  return nonEmptyString(value) && encoder.encode(value).byteLength <= maxBytes;
 }
 
 export function assertProgramV2CapabilityDependencies(capabilities: readonly string[]): void {
@@ -247,7 +284,7 @@ function advisory(value: unknown): boolean {
   return value.action === "report"
     && onlyKeys(value, ["action", "reportId", "scope", "reason"])
     && (value.scope === "program" || value.scope === "work")
-    && nonEmptyString(value.reason);
+    && boundedNonEmptyString(value.reason, PROGRAM_PROGRESS_ADVISORY_REASON_MAX_BYTES);
 }
 
 export function isProgramProgressProposalV2(value: unknown): value is ProgramProgressProposalV2 {
@@ -261,17 +298,50 @@ export function isProgramProgressProposalV2(value: unknown): value is ProgramPro
     && nonEmptyString(value.requestId)
     && nonEmptyString(value.sessionId)
     && isProgramAttemptAuthorityV2(value.authority)
-    && Array.isArray(value.evidence) && value.evidence.length <= 32 && value.evidence.every(evidence)
-    && Array.isArray(value.advisoryBlockers) && value.advisoryBlockers.length <= 16
+    && Array.isArray(value.evidence) && value.evidence.length <= PROGRAM_PROGRESS_MAX_EVIDENCE
+    && value.evidence.every(evidence)
+    && Array.isArray(value.advisoryBlockers) && value.advisoryBlockers.length <= PROGRAM_PROGRESS_MAX_ADVISORIES
     && value.advisoryBlockers.every(advisory)
-    && typeof value.requestAwaitingVerification === "boolean";
+    && typeof value.requestAwaitingVerification === "boolean"
+    && withinBytes(value, PROGRAM_PROGRESS_MAX_BYTES);
+}
+
+function executionBase(value: unknown): boolean {
+  if (!isObject(value) || !nonNegativeInteger(value.workspaceEffectGeneration) || !isObject(value.observation)) return false;
+  const observation = value.observation;
+  return observation.kind === "workspace-observation-v1"
+    && nonEmptyString(observation.providerKind)
+    && nonEmptyString(observation.workspaceIdentity)
+    && nonEmptyString(observation.coverageDigest)
+    && nonEmptyString(observation.stateDigest);
+}
+
+function retryFailure(value: unknown): boolean {
+  if (!isObject(value) || !onlyKeys(value, [
+    "eventId", "programAttemptId", "workItemId", "verificationObligationId", "reason", "sourceOperationId",
+  ])) return false;
+  return nonEmptyString(value.eventId)
+    && nonEmptyString(value.programAttemptId)
+    && nonEmptyString(value.workItemId)
+    && (value.verificationObligationId === undefined || nonEmptyString(value.verificationObligationId))
+    && boundedNonEmptyString(value.reason, PROGRAM_RETRY_FAILURE_REASON_MAX_BYTES)
+    && (value.sourceOperationId === undefined || nonEmptyString(value.sourceOperationId));
 }
 
 export function isProgramAttemptProjectionV2(value: unknown): value is ProgramAttemptProjectionV2 {
-  if (!isObject(value) || value.version !== 2 || !isProgramAttemptAuthorityV2(value.authority)) return false;
-  if (!nonEmptyString(value.objective) || !isObject(value.work) || !Array.isArray(value.dependencies)) return false;
+  if (!isObject(value) || !onlyKeys(value, [
+    "version", "authority", "objective", "work", "dependencies", "blockers", "executionBase", "verification",
+    "outputSlots", "productionSteps", "decisiveEvidence", "artifacts", "retryFailure", "control", "omissions",
+    "stopConditions",
+  ])) return false;
+  if (value.version !== 2 || !isProgramAttemptAuthorityV2(value.authority)
+      || !nonEmptyString(value.objective) || !isObject(value.work) || !Array.isArray(value.dependencies)) return false;
   const work = value.work;
-  if (!nonEmptyString(work.description) || work.requirementState !== "required" || work.topologyState !== "leaf"
+  if (!onlyKeys(work, [
+    "description", "requirementState", "topologyState", "satisfactionState", "dependencyIds", "affectedPaths",
+    "omittedAffectedPathCount",
+  ])
+      || !nonEmptyString(work.description) || work.requirementState !== "required" || work.topologyState !== "leaf"
       || (work.satisfactionState !== "active" && work.satisfactionState !== "awaiting_verification")
       || !Array.isArray(work.dependencyIds) || !work.dependencyIds.every(nonEmptyString)
       || !Array.isArray(work.affectedPaths) || !work.affectedPaths.every(nonEmptyString)
@@ -282,10 +352,26 @@ export function isProgramAttemptProjectionV2(value: unknown): value is ProgramAt
     const expected = receipt[index]!;
     const dependency = value.dependencies[index];
     if (work.dependencyIds[index] !== expected.workItemId || !isObject(dependency)
+        || !onlyKeys(dependency, ["workItemId", "workItemGeneration", "requirementState", "satisfiedOrDischarged"])
         || dependency.workItemId !== expected.workItemId
         || dependency.workItemGeneration !== expected.workItemGeneration
         || dependency.requirementState !== "required"
         || dependency.satisfiedOrDischarged !== true) return false;
   }
-  return true;
+  if (!Array.isArray(value.blockers) || !Array.isArray(value.verification) || !Array.isArray(value.outputSlots)
+      || !Array.isArray(value.productionSteps) || !Array.isArray(value.decisiveEvidence) || !Array.isArray(value.artifacts)
+      || !executionBase(value.executionBase)) return false;
+  if (value.retryFailure !== undefined && !retryFailure(value.retryFailure)) return false;
+  if (!isObject(value.control) || !onlyKeys(value.control, ["executionBaseMismatch", "executionBaseUnavailable"])
+      || typeof value.control.executionBaseMismatch !== "boolean"
+      || typeof value.control.executionBaseUnavailable !== "boolean") return false;
+  if (!isObject(value.omissions) || !onlyKeys(value.omissions, ["verification", "blockers", "evidence", "artifacts"])
+      || !nonNegativeInteger(value.omissions.verification) || !nonNegativeInteger(value.omissions.blockers)
+      || !nonNegativeInteger(value.omissions.evidence) || !nonNegativeInteger(value.omissions.artifacts)) return false;
+  if (!isObject(value.stopConditions) || !onlyKeys(value.stopConditions, [
+    "attemptMustRemainCurrent", "rebaseRequiredOnExecutionBaseMismatch", "hostOwnsVerificationAndCompletion",
+  ]) || value.stopConditions.attemptMustRemainCurrent !== true
+      || value.stopConditions.rebaseRequiredOnExecutionBaseMismatch !== true
+      || value.stopConditions.hostOwnsVerificationAndCompletion !== true) return false;
+  return withinBytes(value, PROGRAM_ATTEMPT_PROJECTION_V2_MAX_BYTES);
 }
