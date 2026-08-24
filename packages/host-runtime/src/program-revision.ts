@@ -487,6 +487,22 @@ export class ProgramRevisionStaleError extends ProgramRevisionControlError {
 export class ProgramRevisionControlServiceV1 {
   constructor(private readonly options: ProgramRevisionControlServiceOptionsV1) {}
 
+  /**
+   * Return a planning base serialized with semantic admissions. A planning
+   * episode must never start from a projection that has not incorporated the
+   * latest canonical semantic cut.
+   */
+  async currentPlanningBase(programStateId: string): Promise<ProgramSemanticCurrentSnapshotV1> {
+    requireNonEmpty("programStateId", programStateId);
+    return this.options.admission.enqueue(async () => {
+      const events = await replayAll(this.options.store);
+      const current = await this.options.currentState.current(programStateId);
+      assertSnapshotShape(current, programStateId);
+      assertSourceReflectsLatestAdmission(events, current, programStateId);
+      return structuredClone(current);
+    });
+  }
+
   async sealDraft(input: {
     sourceSessionId: string;
     planningEpisodeId: string;
@@ -496,6 +512,7 @@ export class ProgramRevisionControlServiceV1 {
     changeClass: NonInitialProgramChangeClassV1;
     edit: ProgramSemanticRevisionEditV1;
     rationale?: string;
+    authorityGuard?: () => boolean;
   }): Promise<ProgramSemanticRevisionDraftV1> {
     requireNonEmpty("sourceSessionId", input.sourceSessionId);
     requireNonEmpty("planningEpisodeId", input.planningEpisodeId);
@@ -504,7 +521,14 @@ export class ProgramRevisionControlServiceV1 {
     requirePositive("expectedProgramStateRevision", input.expectedProgramStateRevision);
     assertRationale(input.rationale);
 
+    const assertAuthority = (): void => {
+      if (input.authorityGuard !== undefined && !input.authorityGuard()) {
+        throw new ProgramRevisionStaleError("Revision-planning Agent authority became stale before draft sealing");
+      }
+    };
+
     return this.options.admission.enqueue(async () => {
+      assertAuthority();
       const programStateId = input.programStateId;
       const events = await replayAll(this.options.store);
       const current = await this.options.currentState.current(programStateId);
@@ -529,6 +553,7 @@ export class ProgramRevisionControlServiceV1 {
         if (!stale) {
           throw new ProgramRevisionControlError(`Program ${programStateId} already has a sealed pending semantic draft`);
         }
+        assertAuthority();
         await this.options.store.append([
           invalidationEvent(this.options.store, asSessionId(pending.draft.sourceSessionId), pending.draft, "stale_parent"),
         ]);
@@ -574,6 +599,7 @@ export class ProgramRevisionControlServiceV1 {
         draftDigest: planningCanonicalDigest(draftBody(body)),
       };
       assertProgramSemanticRevisionDraftV1(draft, current.semanticState);
+      assertAuthority();
       await this.options.store.append([
         sealedDraftEvent(this.options.store, asSessionId(input.sourceSessionId), draft),
       ]);
@@ -737,8 +763,10 @@ export class ProgramRevisionPlanningServiceV1 {
     if (!this.options.agents.isCurrent(input.sourceSessionId, input.connectionGenerationId, input.agentGeneration)) {
       throw new ProgramRevisionStaleError("Revision-planning Agent authority is stale");
     }
-    const current = await this.options.currentState.current(input.programStateId);
-    assertSnapshotShape(current, input.programStateId);
+    const current = await this.options.revision.currentPlanningBase(input.programStateId);
+    if (!this.options.agents.isCurrent(input.sourceSessionId, input.connectionGenerationId, input.agentGeneration)) {
+      throw new ProgramRevisionStaleError("Revision-planning Agent authority became stale while reading the planning base");
+    }
     if (current.lifecycle !== "active") throw new ProgramRevisionStaleError(`Program is ${current.lifecycle}`);
     if (!current.attachedSessionIds.includes(input.sourceSessionId)) {
       throw new ProgramRevisionStaleError("Revision-planning session is not attached to the Program");
@@ -807,6 +835,9 @@ export class ProgramRevisionPlanningServiceV1 {
         current: structuredClone(current),
         proposal: structuredClone(proposal),
       });
+      if (!this.options.agents.isCurrent(input.sourceSessionId, input.connectionGenerationId, input.agentGeneration)) {
+        throw new ProgramRevisionStaleError("Revision-planning Agent authority became stale during canonicalization");
+      }
       return await this.options.revision.sealDraft({
         sourceSessionId: episode.sourceSessionId,
         planningEpisodeId: episode.planningEpisodeId,
@@ -816,6 +847,11 @@ export class ProgramRevisionPlanningServiceV1 {
         changeClass: canonical.changeClass,
         edit: structuredClone(canonical.edit),
         ...(proposal.rationale !== undefined ? { rationale: proposal.rationale } : {}),
+        authorityGuard: () => this.options.agents.isCurrent(
+          input.sourceSessionId,
+          input.connectionGenerationId,
+          input.agentGeneration,
+        ),
       });
     } finally {
       this.episodes.delete(episode.planningEpisodeId);
