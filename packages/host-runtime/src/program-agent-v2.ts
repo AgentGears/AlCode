@@ -26,29 +26,16 @@ import {
 } from "./program-attempt-authority-v2.ts";
 
 export interface ProgramAdaptiveExecutionCutV2 {
-  /** Semantic and runtime authority facts captured at one Host-protected observation cut. */
   facts: ProgramAttemptAuthorityFactsV2;
-  /** Exact Agent-facing state paired with those facts; authority is filled by the Host. */
   projection: Omit<ProgramAttemptProjectionV2, "version" | "authority">;
-  /**
-   * Fresh operational effect-routing context from the same protected cut.
-   * `expectedProgramRevision` remains the P-01 whole-state CAS lease and is
-   * intentionally distinct from semantic ProgramRevision provenance.
-   */
   operationalProgramContext: ProgramCapabilityOperationContextV1;
 }
 
 export interface ProgramAdaptiveExecutionCutSourceV2 {
-  /** Protected read for non-mutating projection/dispatch decisions. */
   currentForSession(
     sessionId: string,
     connectionGenerationId: string,
   ): Promise<ProgramAdaptiveExecutionCutV2 | undefined>;
-  /**
-   * Serialize authority reconstruction with the admission callback. The callback
-   * may append canonical work/Operation facts; semantic revision admission must
-   * not interleave before it returns.
-   */
   withProtectedCut<T>(
     sessionId: string,
     connectionGenerationId: string,
@@ -204,7 +191,7 @@ export class ProgramAgentServiceV2 {
   }
 
   async enrichContextUpdate(
-    base: ContextUpdate,
+    base: Omit<ContextUpdate, "programAttempt">,
     sessionId: string,
     generationId: string,
   ): Promise<ContextUpdateV2> {
@@ -269,11 +256,6 @@ export class ProgramAgentServiceV2 {
     });
   }
 
-  /**
-   * Revalidate semantic V2 authority and perform the effect-admission callback
-   * inside the same protected cut. The broker receives a fresh P-01 operational
-   * context; semantic ProgramRevision provenance is never used as its CAS lease.
-   */
   async handleCapability(
     input: {
       message: CapabilityRequestV2;
