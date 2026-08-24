@@ -26,6 +26,7 @@ on:
       - 'packages/host-runtime/src/program-attempt-authority-v2.test.ts'
       - 'packages/host-runtime/src/program-agent-v2.ts'
       - 'packages/host-runtime/src/program-agent-v2.test.ts'
+      - 'packages/host-runtime/src/program-agent-v2-replay.test.ts'
       - 'packages/host-runtime/src/program-execution-runtime-v2.ts'
       - 'packages/host-runtime/src/program-execution-runtime-v2.test.ts'
       - 'packages/host-runtime/src/adaptive-v2.ts'
@@ -60,6 +61,7 @@ on:
       - 'packages/host-runtime/src/program-attempt-authority-v2.test.ts'
       - 'packages/host-runtime/src/program-agent-v2.ts'
       - 'packages/host-runtime/src/program-agent-v2.test.ts'
+      - 'packages/host-runtime/src/program-agent-v2-replay.test.ts'
       - 'packages/host-runtime/src/program-execution-runtime-v2.ts'
       - 'packages/host-runtime/src/program-execution-runtime-v2.test.ts'
       - 'packages/host-runtime/src/adaptive-v2.ts'
@@ -96,4 +98,4 @@ jobs:
       - name: Typecheck Host semantic admission and adaptive V2 execution
         run: pnpm --filter @alcode/host-runtime exec tsc --noEmit -p tsconfig.json
       - name: Verify Host semantic admission, V2 authority, and adaptive execution routing
-        run: pnpm exec vitest run packages/host-runtime/src/program-revision.test.ts packages/host-runtime/src/program-revision-race.test.ts packages/host-runtime/src/program-attempt-authority-v2.test.ts packages/host-runtime/src/program-agent-v2.test.ts packages/host-runtime/src/program-execution-runtime-v2.test.ts
+        run: pnpm exec vitest run packages/host-runtime/src/program-revision.test.ts packages/host-runtime/src/program-revision-race.test.ts packages/host-runtime/src/program-attempt-authority-v2.test.ts packages/host-runtime/src/program-agent-v2.test.ts packages/host-runtime/src/program-agent-v2-replay.test.ts packages/host-runtime/src/program-execution-runtime-v2.test.ts

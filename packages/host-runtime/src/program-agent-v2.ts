@@ -123,13 +123,11 @@ function replayKey(generationId: string, sessionId: string, requestId: string): 
   return `${generationId}:${sessionId}:${requestId}`;
 }
 
-function rememberBounded<T>(map: Map<string, T>, key: string, value: T): void {
-  map.set(key, value);
-  while (map.size > PROGRAM_V2_REPLAY_CACHE_MAX_ENTRIES) {
-    const oldest = map.keys().next().value as string | undefined;
-    if (oldest === undefined) break;
-    map.delete(oldest);
-  }
+function replayWindowFull(
+  completed: ReadonlyMap<string, unknown>,
+  inFlight: ReadonlyMap<string, unknown>,
+): boolean {
+  return completed.size + inFlight.size >= PROGRAM_V2_REPLAY_CACHE_MAX_ENTRIES;
 }
 
 export class ProgramAgentServiceV2 {
@@ -196,7 +194,9 @@ export class ProgramAgentServiceV2 {
 
   private async currentCut(sessionId: string, generationId: string): Promise<ProgramAdaptiveExecutionCutV2 | undefined> {
     this.requireBinding(sessionId, generationId);
-    return this.options.cuts.currentForSession(sessionId, generationId);
+    const cut = await this.options.cuts.currentForSession(sessionId, generationId);
+    this.requireBinding(sessionId, generationId);
+    return cut;
   }
 
   async currentAttemptProjection(
@@ -236,9 +236,9 @@ export class ProgramAgentServiceV2 {
     sessionId: string,
     generationId: string,
   ): Promise<ProgramAttemptExecuteV2 | undefined> {
-    const binding = this.requireBinding(sessionId, generationId);
     const projection = await this.currentAttemptProjection(sessionId, generationId);
     if (projection === undefined) return undefined;
+    const binding = this.requireBinding(sessionId, generationId);
     const request: ProgramAttemptExecuteV2 = {
       type: "program.attempt.execute",
       version: PROGRAM_EXECUTION_V2_MESSAGE_VERSION,
@@ -295,7 +295,7 @@ export class ProgramAgentServiceV2 {
     if (cached !== undefined) return structuredClone(cached);
     const existing = this.progressInFlight.get(key);
     if (existing !== undefined) return structuredClone(await existing);
-    if (this.progressInFlight.size >= PROGRAM_V2_REPLAY_CACHE_MAX_ENTRIES) {
+    if (replayWindowFull(this.progressResponses, this.progressInFlight)) {
       return progressResult(message, "denied", {
         errorCode: "program_execution_request_window_exhausted",
         error: "Adaptive Program progress replay window is full",
@@ -305,7 +305,7 @@ export class ProgramAgentServiceV2 {
     this.progressInFlight.set(key, pending);
     try {
       const result = await pending;
-      rememberBounded(this.progressResponses, key, structuredClone(result));
+      this.progressResponses.set(key, structuredClone(result));
       return result;
     } finally {
       this.progressInFlight.delete(key);
@@ -365,7 +365,7 @@ export class ProgramAgentServiceV2 {
     if (cached !== undefined) return structuredClone(cached);
     const existing = this.capabilityInFlight.get(key);
     if (existing !== undefined) return structuredClone(await existing);
-    if (this.capabilityInFlight.size >= PROGRAM_V2_REPLAY_CACHE_MAX_ENTRIES) {
+    if (replayWindowFull(this.capabilityResponses, this.capabilityInFlight)) {
       return capabilityResult(
         input.message,
         "denied",
@@ -377,7 +377,7 @@ export class ProgramAgentServiceV2 {
     this.capabilityInFlight.set(key, pending);
     try {
       const result = await pending;
-      rememberBounded(this.capabilityResponses, key, structuredClone(result));
+      this.capabilityResponses.set(key, structuredClone(result));
       return result;
     } finally {
       this.capabilityInFlight.delete(key);
