@@ -314,4 +314,51 @@ describe("A1 adaptive V2 replay-window and generation safety", () => {
     releaseRead(structuredClone(cut));
     await expect(pending).rejects.toThrow("Adaptive Program connection is not current");
   });
+
+  it("clears displaced-generation replay state before replacement becomes current", async () => {
+    const cut = makeCut();
+    const service = new ProgramAgentServiceV2({
+      cuts: cuts(() => cut),
+      progress: { admit: async () => ({ outcome: "admitted" }) },
+    });
+    service.attach({
+      generationId: "generation-1",
+      sessionId,
+      capabilities: [PROGRAM_STATE_V2_CAPABILITY, PROGRAM_EXECUTION_V2_CAPABILITY],
+      transport: transport(),
+    });
+    const authority = (await service.currentAttemptProjection(sessionId, "generation-1"))!.authority;
+    const first = capability(authority, 0);
+    expect(await service.handleCapability({
+      message: first,
+      generationId: "generation-1",
+      sessionId: asSessionId(sessionId),
+    }, async () => ({
+      type: "capability.result",
+      requestId: first.requestId,
+      sessionId,
+      toolCallId: first.toolCallId,
+      toolName: first.toolName,
+      outcome: "succeeded",
+      result: { generation: 1 },
+    }))).toMatchObject({ outcome: "succeeded" });
+
+    service.attach({
+      generationId: "generation-2",
+      sessionId,
+      capabilities: [PROGRAM_STATE_V2_CAPABILITY, PROGRAM_EXECUTION_V2_CAPABILITY],
+      transport: transport(),
+    });
+
+    expect(await service.handleCapability({
+      message: first,
+      generationId: "generation-1",
+      sessionId: asSessionId(sessionId),
+    }, async () => { throw new Error("displaced generation must not execute"); })).toMatchObject({
+      outcome: "stale",
+      errorCode: "program_execution_stale",
+    });
+    expect(service.isCurrentConnection(sessionId, "generation-2")).toBe(true);
+    expect(service.isCurrentConnection(sessionId, "generation-1")).toBe(false);
+  });
 });

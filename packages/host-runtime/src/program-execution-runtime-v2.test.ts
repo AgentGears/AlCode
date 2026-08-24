@@ -29,4 +29,13 @@ describe("A1 adaptive Program runtime V2 authority composition", () => {
     expect(source).toContain("Adaptive Program capability requests require ProgramAttemptAuthorityV2");
     expect(source).toContain("This session was canonically classified adaptive before attachment.");
   });
+
+  it("cleans adaptive generation state on displacement, explicit detach, and process exit", () => {
+    expect(source).toContain("const displacedGenerationId = this.agent.attach(");
+    expect(source).toContain("this.clearContextCacheForGeneration(displacedGenerationId)");
+    expect(source).toContain("const detachAdaptiveGeneration = (): void =>");
+    expect(source).toContain("this.agent.detach(connection.generationId)");
+    expect(source).toContain("void connection.waitForExit().then(");
+    expect(source).toContain("detachAdaptiveGeneration();");
+  });
 });

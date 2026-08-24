@@ -118,6 +118,12 @@ export class ProgramExecutionRuntimeV2 {
     return { digest: digestOf(definitions), tools };
   }
 
+  private clearContextCacheForGeneration(generationId: string): void {
+    for (const key of [...this.contextCache.keys()]) {
+      if (key.startsWith(`${generationId}:`)) this.contextCache.delete(key);
+    }
+  }
+
   private v2Transport(
     connection: AgentConnection,
   ): ProtocolTransport<HostToAgentMessageV2Aware, AgentToHostMessageV2Aware> {
@@ -165,12 +171,13 @@ export class ProgramExecutionRuntimeV2 {
     }
 
     const adaptiveTransport = this.v2Transport(connection);
-    this.agent.attach({
+    const displacedGenerationId = this.agent.attach({
       generationId: connection.generationId,
       sessionId,
       capabilities,
       transport: adaptiveTransport,
     });
+    if (displacedGenerationId !== undefined) this.clearContextCacheForGeneration(displacedGenerationId);
 
     let attached: AttachedAgent;
     try {
@@ -182,6 +189,7 @@ export class ProgramExecutionRuntimeV2 {
       );
     } catch (error) {
       this.agent.detach(connection.generationId);
+      this.clearContextCacheForGeneration(connection.generationId);
       throw error;
     }
 
@@ -276,14 +284,23 @@ export class ProgramExecutionRuntimeV2 {
       }
     });
 
+    let adaptiveDetached = false;
+    const detachAdaptiveGeneration = (): void => {
+      if (adaptiveDetached) return;
+      adaptiveDetached = true;
+      unsubscribe();
+      this.agent.detach(connection.generationId);
+      this.clearContextCacheForGeneration(connection.generationId);
+    };
+    void connection.waitForExit().then(
+      () => detachAdaptiveGeneration(),
+      () => detachAdaptiveGeneration(),
+    );
+
     return {
       generationId: attached.generationId,
       detach: () => {
-        unsubscribe();
-        this.agent.detach(connection.generationId);
-        for (const key of [...this.contextCache.keys()]) {
-          if (key.startsWith(`${connection.generationId}:`)) this.contextCache.delete(key);
-        }
+        detachAdaptiveGeneration();
         attached.detach();
       },
     };

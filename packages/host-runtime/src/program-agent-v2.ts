@@ -123,11 +123,19 @@ function replayKey(generationId: string, sessionId: string, requestId: string): 
   return `${generationId}:${sessionId}:${requestId}`;
 }
 
+function replayScopePrefix(generationId: string, sessionId: string): string {
+  return `${generationId}:${sessionId}:`;
+}
+
 function replayWindowFull(
   completed: ReadonlyMap<string, unknown>,
   inFlight: ReadonlyMap<string, unknown>,
+  prefix: string,
 ): boolean {
-  return completed.size + inFlight.size >= PROGRAM_V2_REPLAY_CACHE_MAX_ENTRIES;
+  let size = 0;
+  for (const key of completed.keys()) if (key.startsWith(prefix)) size += 1;
+  for (const key of inFlight.keys()) if (key.startsWith(prefix)) size += 1;
+  return size >= PROGRAM_V2_REPLAY_CACHE_MAX_ENTRIES;
 }
 
 export class ProgramAgentServiceV2 {
@@ -144,7 +152,7 @@ export class ProgramAgentServiceV2 {
     sessionId: string;
     capabilities: readonly string[];
     transport: ProtocolTransport<HostToAgentMessageV2Aware, AgentToHostMessageV2Aware>;
-  }): void {
+  }): string | undefined {
     if (!input.generationId || !input.sessionId) {
       throw new ProgramAgentV2ControlError("generationId and sessionId are required");
     }
@@ -155,14 +163,20 @@ export class ProgramAgentServiceV2 {
         `Adaptive Program execution requires ${PROGRAM_STATE_V2_CAPABILITY} and ${PROGRAM_EXECUTION_V2_CAPABILITY}`,
       );
     }
+    const displaced = this.bindings.get(input.sessionId);
+    const displacedGenerationId = displaced !== undefined && displaced.generationId !== input.generationId
+      ? displaced.generationId
+      : undefined;
+    if (displacedGenerationId !== undefined) this.clearGeneration(displacedGenerationId);
     this.bindings.set(input.sessionId, {
       generationId: input.generationId,
       sessionId: input.sessionId,
       transport: input.transport,
     });
+    return displacedGenerationId;
   }
 
-  detach(generationId: string): void {
+  private clearGeneration(generationId: string): void {
     for (const [sessionId, binding] of this.bindings) {
       if (binding.generationId === generationId) this.bindings.delete(sessionId);
     }
@@ -177,6 +191,10 @@ export class ProgramAgentServiceV2 {
         if (key.startsWith(prefix)) cache.delete(key);
       }
     }
+  }
+
+  detach(generationId: string): void {
+    this.clearGeneration(generationId);
   }
 
   isCurrentConnection(sessionId: string, generationId: string): boolean {
@@ -295,7 +313,11 @@ export class ProgramAgentServiceV2 {
     if (cached !== undefined) return structuredClone(cached);
     const existing = this.progressInFlight.get(key);
     if (existing !== undefined) return structuredClone(await existing);
-    if (replayWindowFull(this.progressResponses, this.progressInFlight)) {
+    if (replayWindowFull(
+      this.progressResponses,
+      this.progressInFlight,
+      replayScopePrefix(generationId, message.sessionId),
+    )) {
       return progressResult(message, "denied", {
         errorCode: "program_execution_request_window_exhausted",
         error: "Adaptive Program progress replay window is full",
@@ -305,7 +327,9 @@ export class ProgramAgentServiceV2 {
     this.progressInFlight.set(key, pending);
     try {
       const result = await pending;
-      this.progressResponses.set(key, structuredClone(result));
+      if (this.isCurrentConnection(message.sessionId, generationId)) {
+        this.progressResponses.set(key, structuredClone(result));
+      }
       return result;
     } finally {
       this.progressInFlight.delete(key);
@@ -365,7 +389,11 @@ export class ProgramAgentServiceV2 {
     if (cached !== undefined) return structuredClone(cached);
     const existing = this.capabilityInFlight.get(key);
     if (existing !== undefined) return structuredClone(await existing);
-    if (replayWindowFull(this.capabilityResponses, this.capabilityInFlight)) {
+    if (replayWindowFull(
+      this.capabilityResponses,
+      this.capabilityInFlight,
+      replayScopePrefix(input.generationId, input.message.sessionId),
+    )) {
       return capabilityResult(
         input.message,
         "denied",
@@ -377,7 +405,9 @@ export class ProgramAgentServiceV2 {
     this.capabilityInFlight.set(key, pending);
     try {
       const result = await pending;
-      this.capabilityResponses.set(key, structuredClone(result));
+      if (this.isCurrentConnection(input.message.sessionId, input.generationId)) {
+        this.capabilityResponses.set(key, structuredClone(result));
+      }
       return result;
     } finally {
       this.capabilityInFlight.delete(key);

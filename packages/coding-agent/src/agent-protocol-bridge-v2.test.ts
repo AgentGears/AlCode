@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   type AgentToHostMessageV2Aware,
@@ -108,5 +109,12 @@ describe("A1 transitional Agent protocol bridge", () => {
     expect(Object.isFrozen(client)).toBe(true);
     await expect(client.close()).resolves.toBeUndefined();
     expect(h.isClosed()).toBe(true);
+  });
+
+  it("does not advertise semantic revision support before revision wire messages exist", () => {
+    const worker = readFileSync(new URL("./agent-worker.ts", import.meta.url), "utf8");
+    expect(worker).toContain("PROGRAM_STATE_V2_CAPABILITY");
+    expect(worker).toContain("PROGRAM_EXECUTION_V2_CAPABILITY");
+    expect(worker).not.toContain("PROGRAM_REVISION_CAPABILITY");
   });
 });
