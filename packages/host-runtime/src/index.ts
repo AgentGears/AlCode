@@ -243,6 +243,29 @@ export {
 } from "./program-application.ts";
 
 export {
+  ProgramRevisionControlServiceV1,
+  ProgramRevisionPlanningServiceV1,
+  HostProgramRevisionApplicationControlV1,
+  ProgramRevisionControlError,
+  ProgramRevisionStaleError,
+  PROGRAM_SEMANTIC_REVISION_DRAFT_PROFILE,
+  assertProgramSemanticRevisionDraftV1,
+  type NonInitialProgramChangeClassV1,
+  type ProgramSemanticCurrentSnapshotV1,
+  type ProgramSemanticCurrentStateSourceV1,
+  type ProgramRevisionAgentProposalV1,
+  type ProgramRevisionHostCanonicalizerV1,
+  type ProgramRevisionPlanningAgentAuthorityV1,
+  type ProgramRevisionPlanningBeginV1,
+  type ProgramSemanticRevisionDraftV1,
+  type ProgramSemanticRevisionAcceptedResultV1,
+  type PublicPendingProgramRevisionV1,
+  type ProgramRevisionApplicationAcceptCommandV1,
+  type ProgramRevisionControlServiceOptionsV1,
+  type ProgramRevisionPlanningServiceOptionsV1,
+} from "./program-revision.ts";
+
+export {
   HostProgramWorkspaceCoordinatorV1,
   ProgramExecutionRuntimeV1,
   createProgramExecutionRuntimeV1,
