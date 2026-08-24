@@ -7,6 +7,7 @@ import type {
   ProgramBlockerId,
   ProgramEvidenceRefId,
   ProgramOutputSlotId,
+  ProgramRevisionId,
   ProgramStateId,
   ProgramWorkItemId,
   SessionId,
@@ -51,3 +52,5 @@ export const asProgramEvidenceRefId = (value: string): ProgramEvidenceRefId =>
   brandNonEmpty(value, "ProgramEvidenceRefId");
 export const asExecutionBaseMismatchReceiptId = (value: string): ExecutionBaseMismatchReceiptId =>
   brandNonEmpty(value, "ExecutionBaseMismatchReceiptId");
+export const asProgramRevisionId = (value: string): ProgramRevisionId =>
+  brandNonEmpty(value, "ProgramRevisionId");

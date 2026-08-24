@@ -25,6 +25,17 @@ export const PROGRAM_LIMITS = Object.freeze({
   serializedCanonicalProgramStateBytes: 4 * 1024 * 1024,
   agentAttemptProjectionBytes: 128 * 1024,
   applicationProgramProjectionBytes: 256 * 1024,
+
+  // A1 frozen semantic-kernel ceilings. Existing Phase-1 ceilings above remain
+  // independently authoritative and are not raised by adaptive semantics.
+  decompositionDepth: 8,
+  childrenPerDecomposition: 8,
+  semanticProgramRevisions: 32,
+  semanticRevisionProposalBytes: 3 * 1024 * 1024,
+  revisionImpactBytes: 256 * 1024,
+  sealedPendingSemanticDraftBytes: 4 * 1024 * 1024,
+  workAuthorityEnvelopeBytes: 8 * 1024,
+  semanticRationaleBytes: 4 * 1024,
 } as const);
 
 /**
