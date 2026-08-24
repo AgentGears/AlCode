@@ -74,7 +74,12 @@ function harness() {
     },
     async close() { closed = true; },
   };
-  return { transport, sent, isClosed: () => closed };
+  return {
+    transport,
+    sent,
+    isClosed: () => closed,
+    deliver: (message: HostToAgentMessageV2Aware) => receive?.(structuredClone(message)),
+  };
 }
 
 describe("A1 transitional Agent protocol bridge", () => {
@@ -103,7 +108,7 @@ describe("A1 transitional Agent protocol bridge", () => {
     expect(h.sent.at(-1)).toMatchObject({ type: "program.progress", version: 2 });
   });
 
-  it("bounds context refresh and capability requests when the Host cannot respond", async () => {
+  it("bounds read-only context refresh when the Host cannot respond", async () => {
     const h = harness();
     const client = createAgentProtocolBridgeV2ForTransport(h.transport);
     vi.useFakeTimers();
@@ -112,17 +117,48 @@ describe("A1 transitional Agent protocol bridge", () => {
       const contextExpectation = expect(contextPending).rejects.toThrow("Context refresh timed out");
       await vi.advanceTimersByTimeAsync(10_000);
       await contextExpectation;
+    } finally {
+      vi.useRealTimers();
+      await client.close();
+    }
+  });
 
-      const capabilityPending = client.requestCapability({
+  it("keeps effectful capability requests pending until a correlated terminal Host result arrives", async () => {
+    const h = harness();
+    const client = createAgentProtocolBridgeV2ForTransport(h.transport);
+    vi.useFakeTimers();
+    try {
+      const pending = client.requestCapability({
         sessionId: "session-1",
-        toolCallId: "tool-timeout",
-        toolName: "read",
-        args: { path: "src/timeouts.ts" },
+        toolCallId: "tool-long-running",
+        toolName: "edit",
+        args: { path: "src/long-running.ts" },
         programAttemptAuthority: v2Authority(),
       });
-      const capabilityExpectation = expect(capabilityPending).rejects.toThrow("Capability request timed out");
-      await vi.advanceTimersByTimeAsync(10_000);
-      await capabilityExpectation;
+      const request = h.sent.at(-1);
+      expect(request).toMatchObject({ type: "capability.request", toolCallId: "tool-long-running" });
+      if (request === undefined || request.type !== "capability.request") throw new Error("capability request not sent");
+
+      let settled = false;
+      void pending.finally(() => { settled = true; });
+      await vi.advanceTimersByTimeAsync(60_000);
+      await Promise.resolve();
+      expect(settled).toBe(false);
+
+      h.deliver({
+        type: "capability.result",
+        requestId: request.requestId,
+        sessionId: "session-1",
+        toolCallId: "tool-long-running",
+        toolName: "edit",
+        outcome: "succeeded",
+        operationId: "operation-long-running",
+        result: { committed: true },
+      });
+      await expect(pending).resolves.toMatchObject({
+        outcome: "succeeded",
+        operationId: "operation-long-running",
+      });
     } finally {
       vi.useRealTimers();
       await client.close();

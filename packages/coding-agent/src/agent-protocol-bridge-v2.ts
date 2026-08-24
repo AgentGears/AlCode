@@ -224,7 +224,6 @@ class AgentProtocolBridgeV2 implements AgentProtocolClientV2 {
         && message.sessionId === request.sessionId
         && message.toolCallId === request.toolCallId
         && message.toolName === request.toolName,
-      { timeoutMs: 10_000, timeoutMessage: "Capability request timed out" },
     );
   }
 
