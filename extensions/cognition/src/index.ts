@@ -36,7 +36,9 @@ export function createCognitionExtension(options: CognitionExtensionOptions): Ag
 export {
   type CognitionAssistantRecord,
   type CognitionCapabilityRequest,
+  type CognitionCapabilityRequestV2Aware,
   type CognitionHostClient,
+  type CognitionHostClientV2Aware,
   type CognitionIdleRecord,
   type CognitionToolResultRecord,
 } from "./host-client.ts";

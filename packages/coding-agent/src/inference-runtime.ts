@@ -11,12 +11,12 @@ import type {
 } from "@alcode/agent-protocol";
 import {
   createProtocolProxyTool,
-  type CognitionCapabilityRequest,
-  type CognitionHostClient,
+  type CognitionCapabilityRequestV2Aware,
+  type CognitionHostClientV2Aware,
 } from "@alcode/cognition-extension";
 
 export interface InferenceCapabilityClient {
-  requestCapability(request: CognitionCapabilityRequest): Promise<CapabilityResult>;
+  requestCapability(request: CognitionCapabilityRequestV2Aware): Promise<CapabilityResult>;
 }
 
 export const INFERENCE_CAPABILITY_CLIENT = createServiceToken<InferenceCapabilityClient>(
@@ -31,7 +31,7 @@ export interface InferenceCapabilityProjection {
 
 export interface CreateInferenceCapabilityProjectionOptions {
   runtime: AgentRuntime;
-  client: Pick<CognitionHostClient, "requestCapability">;
+  client: Pick<CognitionHostClientV2Aware, "requestCapability">;
   sessionId: string;
   catalog?: InferenceToolCatalog | undefined;
   programAttemptAuthority?: ProgramAttemptAuthorityAny | undefined;
@@ -39,7 +39,7 @@ export interface CreateInferenceCapabilityProjectionOptions {
 
 function createScopedCapabilityClient(
   scope: RuntimeScope,
-  client: Pick<CognitionHostClient, "requestCapability">,
+  client: Pick<CognitionHostClientV2Aware, "requestCapability">,
 ): InferenceCapabilityClient {
   return {
     async requestCapability(request) {
@@ -72,7 +72,7 @@ export function createInferenceCapabilityProjection(
     if (options.catalog === undefined) return { scope, dispose };
 
     const client = scope.resolve(INFERENCE_CAPABILITY_CLIENT);
-    const tools = options.catalog.tools.map((descriptor) => createProtocolProxyTool({
+    const tools = options.catalog.tools.map((descriptor) => createProtocolProxyTool<ProgramAttemptAuthorityAny>({
       name: descriptor.definition.name,
       description: descriptor.definition.description,
       inputSchema: descriptor.definition.inputSchema,

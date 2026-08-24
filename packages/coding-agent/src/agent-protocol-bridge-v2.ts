@@ -23,8 +23,8 @@ import {
 } from "@alcode/agent-protocol";
 import type {
   CognitionAssistantRecord,
-  CognitionCapabilityRequest,
-  CognitionHostClient,
+  CognitionCapabilityRequestV2Aware,
+  CognitionHostClientV2Aware,
   CognitionIdleRecord,
   CognitionToolResultRecord,
 } from "@alcode/cognition-extension";
@@ -55,7 +55,7 @@ export type ContextUpdateAny = ContextUpdate | ContextUpdateV2;
 export type ProgramProgressResultAny = ProgramProgressResult | ProgramProgressResultV2;
 export type HostMessageHandlerV2Aware = (message: HostToAgentMessageV2Aware) => void | Promise<void>;
 
-export interface AgentProtocolClientV2 extends CognitionHostClient {
+export interface AgentProtocolClientV2 extends CognitionHostClientV2Aware {
   announceHello(generationId: string, capabilities: readonly string[]): Promise<void>;
   reportError(message: string, sessionId?: string): Promise<void>;
   requestContextUpdate(sessionId: string, signal: AbortSignal): Promise<ContextUpdateAny>;
@@ -201,7 +201,7 @@ class AgentProtocolBridgeV2 implements AgentProtocolClientV2 {
     );
   }
 
-  requestCapability(request: CognitionCapabilityRequest): Promise<CapabilityResult> {
+  requestCapability(request: CognitionCapabilityRequestV2Aware): Promise<CapabilityResult> {
     const requestId = randomUUID();
     return this.request(
       requestId,
