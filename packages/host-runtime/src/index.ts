@@ -266,6 +266,17 @@ export {
 } from "./program-revision.ts";
 
 export {
+  issueProgramAttemptAuthorityV2,
+  evaluateProgramAttemptAuthorityV2,
+  ProgramAttemptAuthorityV2Error,
+  type ProgramAttemptRuntimeFactsV2,
+  type ProgramAttemptAuthorityFactsV2,
+  type ProgramAttemptAuthorityV2StaleReason,
+  type ProgramAttemptAuthorityV2Stale,
+  type ProgramAttemptAuthorityV2Evaluation,
+} from "./program-attempt-authority-v2.ts";
+
+export {
   HostProgramWorkspaceCoordinatorV1,
   ProgramExecutionRuntimeV1,
   createProgramExecutionRuntimeV1,

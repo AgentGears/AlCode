@@ -4,9 +4,14 @@ on:
     branches: [main]
     paths:
       - 'packages/program-state/**'
+      - 'packages/agent-protocol/src/program-execution-v2.ts'
+      - 'packages/agent-protocol/src/program-execution-v2.test.ts'
+      - 'packages/agent-protocol/src/index.ts'
       - 'packages/host-runtime/src/program-revision.ts'
       - 'packages/host-runtime/src/program-revision.test.ts'
       - 'packages/host-runtime/src/program-revision-race.test.ts'
+      - 'packages/host-runtime/src/program-attempt-authority-v2.ts'
+      - 'packages/host-runtime/src/program-attempt-authority-v2.test.ts'
       - 'packages/host-runtime/src/index.ts'
       - 'docs/a1-adaptive-program-*'
       - 'pnpm-lock.yaml'
@@ -15,9 +20,14 @@ on:
   pull_request:
     paths:
       - 'packages/program-state/**'
+      - 'packages/agent-protocol/src/program-execution-v2.ts'
+      - 'packages/agent-protocol/src/program-execution-v2.test.ts'
+      - 'packages/agent-protocol/src/index.ts'
       - 'packages/host-runtime/src/program-revision.ts'
       - 'packages/host-runtime/src/program-revision.test.ts'
       - 'packages/host-runtime/src/program-revision-race.test.ts'
+      - 'packages/host-runtime/src/program-attempt-authority-v2.ts'
+      - 'packages/host-runtime/src/program-attempt-authority-v2.test.ts'
       - 'packages/host-runtime/src/index.ts'
       - 'docs/a1-adaptive-program-*'
       - 'pnpm-lock.yaml'
@@ -37,7 +47,11 @@ jobs:
         run: pnpm --filter @alcode/program-state exec tsc --noEmit -p tsconfig.json
       - name: Verify semantic kernel and atomic revision transaction
         run: pnpm --filter @alcode/program-state exec vitest run src/semantic-a1.test.ts src/revision-a1.test.ts
-      - name: Typecheck Host semantic revision admission
+      - name: Typecheck additive Agent protocol V2 schema
+        run: pnpm --filter @alcode/agent-protocol exec tsc --noEmit -p tsconfig.json
+      - name: Verify capability-gated V2 Program wire schemas
+        run: pnpm exec vitest run packages/agent-protocol/src/program-execution-v2.test.ts
+      - name: Typecheck Host semantic revision admission and V2 authority
         run: pnpm --filter @alcode/host-runtime exec tsc --noEmit -p tsconfig.json
-      - name: Verify Host planning, sealed draft, exact Application admission, and authority/freshness races
-        run: pnpm exec vitest run packages/host-runtime/src/program-revision.test.ts packages/host-runtime/src/program-revision-race.test.ts
+      - name: Verify Host planning, semantic admission, and V2 Attempt authority
+        run: pnpm exec vitest run packages/host-runtime/src/program-revision.test.ts packages/host-runtime/src/program-revision-race.test.ts packages/host-runtime/src/program-attempt-authority-v2.test.ts
