@@ -7,20 +7,16 @@ import {
 import type {
   CapabilityResult,
   InferenceToolCatalog,
-  ProgramAttemptProjectionV1,
+  ProgramAttemptAuthorityAny,
 } from "@alcode/agent-protocol";
 import {
   createProtocolProxyTool,
-  type CognitionCapabilityRequest,
-  type CognitionHostClient,
+  type CognitionCapabilityRequestV2Aware,
+  type CognitionHostClientV2Aware,
 } from "@alcode/cognition-extension";
 
-/**
- * Capability-only semantic client owned by exactly one inference scope.
- * Visibility through this client is not Host execution authorization.
- */
 export interface InferenceCapabilityClient {
-  requestCapability(request: CognitionCapabilityRequest): Promise<CapabilityResult>;
+  requestCapability(request: CognitionCapabilityRequestV2Aware): Promise<CapabilityResult>;
 }
 
 export const INFERENCE_CAPABILITY_CLIENT = createServiceToken<InferenceCapabilityClient>(
@@ -30,27 +26,23 @@ export const INFERENCE_CAPABILITY_CLIENT = createServiceToken<InferenceCapabilit
 export interface InferenceCapabilityProjection {
   readonly scope: RuntimeScope;
   readonly tools?: readonly AgentTool[];
-  /** Release the inference lifecycle lease, then quiescently close the scope. */
   dispose(): Promise<void>;
 }
 
 export interface CreateInferenceCapabilityProjectionOptions {
   runtime: AgentRuntime;
-  client: Pick<CognitionHostClient, "requestCapability">;
+  client: Pick<CognitionHostClientV2Aware, "requestCapability">;
   sessionId: string;
   catalog?: InferenceToolCatalog | undefined;
-  programAttemptAuthority?: ProgramAttemptProjectionV1["authority"] | undefined;
+  programAttemptAuthority?: ProgramAttemptAuthorityAny | undefined;
 }
 
 function createScopedCapabilityClient(
   scope: RuntimeScope,
-  client: Pick<CognitionHostClient, "requestCapability">,
+  client: Pick<CognitionHostClientV2Aware, "requestCapability">,
 ): InferenceCapabilityClient {
   return {
     async requestCapability(request) {
-      // Scope admission is a lifecycle fence only. The Host still performs
-      // generation, ProgramAttempt, capability-revision, policy, and Operation
-      // admission checks independently.
       const admission = scope.admit();
       try {
         return await client.requestCapability(request);
@@ -61,12 +53,6 @@ function createScopedCapabilityClient(
   };
 }
 
-/**
- * Create the ephemeral Host-capability projection for exactly one provider
- * inference. A lifecycle admission remains held for the whole inference/tool
- * cycle, so Agent-generation disposal cannot close the protocol beneath live
- * inference work. `dispose()` releases that lease and then closes quiescently.
- */
 export function createInferenceCapabilityProjection(
   options: CreateInferenceCapabilityProjectionOptions,
 ): InferenceCapabilityProjection {
@@ -82,15 +68,11 @@ export function createInferenceCapabilityProjection(
   };
 
   try {
-    scope.provide(
-      INFERENCE_CAPABILITY_CLIENT,
-      createScopedCapabilityClient(scope, options.client),
-    );
-
+    scope.provide(INFERENCE_CAPABILITY_CLIENT, createScopedCapabilityClient(scope, options.client));
     if (options.catalog === undefined) return { scope, dispose };
 
     const client = scope.resolve(INFERENCE_CAPABILITY_CLIENT);
-    const tools = options.catalog.tools.map((descriptor) => createProtocolProxyTool({
+    const tools = options.catalog.tools.map((descriptor) => createProtocolProxyTool<ProgramAttemptAuthorityAny>({
       name: descriptor.definition.name,
       description: descriptor.definition.description,
       inputSchema: descriptor.definition.inputSchema,

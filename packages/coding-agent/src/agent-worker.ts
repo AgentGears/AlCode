@@ -3,39 +3,34 @@
 // It does NOT import storage, workspace, memory, reasoning, or Host runtime.
 
 import { randomUUID } from "node:crypto";
-import {
-  AgentRuntime,
-  runAgentLoop,
-  type Message,
-} from "@alcode/agent-core";
+import { AgentRuntime, runAgentLoop, type Message } from "@alcode/agent-core";
 import {
   AGENT_PROTOCOL_VERSION,
   DYNAMIC_CAPABILITY_BINDING_CAPABILITY,
   DURABLE_TRANSCRIPT_CAPABILITY,
   GRAPH_CONTEXT_CAPABILITY,
   PROGRAM_EXECUTION_CAPABILITY,
+  PROGRAM_EXECUTION_V2_CAPABILITY,
   PROGRAM_STATE_CAPABILITY,
+  PROGRAM_STATE_V2_CAPABILITY,
+  isProgramAttemptAuthorityV2,
   type ContextProvide,
-  type HostToAgentMessage,
+  type HostToAgentMessageV2Aware,
+  type ProgramAttemptAuthorityAny,
   type ProgramAttemptAuthorityV1,
-  type ProgramAttemptProjectionV1,
+  type ProgramAttemptProjectionAny,
 } from "@alcode/agent-protocol";
-import { createProcessAgentProtocolBridge } from "./agent-protocol-bridge.ts";
+import { createProcessAgentProtocolBridgeV2 } from "./agent-protocol-bridge-v2.ts";
 import {
   AGENT_PROGRAM_BEHAVIOR,
   AGENT_RUN_COMPOSITION_FACTORY,
   createDefaultAgentRuntimeModules,
   type AgentRunComposition,
+  type DefaultAgentRuntimeProfileOptions,
 } from "./agent-runtime-profile.ts";
-import {
-  createInferenceCapabilityProjection,
-  type InferenceCapabilityProjection,
-} from "./inference-runtime.ts";
+import { createInferenceCapabilityProjection, type InferenceCapabilityProjection } from "./inference-runtime.ts";
 import { requestInferenceContext } from "./inference-context.ts";
-import {
-  PROGRAM_EXECUTION_PROMPT,
-  renderProgramAttemptContext,
-} from "./program-attempt-context.ts";
+import { PROGRAM_EXECUTION_PROMPT, renderProgramAttemptContext } from "./program-attempt-context.ts";
 import { RecoverableRunQueueV1 } from "./recoverable-run-queue.ts";
 
 class ProgramAttemptExecutionStaleError extends Error {
@@ -45,28 +40,54 @@ class ProgramAttemptExecutionStaleError extends Error {
   }
 }
 
-function sameProgramAttemptIdentity(
-  left: ProgramAttemptAuthorityV1,
-  right: ProgramAttemptAuthorityV1,
-): boolean {
+function sameCanonical(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function sameProgramAttemptIdentity(left: ProgramAttemptAuthorityAny, right: ProgramAttemptAuthorityAny): boolean {
+  if (isProgramAttemptAuthorityV2(left) !== isProgramAttemptAuthorityV2(right)) return false;
   return left.programStateId === right.programStateId
     && left.programAttemptId === right.programAttemptId
     && left.workItemId === right.workItemId
     && left.agentGeneration === right.agentGeneration;
 }
 
-function sameProgramAttemptAuthority(
-  left: ProgramAttemptAuthorityV1,
-  right: ProgramAttemptAuthorityV1,
-): boolean {
+/** V2 currentness deliberately excludes semantic ProgramRevision provenance. */
+function sameV2Currentness(left: ProgramAttemptAuthorityAny, right: ProgramAttemptAuthorityAny): boolean {
+  return isProgramAttemptAuthorityV2(left) && isProgramAttemptAuthorityV2(right)
+    && sameProgramAttemptIdentity(left, right)
+    && left.workItemGeneration === right.workItemGeneration
+    && sameCanonical(left.dependencyReceipt, right.dependencyReceipt)
+    && sameCanonical(left.constraintReceipt, right.constraintReceipt);
+}
+
+function sameFirstInferenceAuthority(left: ProgramAttemptAuthorityAny, right: ProgramAttemptAuthorityAny): boolean {
+  if (isProgramAttemptAuthorityV2(left) || isProgramAttemptAuthorityV2(right)) return sameV2Currentness(left, right);
   return sameProgramAttemptIdentity(left, right)
     && left.expectedProgramRevision === right.expectedProgramRevision;
+}
+
+function sameLaterInferenceAuthority(left: ProgramAttemptAuthorityAny, right: ProgramAttemptAuthorityAny): boolean {
+  if (isProgramAttemptAuthorityV2(left) || isProgramAttemptAuthorityV2(right)) return sameV2Currentness(left, right);
+  return sameProgramAttemptIdentity(left, right)
+    && left.expectedProgramRevision >= right.expectedProgramRevision;
+}
+
+function projectionExecutable(projection: ProgramAttemptProjectionAny | undefined): boolean {
+  if (projection === undefined) return false;
+  return projection.version === 1
+    ? projection.work.lifecycle === "in_progress"
+    : projection.work.satisfactionState === "active";
 }
 
 async function main(): Promise<void> {
   const generationId = process.env.ALCODE_AGENT_GENERATION_ID;
   if (!generationId) throw new Error("ALCODE_AGENT_GENERATION_ID is required");
-  const protocol = createProcessAgentProtocolBridge();
+  const adaptiveProtocol = createProcessAgentProtocolBridgeV2();
+  // The existing runtime profile owns behavior/lifecycle. Its compile-time V1
+  // surface is a subset of the transitional bridge; runtime authority selects
+  // the exact V1 or V2 progress message.
+  const protocol = adaptiveProtocol as unknown as DefaultAgentRuntimeProfileOptions["protocol"];
   const runtime = await AgentRuntime.create({
     generationId,
     modules: createDefaultAgentRuntimeModules({ protocol }),
@@ -81,10 +102,10 @@ async function main(): Promise<void> {
   const inFlightProgramAttempts = new Set<string>();
 
   const reportError = async (message: string, activeSessionId?: string): Promise<void> => {
-    await protocol.reportError(message, activeSessionId);
+    await adaptiveProtocol.reportError(message, activeSessionId);
   };
 
-  await protocol.announceHello(generationId, [
+  await adaptiveProtocol.announceHello(generationId, [
     "capability.request",
     "criterion.evidence",
     "agent.idle",
@@ -93,12 +114,14 @@ async function main(): Promise<void> {
     DYNAMIC_CAPABILITY_BINDING_CAPABILITY,
     PROGRAM_STATE_CAPABILITY,
     PROGRAM_EXECUTION_CAPABILITY,
+    PROGRAM_STATE_V2_CAPABILITY,
+    PROGRAM_EXECUTION_V2_CAPABILITY,
   ]);
 
   const runInput = async (
     text: string,
     timestamp?: number,
-    requiredProgramAttemptAuthority?: ProgramAttemptAuthorityV1,
+    requiredProgramAttemptAuthority?: ProgramAttemptAuthorityAny,
   ): Promise<void> => {
     if (!sessionId || !context) throw new Error("Agent received input before session/context bootstrap");
     if (context.verbatim?.status === "incomplete") {
@@ -107,7 +130,7 @@ async function main(): Promise<void> {
     const localSessionId = sessionId;
     const localContext = context;
     const runAbortController = abortController;
-    let latestProgramAttemptAuthority: ProgramAttemptProjectionV1["authority"] | undefined;
+    let latestProgramAttemptAuthority: ProgramAttemptAuthorityAny | undefined;
     let activeInferenceProjection: InferenceCapabilityProjection | null = null;
     let composition: AgentRunComposition | null = null;
     let firstInferenceCut = true;
@@ -121,7 +144,9 @@ async function main(): Promise<void> {
       composition = await runCompositionFactory.create({
         sessionId: localSessionId,
         context: localContext,
-        latestProgramAttemptAuthority: () => latestProgramAttemptAuthority,
+        // The profile contribution is structurally version-agnostic at runtime;
+        // the transitional bridge inspects the actual authority before sending.
+        latestProgramAttemptAuthority: () => latestProgramAttemptAuthority as ProgramAttemptAuthorityV1 | undefined,
       });
       const completeHistory = await runAgentLoop(text, {
         systemPrompt: localContext.systemPrompt,
@@ -133,30 +158,30 @@ async function main(): Promise<void> {
         ...(localContext.verbatim !== undefined
           ? {
               beforeInference: async () => {
-                // Defensive closure keeps at most one live inference scope even
-                // if a future loop implementation skips the lifecycle callback.
                 await disposeActiveInferenceScope();
-                const refreshed = await requestInferenceContext(protocol, localSessionId, runAbortController.signal);
-                const refreshedAttempt = refreshed.programAttempt;
+                const refreshed = await requestInferenceContext(adaptiveProtocol, localSessionId, runAbortController.signal);
+                const refreshedAttempt = refreshed.programAttempt as ProgramAttemptProjectionAny | undefined;
                 if (requiredProgramAttemptAuthority !== undefined) {
                   const currentAuthority = refreshedAttempt?.authority;
-                  if (currentAuthority === undefined || refreshedAttempt?.work.lifecycle !== "in_progress") {
+                  if (currentAuthority === undefined || !projectionExecutable(refreshedAttempt)) {
                     throw new ProgramAttemptExecutionStaleError("Requested ProgramAttempt is no longer executable");
                   }
-                  if (firstInferenceCut) {
-                    if (!sameProgramAttemptAuthority(currentAuthority, requiredProgramAttemptAuthority)) {
-                      throw new ProgramAttemptExecutionStaleError("Requested ProgramAttempt authority is stale at first inference cut");
-                    }
-                  } else if (!sameProgramAttemptIdentity(currentAuthority, requiredProgramAttemptAuthority)
-                      || currentAuthority.expectedProgramRevision < requiredProgramAttemptAuthority.expectedProgramRevision) {
-                    throw new ProgramAttemptExecutionStaleError("Requested ProgramAttempt lost current Host authority");
+                  const authorityMatches = firstInferenceCut
+                    ? sameFirstInferenceAuthority(currentAuthority, requiredProgramAttemptAuthority)
+                    : sameLaterInferenceAuthority(currentAuthority, requiredProgramAttemptAuthority);
+                  if (!authorityMatches) {
+                    throw new ProgramAttemptExecutionStaleError(
+                      firstInferenceCut
+                        ? "Requested ProgramAttempt authority is stale at first inference cut"
+                        : "Requested ProgramAttempt lost current Host authority",
+                    );
                   }
                   firstInferenceCut = false;
                 }
-                latestProgramAttemptAuthority = currentAuthorityOrUndefined(refreshedAttempt);
+                latestProgramAttemptAuthority = refreshedAttempt?.authority;
                 const projection = createInferenceCapabilityProjection({
                   runtime,
-                  client: protocol,
+                  client: adaptiveProtocol,
                   sessionId: localSessionId,
                   catalog: refreshed.toolCatalog,
                   programAttemptAuthority: refreshedAttempt?.authority,
@@ -191,9 +216,7 @@ async function main(): Promise<void> {
             `Inference scope disposal failed: ${error instanceof Error ? error.message : String(error)}`,
             localSessionId,
           );
-        } catch {
-          // The Host may already be closing the generation protocol.
-        }
+        } catch {}
       }
       if (composition !== null) {
         try {
@@ -204,21 +227,13 @@ async function main(): Promise<void> {
               `Agent run scope disposal failed: ${error instanceof Error ? error.message : String(error)}`,
               localSessionId,
             );
-          } catch {
-            // The Host may already be closing the generation protocol.
-          }
+          } catch {}
         }
       }
     }
   };
 
-  function currentAuthorityOrUndefined(
-    projection: ProgramAttemptProjectionV1 | undefined,
-  ): ProgramAttemptProjectionV1["authority"] | undefined {
-    return projection?.authority;
-  }
-
-  protocol.onHostMessage((message: HostToAgentMessage) => {
+  adaptiveProtocol.onHostMessage((message: HostToAgentMessageV2Aware) => {
     switch (message.type) {
       case "host.hello":
         if (message.protocolVersion !== AGENT_PROTOCOL_VERSION) {
@@ -234,9 +249,8 @@ async function main(): Promise<void> {
         history = message.verbatim ? structuredClone(message.verbatim.messages) as Message[] : [];
         break;
       case "program.planning.begin":
-        void programBehavior.submitPlanningProposal(message).catch((error) => {
-          return reportError(error instanceof Error ? error.message : String(error), message.sessionId);
-        });
+        void programBehavior.submitPlanningProposal(message).catch((error) =>
+          reportError(error instanceof Error ? error.message : String(error), message.sessionId));
         break;
       case "program.attempt.execute": {
         if (message.sessionId !== sessionId || message.authority.agentGeneration <= 0) {

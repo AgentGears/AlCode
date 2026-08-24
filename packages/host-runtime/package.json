@@ -9,6 +9,10 @@
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
+    },
+    "./adaptive-v2": {
+      "types": "./src/adaptive-v2.ts",
+      "import": "./src/adaptive-v2.ts"
     }
   },
   "scripts": {

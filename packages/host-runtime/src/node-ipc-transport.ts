@@ -1,7 +1,7 @@
 import type { ChildProcess } from "node:child_process";
 import {
-  assertAgentToHostMessage,
-  assertHostToAgentMessage,
+  assertAgentToHostMessageV2Aware,
+  assertHostToAgentMessageV2Aware,
   type AgentToHostMessage,
   type HostToAgentMessage,
   type MessageHandler,
@@ -17,17 +17,15 @@ export function createChildProcessHostTransport(
   const pending: AgentToHostMessage[] = [];
   const dispatch = (message: AgentToHostMessage) => {
     if (handlers.size === 0) {
-      if (pending.length >= MAX_PREHANDLER_MESSAGES) {
-        throw new Error("Agent IPC pre-handler buffer overflow");
-      }
+      if (pending.length >= MAX_PREHANDLER_MESSAGES) throw new Error("Agent IPC pre-handler buffer overflow");
       pending.push(message);
       return;
     }
     for (const handler of [...handlers]) void Promise.resolve(handler(message));
   };
   const listener = (value: unknown) => {
-    assertAgentToHostMessage(value);
-    dispatch(value);
+    assertAgentToHostMessageV2Aware(value);
+    dispatch(value as AgentToHostMessage);
   };
   child.on("message", listener);
 
@@ -55,11 +53,6 @@ export function createChildProcessHostTransport(
   };
 }
 
-/**
- * Kept for Host-runtime internal tests/backward imports. Production Agent code
- * imports the process-side adapter from @alcode/agent-protocol so it does not
- * depend on Host runtime.
- */
 export function createProcessAgentTransport(
   proc: NodeJS.Process = process,
 ): ProtocolTransport<AgentToHostMessage, HostToAgentMessage> {
@@ -67,17 +60,15 @@ export function createProcessAgentTransport(
   const pending: HostToAgentMessage[] = [];
   const dispatch = (message: HostToAgentMessage) => {
     if (handlers.size === 0) {
-      if (pending.length >= MAX_PREHANDLER_MESSAGES) {
-        throw new Error("Host IPC pre-handler buffer overflow");
-      }
+      if (pending.length >= MAX_PREHANDLER_MESSAGES) throw new Error("Host IPC pre-handler buffer overflow");
       pending.push(message);
       return;
     }
     for (const handler of [...handlers]) void Promise.resolve(handler(message));
   };
   const listener = (value: unknown) => {
-    assertHostToAgentMessage(value);
-    dispatch(value);
+    assertHostToAgentMessageV2Aware(value);
+    dispatch(value as HostToAgentMessage);
   };
   proc.on("message", listener);
 
