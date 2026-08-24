@@ -50,7 +50,7 @@ jobs:
       - name: Typecheck additive Agent protocol V2 schema
         run: pnpm --filter @alcode/agent-protocol exec tsc --noEmit -p tsconfig.json
       - name: Verify capability-gated V2 Program wire schemas
-        run: pnpm --filter @alcode/agent-protocol exec vitest run src/program-execution-v2.test.ts
+        run: pnpm exec vitest run packages/agent-protocol/src/program-execution-v2.test.ts
       - name: Typecheck Host semantic revision admission and V2 authority
         run: pnpm --filter @alcode/host-runtime exec tsc --noEmit -p tsconfig.json
       - name: Verify Host planning, semantic admission, and V2 Attempt authority
