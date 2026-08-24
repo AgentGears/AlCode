@@ -79,3 +79,5 @@ export {
   assertAgentToHostMessage,
   assertHostToAgentMessage,
 } from "./validation.ts";
+
+export * from "./program-execution-v2.ts";
