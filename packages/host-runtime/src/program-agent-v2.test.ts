@@ -6,6 +6,7 @@ import {
   type CapabilityRequestV2,
   type HostToAgentMessageV2Aware,
   type ProgramAttemptAuthorityV2,
+  type ProgramProgressProposalV2,
   type ProtocolTransport,
 } from "@alcode/agent-protocol";
 import {
@@ -208,6 +209,19 @@ function capability(authority: ProgramAttemptAuthorityV2): CapabilityRequestV2 {
   };
 }
 
+function progress(authority: ProgramAttemptAuthorityV2): ProgramProgressProposalV2 {
+  return {
+    type: "program.progress",
+    version: 2,
+    requestId: "progress-1",
+    sessionId,
+    authority: structuredClone(authority),
+    evidence: [],
+    advisoryBlockers: [],
+    requestAwaitingVerification: true,
+  };
+}
+
 describe("A1 adaptive Program execution V2 boundary", () => {
   it("dispatches V2 and retains authority across an unrelated semantic revision at capability admission", async () => {
     let cut = makeCut();
@@ -291,8 +305,10 @@ describe("A1 adaptive Program execution V2 boundary", () => {
 
     cut = makeCut(r2);
     cut.facts.runtime.writerBarriersClear = false;
+    const second = capability(authority);
+    second.requestId = "cap-2";
     expect((await service.handleCapability({
-      message: capability(authority),
+      message: second,
       generationId: "connection-1",
       sessionId: asSessionId(sessionId),
     }, execute))).toMatchObject({ outcome: "stale", errorCode: "program_execution_stale" });
@@ -327,5 +343,76 @@ describe("A1 adaptive Program execution V2 boundary", () => {
       sessionId: asSessionId(sessionId),
     }, async () => { throw new Error("must not execute"); }))).toMatchObject({ outcome: "stale" });
     expect(progressCalls).toBe(0);
+  });
+
+  it("deduplicates concurrent and replayed V2 capability requests by Agent generation and requestId", async () => {
+    const cut = makeCut();
+    let executions = 0;
+    const service = new ProgramAgentServiceV2({
+      cuts: cutSource(() => cut),
+      progress: { admit: async () => ({ outcome: "admitted" }) },
+    });
+    service.attach({
+      generationId: "connection-1",
+      sessionId,
+      capabilities: [PROGRAM_STATE_V2_CAPABILITY, PROGRAM_EXECUTION_V2_CAPABILITY],
+      transport: transport([]),
+    });
+    const authority = (await service.currentAttemptProjection(sessionId, "connection-1"))!.authority;
+    const request = capability(authority);
+    const execute = async () => {
+      executions += 1;
+      await Promise.resolve();
+      return {
+        type: "capability.result" as const,
+        requestId: request.requestId,
+        sessionId,
+        toolCallId: request.toolCallId,
+        toolName: request.toolName,
+        outcome: "succeeded" as const,
+        result: { execution: executions },
+      };
+    };
+    const input = { message: request, generationId: "connection-1", sessionId: asSessionId(sessionId) };
+    const [first, second] = await Promise.all([
+      service.handleCapability(input, execute),
+      service.handleCapability(input, execute),
+    ]);
+    const third = await service.handleCapability(input, execute);
+    expect(executions).toBe(1);
+    expect(second).toEqual(first);
+    expect(third).toEqual(first);
+  });
+
+  it("deduplicates concurrent and replayed V2 progress admission by Agent generation and requestId", async () => {
+    const cut = makeCut();
+    let admissions = 0;
+    const service = new ProgramAgentServiceV2({
+      cuts: cutSource(() => cut),
+      progress: {
+        admit: async () => {
+          admissions += 1;
+          await Promise.resolve();
+          return { outcome: "admitted" };
+        },
+      },
+    });
+    service.attach({
+      generationId: "connection-1",
+      sessionId,
+      capabilities: [PROGRAM_STATE_V2_CAPABILITY, PROGRAM_EXECUTION_V2_CAPABILITY],
+      transport: transport([]),
+    });
+    const authority = (await service.currentAttemptProjection(sessionId, "connection-1"))!.authority;
+    const request = progress(authority);
+    const [first, second] = await Promise.all([
+      service.handleProgress(request, "connection-1"),
+      service.handleProgress(request, "connection-1"),
+    ]);
+    const third = await service.handleProgress(request, "connection-1");
+    expect(admissions).toBe(1);
+    expect(second).toEqual(first);
+    expect(third).toEqual(first);
+    expect(first).toMatchObject({ outcome: "admitted", programStateId: String(programStateId) });
   });
 });

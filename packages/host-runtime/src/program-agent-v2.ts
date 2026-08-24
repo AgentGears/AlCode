@@ -25,6 +25,8 @@ import {
   type ProgramAttemptAuthorityFactsV2,
 } from "./program-attempt-authority-v2.ts";
 
+const PROGRAM_V2_REPLAY_CACHE_MAX_ENTRIES = 256;
+
 export interface ProgramAdaptiveExecutionCutV2 {
   facts: ProgramAttemptAuthorityFactsV2;
   projection: Omit<ProgramAttemptProjectionV2, "version" | "authority">;
@@ -117,8 +119,25 @@ function operationalContextMatches(
     && context.expectedProgramRevision > 0;
 }
 
+function replayKey(generationId: string, sessionId: string, requestId: string): string {
+  return `${generationId}:${sessionId}:${requestId}`;
+}
+
+function rememberBounded<T>(map: Map<string, T>, key: string, value: T): void {
+  map.set(key, value);
+  while (map.size > PROGRAM_V2_REPLAY_CACHE_MAX_ENTRIES) {
+    const oldest = map.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    map.delete(oldest);
+  }
+}
+
 export class ProgramAgentServiceV2 {
   private readonly bindings = new Map<string, BindingV2>();
+  private readonly capabilityResponses = new Map<string, CapabilityResult>();
+  private readonly capabilityInFlight = new Map<string, Promise<CapabilityResult>>();
+  private readonly progressResponses = new Map<string, ProgramProgressResultV2>();
+  private readonly progressInFlight = new Map<string, Promise<ProgramProgressResultV2>>();
 
   constructor(private readonly options: ProgramAgentServiceV2Options) {}
 
@@ -148,6 +167,17 @@ export class ProgramAgentServiceV2 {
   detach(generationId: string): void {
     for (const [sessionId, binding] of this.bindings) {
       if (binding.generationId === generationId) this.bindings.delete(sessionId);
+    }
+    const prefix = `${generationId}:`;
+    for (const cache of [
+      this.capabilityResponses,
+      this.capabilityInFlight,
+      this.progressResponses,
+      this.progressInFlight,
+    ]) {
+      for (const key of [...cache.keys()]) {
+        if (key.startsWith(prefix)) cache.delete(key);
+      }
     }
   }
 
@@ -220,7 +250,7 @@ export class ProgramAgentServiceV2 {
     return request;
   }
 
-  async handleProgress(
+  private async computeProgress(
     message: ProgramProgressProposalV2,
     generationId: string,
   ): Promise<ProgramProgressResultV2> {
@@ -256,7 +286,33 @@ export class ProgramAgentServiceV2 {
     });
   }
 
-  async handleCapability(
+  async handleProgress(
+    message: ProgramProgressProposalV2,
+    generationId: string,
+  ): Promise<ProgramProgressResultV2> {
+    const key = replayKey(generationId, message.sessionId, message.requestId);
+    const cached = this.progressResponses.get(key);
+    if (cached !== undefined) return structuredClone(cached);
+    const existing = this.progressInFlight.get(key);
+    if (existing !== undefined) return structuredClone(await existing);
+    if (this.progressInFlight.size >= PROGRAM_V2_REPLAY_CACHE_MAX_ENTRIES) {
+      return progressResult(message, "denied", {
+        errorCode: "program_execution_request_window_exhausted",
+        error: "Adaptive Program progress replay window is full",
+      });
+    }
+    const pending = this.computeProgress(message, generationId);
+    this.progressInFlight.set(key, pending);
+    try {
+      const result = await pending;
+      rememberBounded(this.progressResponses, key, structuredClone(result));
+      return result;
+    } finally {
+      this.progressInFlight.delete(key);
+    }
+  }
+
+  private async computeCapability(
     input: {
       message: CapabilityRequestV2;
       generationId: string;
@@ -294,5 +350,37 @@ export class ProgramAgentServiceV2 {
         program: structuredClone(cut.operationalProgramContext),
       });
     });
+  }
+
+  async handleCapability(
+    input: {
+      message: CapabilityRequestV2;
+      generationId: string;
+      sessionId: SessionId;
+    },
+    execute: (request: CapabilityBrokerRequest) => Promise<CapabilityResult>,
+  ): Promise<CapabilityResult> {
+    const key = replayKey(input.generationId, input.message.sessionId, input.message.requestId);
+    const cached = this.capabilityResponses.get(key);
+    if (cached !== undefined) return structuredClone(cached);
+    const existing = this.capabilityInFlight.get(key);
+    if (existing !== undefined) return structuredClone(await existing);
+    if (this.capabilityInFlight.size >= PROGRAM_V2_REPLAY_CACHE_MAX_ENTRIES) {
+      return capabilityResult(
+        input.message,
+        "denied",
+        "program_execution_request_window_exhausted",
+        "Adaptive Program capability replay window is full",
+      );
+    }
+    const pending = this.computeCapability(input, execute);
+    this.capabilityInFlight.set(key, pending);
+    try {
+      const result = await pending;
+      rememberBounded(this.capabilityResponses, key, structuredClone(result));
+      return result;
+    } finally {
+      this.capabilityInFlight.delete(key);
+    }
   }
 }

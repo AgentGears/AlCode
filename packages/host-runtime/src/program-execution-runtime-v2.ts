@@ -29,6 +29,7 @@ import {
   ProgramAgentServiceV2,
   type ProgramAgentServiceV2Options,
 } from "./program-agent-v2.ts";
+import type { ProgramRootOperationAuthorityV1 } from "./program-dispatch.ts";
 import type { HostSessionHandle } from "./session-manager.ts";
 
 function cognitionDescriptors(): AuthorizedToolDescriptor[] {
@@ -76,6 +77,12 @@ function brokerResult(
 export interface ProgramExecutionRuntimeOptionsV2 {
   host: HostRuntimeOptions;
   adaptive: ProgramAgentServiceV2Options;
+  /**
+   * Canonical P-01 operation authority used after semantic V2 currentness is
+   * revalidated. It owns operation.requested admission and mutation settlement;
+   * semantic ProgramRevision identity is never translated into its CAS lease.
+   */
+  operationAuthority: ProgramRootOperationAuthorityV1;
 }
 
 /**
@@ -89,6 +96,7 @@ export class ProgramExecutionRuntimeV2 {
 
   constructor(options: ProgramExecutionRuntimeOptionsV2) {
     this.host = new HostRuntime(options.host);
+    this.host.setProgramOperationAuthority(options.operationAuthority);
     this.agent = new ProgramAgentServiceV2(options.adaptive);
   }
 
