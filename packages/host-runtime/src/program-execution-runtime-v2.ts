@@ -300,15 +300,23 @@ export class ProgramExecutionRuntimeV2 {
         }
 
         if (message.type === "agent.idle" && message.sessionId === sessionId) {
-          // This session was canonically classified adaptive before attachment.
-          // Semantic successor admission and Completion remain Host-owned.
+          // A displaced generation may still drain a buffered idle before its
+          // process exits. It has no authority to schedule or complete work.
+          if (!this.agent.isCurrentConnection(sessionId, connection.generationId)) return;
           const decision = await this.control.handleAgentIdle(sessionId);
           if (decision.status === "not_program") return;
           if (decision.terminal === "none") {
             if (decision.reason === "successor_dispatched") {
               try {
                 await this.agent.requestCurrentAttemptExecution(sessionId, connection.generationId);
-              } catch {}
+              } catch {
+                // A successor is already canonical. If its directive cannot be
+                // delivered to the still-current generation, fail that process
+                // closed so normal replacement/recovery can replay the Attempt.
+                if (this.agent.isCurrentConnection(sessionId, connection.generationId)) {
+                  connection.terminate();
+                }
+              }
             }
             return;
           }
@@ -324,13 +332,18 @@ export class ProgramExecutionRuntimeV2 {
               sessionId,
               reason: decision.terminal,
             });
-          } catch {}
+          } catch {
+            // Terminal Program/session truth is already durable. Ensure a failed
+            // notification cannot leave the disposable Agent process orphaned.
+          } finally {
+            connection.terminate();
+          }
           return;
         }
       } catch {
         // Protocol handlers are invoked fire-and-forget by the IPC transport.
-        // Convert failures into bounded protocol outcomes so no rejection escapes
-        // the Host callback and no Agent request waits indefinitely.
+        // Convert failures into bounded outcomes or fail the disposable Agent
+        // generation closed so no rejection escapes the Host callback.
         if (message.type === "context.refresh.request" && message.sessionId === sessionId) {
           try {
             await adaptiveTransport.send({
@@ -355,6 +368,12 @@ export class ProgramExecutionRuntimeV2 {
             && isProgramProgressProposalV2(message)
             && message.sessionId === sessionId) {
           try { await adaptiveTransport.send(progressFailure(message)); } catch {}
+          return;
+        }
+        if (message.type === "agent.idle" && message.sessionId === sessionId) {
+          if (this.agent.isCurrentConnection(sessionId, connection.generationId)) {
+            connection.terminate();
+          }
         }
       }
     });

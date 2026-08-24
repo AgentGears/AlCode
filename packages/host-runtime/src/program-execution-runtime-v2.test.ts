@@ -38,7 +38,19 @@ describe("A1 adaptive Program runtime V2 authority composition", () => {
 
   it("withholds ordinary Host capability and idle routing only after adaptive ownership is established", () => {
     expect(source).toContain("Adaptive Program capability requests require ProgramAttemptAuthorityV2");
-    expect(source).toContain("This session was canonically classified adaptive before attachment.");
+    expect(source).toContain("A displaced generation may still drain a buffered idle");
+  });
+
+  it("rejects displaced idle before it can schedule or complete adaptive work", () => {
+    const idle = source.indexOf('message.type === "agent.idle" && message.sessionId === sessionId');
+    const currentness = source.indexOf(
+      "if (!this.agent.isCurrentConnection(sessionId, connection.generationId)) return;",
+      idle,
+    );
+    const control = source.indexOf("const decision = await this.control.handleAgentIdle(sessionId);", idle);
+    expect(idle).toBeGreaterThan(-1);
+    expect(currentness).toBeGreaterThan(idle);
+    expect(control).toBeGreaterThan(currentness);
   });
 
   it("routes adaptive first/successor eligibility and idle Completion through Host semantic control", () => {
@@ -52,6 +64,18 @@ describe("A1 adaptive Program runtime V2 authority composition", () => {
     expect(source).not.toContain("adaptive Completion is intentionally not implemented");
   });
 
+  it("fails the disposable generation closed when a canonical successor directive cannot be delivered", () => {
+    expect(source).toContain("A successor is already canonical.");
+    expect(source).toContain("if (this.agent.isCurrentConnection(sessionId, connection.generationId))");
+    expect(source).toContain("connection.terminate();");
+    expect(source).toContain("normal replacement/recovery can replay the Attempt");
+  });
+
+  it("terminates the disposable Agent even when terminal shutdown notification fails", () => {
+    expect(source).toContain("Terminal Program/session truth is already durable.");
+    expect(source).toContain("finally {\n            connection.terminate();\n          }");
+  });
+
   it("cleans adaptive generation state on displacement, explicit detach, and process exit", () => {
     expect(source).toContain("const displacedGenerationId = this.agent.attach(");
     expect(source).toContain("this.clearContextCacheForGeneration(displacedGenerationId)");
@@ -62,7 +86,7 @@ describe("A1 adaptive Program runtime V2 authority composition", () => {
   });
 
   it("contains adaptive callback failures and terminates failed refreshes with a Host cancel", () => {
-    expect(source).toContain("Convert failures into bounded protocol outcomes");
+    expect(source).toContain("fail the disposable Agent");
     expect(source).toContain('reason: "Adaptive context refresh failed"');
     expect(source).toContain('errorCode: "adaptive_runtime_failure"');
     expect(source).toContain("progressFailure(message)");
