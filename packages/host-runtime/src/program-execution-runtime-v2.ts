@@ -17,7 +17,7 @@ import {
   type ProtocolTransport,
 } from "@alcode/agent-protocol";
 import { digestOf } from "@alcode/context";
-import type { SessionId } from "@alcode/events";
+import { uuidv7, type SessionId } from "@alcode/events";
 import type { AgentConnection } from "./agent-supervisor.ts";
 import type { CapabilityBrokerRequest, CapabilityBrokerResult } from "./capability-broker.ts";
 import { COGNITION_TOOL_NAMES } from "./cognition-service.ts";
@@ -26,6 +26,7 @@ import type {
   AttachedAgent,
   HostRuntime,
 } from "./host.ts";
+import type { ProgramAdaptiveExecutionControlV2 } from "./program-adaptive-control-v2.ts";
 import {
   ProgramAgentServiceV2,
   type ProgramAgentServiceV2Options,
@@ -97,25 +98,30 @@ export interface ProgramExecutionRuntimeOptionsV2 {
    */
   fixedTopology: ProgramExecutionRuntimeV1;
   adaptive: ProgramAgentServiceV2Options;
+  /** Host-owned semantic eligibility/Completion control for adaptive Programs. */
+  control: ProgramAdaptiveExecutionControlV2;
   /** Canonical routing decision. False delegates through ProgramExecutionRuntimeV1 unchanged. */
   isAdaptiveProgramSession(sessionId: string): Promise<boolean>;
 }
 
 /**
- * Operational A1 adapter. It deliberately does not own adaptive Completion,
- * eligibility, semantic baseline adoption, or scheduler policy. Fixed-topology
- * Programs retain the production V1 runtime exactly.
+ * Operational A1 adapter. Fixed-topology Programs retain the production V1
+ * runtime exactly; adaptive Programs delegate semantic eligibility and terminal
+ * closure to the frozen Host control without pulling product integration into
+ * this slice.
  */
 export class ProgramExecutionRuntimeV2 {
   readonly fixedTopology: ProgramExecutionRuntimeV1;
   readonly host: HostRuntime;
   readonly agent: ProgramAgentServiceV2;
+  private readonly control: ProgramAdaptiveExecutionControlV2;
   private readonly isAdaptiveProgramSession: (sessionId: string) => Promise<boolean>;
   private readonly contextCache = new Map<string, ContextUpdateV2>();
 
   constructor(options: ProgramExecutionRuntimeOptionsV2) {
     this.fixedTopology = options.fixedTopology;
     this.host = this.fixedTopology.host;
+    this.control = options.control;
     this.isAdaptiveProgramSession = options.isAdaptiveProgramSession;
     this.agent = new ProgramAgentServiceV2(options.adaptive);
   }
@@ -295,8 +301,30 @@ export class ProgramExecutionRuntimeV2 {
 
         if (message.type === "agent.idle" && message.sessionId === sessionId) {
           // This session was canonically classified adaptive before attachment.
-          // A1 adaptive Completion is intentionally not implemented in this slice,
-          // so the legacy Completion Oracle must not decide this idle transition.
+          // Semantic successor admission and Completion remain Host-owned.
+          const decision = await this.control.handleAgentIdle(sessionId);
+          if (decision.status === "not_program") return;
+          if (decision.terminal === "none") {
+            if (decision.reason === "successor_dispatched") {
+              try {
+                await this.agent.requestCurrentAttemptExecution(sessionId, connection.generationId);
+              } catch {}
+            }
+            return;
+          }
+
+          const sessionState = await this.host.sessions.getState(session.sessionId);
+          if (sessionState.started && !sessionState.stopped) {
+            await this.host.sessions.stop(session.sessionId, decision.terminal);
+          }
+          try {
+            await adaptiveTransport.send({
+              type: "shutdown",
+              requestId: uuidv7(),
+              sessionId,
+              reason: decision.terminal,
+            });
+          } catch {}
           return;
         }
       } catch {
@@ -361,6 +389,8 @@ export class ProgramExecutionRuntimeV2 {
     if (!await this.isAdaptiveProgramSession(sessionId)) {
       return this.fixedTopology.requestCurrentAttemptExecution(connection, session);
     }
+    const scheduled = await this.control.ensureCurrentAttempt(sessionId);
+    if (scheduled.status !== "issued" && scheduled.status !== "already_started") return undefined;
     return this.agent.requestCurrentAttemptExecution(sessionId, connection.generationId);
   }
 }

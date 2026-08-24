@@ -41,6 +41,17 @@ describe("A1 adaptive Program runtime V2 authority composition", () => {
     expect(source).toContain("This session was canonically classified adaptive before attachment.");
   });
 
+  it("routes adaptive first/successor eligibility and idle Completion through Host semantic control", () => {
+    expect(source).toContain("control: ProgramAdaptiveExecutionControlV2");
+    expect(source).toContain("this.control = options.control;");
+    expect(source).toContain("const scheduled = await this.control.ensureCurrentAttempt(sessionId);");
+    expect(source).toContain("const decision = await this.control.handleAgentIdle(sessionId);");
+    expect(source).toContain('decision.reason === "successor_dispatched"');
+    expect(source).toContain("await this.agent.requestCurrentAttemptExecution(sessionId, connection.generationId);");
+    expect(source).toContain("await this.host.sessions.stop(session.sessionId, decision.terminal);");
+    expect(source).not.toContain("adaptive Completion is intentionally not implemented");
+  });
+
   it("cleans adaptive generation state on displacement, explicit detach, and process exit", () => {
     expect(source).toContain("const displacedGenerationId = this.agent.attach(");
     expect(source).toContain("this.clearContextCacheForGeneration(displacedGenerationId)");
