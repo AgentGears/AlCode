@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { AGENT_PROTOCOL_VERSION } from "./messages.ts";
 import { isAgentToHostMessage, isHostToAgentMessage } from "./validation.ts";
 import {
+  PROGRAM_ATTEMPT_AUTHORITY_V2_MAX_BYTES,
   PROGRAM_EXECUTION_V2_CAPABILITY,
   PROGRAM_EXECUTION_V2_MESSAGE_VERSION,
   PROGRAM_REVISION_CAPABILITY,
@@ -134,10 +135,14 @@ describe("A1 Program execution V2 protocol", () => {
       .toThrow(`${PROGRAM_REVISION_CAPABILITY} requires ${PROGRAM_STATE_V2_CAPABILITY}`);
   });
 
-  it("accepts only the exact V2 authority shape", () => {
+  it("accepts only the exact bounded V2 authority shape", () => {
     expect(isProgramAttemptAuthorityV2(authority())).toBe(true);
     expect(isProgramAttemptAuthorityV2({ ...authority(), expectedProgramRevision: 7 })).toBe(false);
     expect(isProgramAttemptAuthorityV2({ ...authority(), authorityVersion: 1 })).toBe(false);
+    expect(isProgramAttemptAuthorityV2({
+      ...authority(),
+      constraintReceipt: { ...authority().constraintReceipt, mandatoryConstraintIds: ["unexpected"] },
+    })).toBe(false);
     expect(isProgramAttemptAuthorityV2({
       ...authority(),
       dependencyReceipt: {
@@ -147,11 +152,19 @@ describe("A1 Program execution V2 protocol", () => {
         ],
       },
     })).toBe(false);
+    expect(isProgramAttemptAuthorityV2({
+      ...authority(),
+      programAttemptId: "x".repeat(PROGRAM_ATTEMPT_AUTHORITY_V2_MAX_BYTES),
+    })).toBe(false);
   });
 
-  it("discriminates V2 execute/progress while legacy global transport remains V1-only", () => {
+  it("discriminates bounded V2 execute/progress while legacy global transport remains V1-only", () => {
     expect(isProgramAttemptExecuteV2(execute())).toBe(true);
     expect(isProgramAttemptExecuteV2({ ...execute(), version: 1 })).toBe(false);
+    expect(isProgramAttemptExecuteV2({
+      ...execute(),
+      requestId: "x".repeat(PROGRAM_ATTEMPT_AUTHORITY_V2_MAX_BYTES),
+    })).toBe(false);
     expect(isProgramProgressProposalV2(progress())).toBe(true);
     expect(isProgramProgressProposalV2({ ...progress(), authority: {
       programStateId: "program-1",
@@ -178,5 +191,15 @@ describe("A1 Program execution V2 protocol", () => {
       ...value,
       executionBase: { workspaceEffectGeneration: -1, observation: value.executionBase.observation },
     })).toBe(false);
+  });
+
+  it("rejects malformed elements in every projection collection", () => {
+    const value = projection();
+    expect(isProgramAttemptProjectionV2({ ...value, blockers: [null] })).toBe(false);
+    expect(isProgramAttemptProjectionV2({ ...value, verification: [42] })).toBe(false);
+    expect(isProgramAttemptProjectionV2({ ...value, outputSlots: [{}] })).toBe(false);
+    expect(isProgramAttemptProjectionV2({ ...value, productionSteps: [{}] })).toBe(false);
+    expect(isProgramAttemptProjectionV2({ ...value, decisiveEvidence: [{}] })).toBe(false);
+    expect(isProgramAttemptProjectionV2({ ...value, artifacts: [{}] })).toBe(false);
   });
 });

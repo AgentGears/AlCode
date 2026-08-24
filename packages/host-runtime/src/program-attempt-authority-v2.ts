@@ -5,6 +5,7 @@ import type {
   ProgramWorkAuthorityEnvelopeWireV1,
 } from "@alcode/agent-protocol";
 import {
+  assertValidProgramSemanticWorkGraph,
   canonicalStringify,
   isProgramSemanticRequirementComplete,
   type ProgramAttemptSemanticAssumptionsV1,
@@ -36,6 +37,7 @@ export interface ProgramAttemptAuthorityFactsV2 {
 }
 
 export type ProgramAttemptAuthorityV2StaleReason =
+  | "semantic_state_invalid"
   | "program_not_active"
   | "attempt_missing"
   | "attempt_identity_stale"
@@ -71,6 +73,10 @@ function sameCanonical(left: unknown, right: unknown): boolean {
   return canonicalStringify(left) === canonicalStringify(right);
 }
 
+function compareCanonicalStrings(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function wireEnvelope(envelope: WorkAuthorityEnvelopeV1): ProgramWorkAuthorityEnvelopeWireV1 {
   return {
     objectiveBoundaryRef: {
@@ -94,13 +100,25 @@ function workById(state: ProgramSemanticStateV1, workItemId: string): ProgramSem
   return state.workItems.find((work) => String(work.workItemId) === workItemId);
 }
 
+function semanticStateCurrentness(facts: ProgramAttemptAuthorityFactsV2): ProgramAttemptAuthorityV2Evaluation {
+  try {
+    assertValidProgramSemanticWorkGraph(facts.semantic.semanticState.workItems);
+  } catch {
+    return { current: false, reason: "semantic_state_invalid" };
+  }
+  return { current: true };
+}
+
 function derivedDependencyReceipt(
   state: ProgramSemanticStateV1,
   work: ProgramSemanticWorkItemV1,
 ): AttemptDependencyReceiptV1 | undefined {
   const entries = [...work.dependencyIds]
     .map((dependencyId) => workById(state, String(dependencyId)))
-    .sort((left, right) => String(left?.workItemId ?? "").localeCompare(String(right?.workItemId ?? ""), "en"));
+    .sort((left, right) => compareCanonicalStrings(
+      String(left?.workItemId ?? ""),
+      String(right?.workItemId ?? ""),
+    ));
   if (entries.some((dependency) => dependency === undefined)) return undefined;
   const receipt: AttemptDependencyReceiptV1 = { entries: [] };
   for (const dependency of entries as ProgramSemanticWorkItemV1[]) {
@@ -185,6 +203,10 @@ function currentAttemptAndWork(
 
 /** Issue exact V2 authority from one protected-cut fact bundle. */
 export function issueProgramAttemptAuthorityV2(facts: ProgramAttemptAuthorityFactsV2): ProgramAttemptAuthorityV2 {
+  const semantic = semanticStateCurrentness(facts);
+  if (semantic.current === false) {
+    throw new ProgramAttemptAuthorityV2Error(semantic.reason, `Cannot issue ProgramAttemptAuthorityV2: ${semantic.reason}`);
+  }
   const runtime = runtimeCurrentness(facts);
   if (runtime.current === false) {
     throw new ProgramAttemptAuthorityV2Error(runtime.reason, `Cannot issue ProgramAttemptAuthorityV2: ${runtime.reason}`);
@@ -224,6 +246,8 @@ export function evaluateProgramAttemptAuthorityV2(
   authority: ProgramAttemptAuthorityV2,
   facts: ProgramAttemptAuthorityFactsV2,
 ): ProgramAttemptAuthorityV2Evaluation {
+  const semantic = semanticStateCurrentness(facts);
+  if (!semantic.current) return semantic;
   const runtime = runtimeCurrentness(facts);
   if (!runtime.current) return runtime;
   const resolved = currentAttemptAndWork(facts);

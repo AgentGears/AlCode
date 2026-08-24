@@ -14,6 +14,8 @@ export const PROGRAM_REVISION_CAPABILITY = "program_revision_v1" as const;
 export const PROGRAM_EXECUTION_V2_MESSAGE_VERSION = 2 as const;
 export const PROGRAM_ATTEMPT_DEPENDENCY_RECEIPT_MAX_ENTRIES = 32;
 export const PROGRAM_WORK_AUTHORITY_ENVELOPE_MAX_BYTES = 8 * 1024;
+export const PROGRAM_ATTEMPT_AUTHORITY_V2_MAX_BYTES = 128 * 1024;
+export const PROGRAM_ATTEMPT_EXECUTE_V2_MAX_BYTES = 128 * 1024;
 export const PROGRAM_ATTEMPT_PROJECTION_V2_MAX_BYTES = 128 * 1024;
 
 export interface ProgramWorkAuthorityEnvelopeWireV1 {
@@ -158,6 +160,10 @@ function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
 
+function nullableNonEmptyString(value: unknown): value is string | null {
+  return value === null || nonEmptyString(value);
+}
+
 function positiveInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
@@ -257,7 +263,8 @@ export function isProgramAttemptAuthorityV2(value: unknown): value is ProgramAtt
     && onlyKeys(receipt, ["workAuthorityEnvelope", "mandatoryConstraintIds"])
     && isProgramWorkAuthorityEnvelopeWireV1(receipt.workAuthorityEnvelope)
     && Array.isArray(receipt.mandatoryConstraintIds)
-    && receipt.mandatoryConstraintIds.length === 0;
+    && receipt.mandatoryConstraintIds.length === 0
+    && withinBytes(value, PROGRAM_ATTEMPT_AUTHORITY_V2_MAX_BYTES);
 }
 
 export function isProgramAttemptExecuteV2(value: unknown): value is ProgramAttemptExecuteV2 {
@@ -267,7 +274,8 @@ export function isProgramAttemptExecuteV2(value: unknown): value is ProgramAttem
     && value.version === PROGRAM_EXECUTION_V2_MESSAGE_VERSION
     && nonEmptyString(value.requestId)
     && nonEmptyString(value.sessionId)
-    && isProgramAttemptAuthorityV2(value.authority);
+    && isProgramAttemptAuthorityV2(value.authority)
+    && withinBytes(value, PROGRAM_ATTEMPT_EXECUTE_V2_MAX_BYTES);
 }
 
 function evidence(value: unknown): boolean {
@@ -307,9 +315,11 @@ export function isProgramProgressProposalV2(value: unknown): value is ProgramPro
 }
 
 function executionBase(value: unknown): boolean {
-  if (!isObject(value) || !nonNegativeInteger(value.workspaceEffectGeneration) || !isObject(value.observation)) return false;
+  if (!isObject(value) || !onlyKeys(value, ["workspaceEffectGeneration", "observation"])
+      || !nonNegativeInteger(value.workspaceEffectGeneration) || !isObject(value.observation)) return false;
   const observation = value.observation;
-  return observation.kind === "workspace-observation-v1"
+  return onlyKeys(observation, ["kind", "providerKind", "workspaceIdentity", "coverageDigest", "stateDigest"])
+    && observation.kind === "workspace-observation-v1"
     && nonEmptyString(observation.providerKind)
     && nonEmptyString(observation.workspaceIdentity)
     && nonEmptyString(observation.coverageDigest)
@@ -328,6 +338,66 @@ function retryFailure(value: unknown): boolean {
     && (value.sourceOperationId === undefined || nonEmptyString(value.sourceOperationId));
 }
 
+function blocker(value: unknown): boolean {
+  return isObject(value)
+    && onlyKeys(value, ["blockerId", "workItemId", "reason", "truncated"])
+    && nonEmptyString(value.blockerId)
+    && nullableNonEmptyString(value.workItemId)
+    && nonEmptyString(value.reason)
+    && typeof value.truncated === "boolean";
+}
+
+function verificationEntry(value: unknown): boolean {
+  return isObject(value)
+    && onlyKeys(value, ["obligationId", "subjectGeneration", "current", "waived", "predicate", "freshnessScope"])
+    && nonEmptyString(value.obligationId)
+    && positiveInteger(value.subjectGeneration)
+    && typeof value.current === "boolean"
+    && typeof value.waived === "boolean"
+    && isObject(value.predicate)
+    && isObject(value.freshnessScope);
+}
+
+function outputSlot(value: unknown): boolean {
+  return isObject(value)
+    && onlyKeys(value, ["outputSlotId", "productionStepId"])
+    && nonEmptyString(value.outputSlotId)
+    && nonEmptyString(value.productionStepId);
+}
+
+function productionStep(value: unknown): boolean {
+  return isObject(value)
+    && onlyKeys(value, [
+      "productionStepId", "outputSlotIds", "outputChannel", "specId", "specVersion", "canonicalArgsDigest",
+    ])
+    && nonEmptyString(value.productionStepId)
+    && stringArray(value.outputSlotIds)
+    && nonEmptyString(value.outputChannel)
+    && nonEmptyString(value.specId)
+    && positiveInteger(value.specVersion)
+    && nonEmptyString(value.canonicalArgsDigest);
+}
+
+function decisiveEvidenceEntry(value: unknown): boolean {
+  return isObject(value)
+    && onlyKeys(value, [
+      "evidenceRefId", "verificationObligationId", "sourceOperationId", "artifactRef", "subjectGeneration",
+    ])
+    && nonEmptyString(value.evidenceRefId)
+    && nullableNonEmptyString(value.verificationObligationId)
+    && nullableNonEmptyString(value.sourceOperationId)
+    && nullableNonEmptyString(value.artifactRef)
+    && (value.subjectGeneration === null || positiveInteger(value.subjectGeneration));
+}
+
+function artifact(value: unknown): boolean {
+  return isObject(value)
+    && onlyKeys(value, ["artifactRef", "outputSlotId", "productionStepId"])
+    && nonEmptyString(value.artifactRef)
+    && nullableNonEmptyString(value.outputSlotId)
+    && nullableNonEmptyString(value.productionStepId);
+}
+
 export function isProgramAttemptProjectionV2(value: unknown): value is ProgramAttemptProjectionV2 {
   if (!isObject(value) || !onlyKeys(value, [
     "version", "authority", "objective", "work", "dependencies", "blockers", "executionBase", "verification",
@@ -343,8 +413,8 @@ export function isProgramAttemptProjectionV2(value: unknown): value is ProgramAt
   ])
       || !nonEmptyString(work.description) || work.requirementState !== "required" || work.topologyState !== "leaf"
       || (work.satisfactionState !== "active" && work.satisfactionState !== "awaiting_verification")
-      || !Array.isArray(work.dependencyIds) || !work.dependencyIds.every(nonEmptyString)
-      || !Array.isArray(work.affectedPaths) || !work.affectedPaths.every(nonEmptyString)
+      || !canonicalStringArray(work.dependencyIds)
+      || !stringArray(work.affectedPaths)
       || !nonNegativeInteger(work.omittedAffectedPathCount)) return false;
   const receipt = value.authority.dependencyReceipt.entries;
   if (work.dependencyIds.length !== receipt.length || value.dependencies.length !== receipt.length) return false;
@@ -358,8 +428,12 @@ export function isProgramAttemptProjectionV2(value: unknown): value is ProgramAt
         || dependency.requirementState !== "required"
         || dependency.satisfiedOrDischarged !== true) return false;
   }
-  if (!Array.isArray(value.blockers) || !Array.isArray(value.verification) || !Array.isArray(value.outputSlots)
-      || !Array.isArray(value.productionSteps) || !Array.isArray(value.decisiveEvidence) || !Array.isArray(value.artifacts)
+  if (!Array.isArray(value.blockers) || !value.blockers.every(blocker)
+      || !Array.isArray(value.verification) || !value.verification.every(verificationEntry)
+      || !Array.isArray(value.outputSlots) || !value.outputSlots.every(outputSlot)
+      || !Array.isArray(value.productionSteps) || !value.productionSteps.every(productionStep)
+      || !Array.isArray(value.decisiveEvidence) || !value.decisiveEvidence.every(decisiveEvidenceEntry)
+      || !Array.isArray(value.artifacts) || !value.artifacts.every(artifact)
       || !executionBase(value.executionBase)) return false;
   if (value.retryFailure !== undefined && !retryFailure(value.retryFailure)) return false;
   if (!isObject(value.control) || !onlyKeys(value.control, ["executionBaseMismatch", "executionBaseUnavailable"])

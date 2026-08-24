@@ -9,6 +9,7 @@ import {
   type ProgramSemanticWorkItemV1,
   type WorkAuthorityEnvelopeV1,
 } from "@alcode/program-state";
+import { issueProgramAttemptAuthorityV2 as issueProgramAttemptAuthorityV2FromPackage } from "@alcode/host-runtime";
 import {
   evaluateProgramAttemptAuthorityV2,
   issueProgramAttemptAuthorityV2,
@@ -136,6 +137,10 @@ function facts(semantic = snapshot()): ProgramAttemptAuthorityFactsV2 {
 }
 
 describe("A1 ProgramAttemptAuthorityV2", () => {
+  it("is exported through the public host-runtime package root", () => {
+    expect(issueProgramAttemptAuthorityV2FromPackage).toBe(issueProgramAttemptAuthorityV2);
+  });
+
   it("issues exact work/dependency/constraint receipts", () => {
     const authority = issueProgramAttemptAuthorityV2(facts());
     expect(authority.authorityVersion).toBe(2);
@@ -148,6 +153,55 @@ describe("A1 ProgramAttemptAuthorityV2", () => {
       satisfiedOrDischargedAtIssue: true,
     }]);
     expect(authority.constraintReceipt.mandatoryConstraintIds).toEqual([]);
+  });
+
+  it("uses the semantic kernel's ordinal dependency ordering", () => {
+    const upper = asProgramWorkItemId("Z");
+    const lower = asProgramWorkItemId("a");
+    const upperDependency = { ...dependency(), workItemId: upper, creationOrder: 0 };
+    const lowerDependency = { ...dependency(), workItemId: lower, creationOrder: 1 };
+    const mixedTarget = { ...target(), creationOrder: 2, dependencyIds: [lower, upper] };
+    const state: ProgramSemanticStateV1 = {
+      ...semanticState(),
+      workItems: [upperDependency, lowerDependency, mixedTarget],
+    };
+    const activeAttempt: ProgramAttemptSemanticAssumptionsV1 = {
+      ...assumptions(),
+      directDependencies: [
+        { workItemId: upper, workItemGeneration: 1, required: true, satisfiedOrDischargedAtIssue: true },
+        { workItemId: lower, workItemGeneration: 1, required: true, satisfiedOrDischargedAtIssue: true },
+      ],
+    };
+    const authority = issueProgramAttemptAuthorityV2(facts(snapshot(state, activeAttempt)));
+    expect(authority.dependencyReceipt.entries.map((entry) => entry.workItemId)).toEqual(["Z", "a"]);
+  });
+
+  it("fails closed before recursive discharge when the semantic dependency graph is invalid", () => {
+    const cycleAId = asProgramWorkItemId("cycle-a");
+    const cycleBId = asProgramWorkItemId("cycle-b");
+    const cycleA: ProgramSemanticWorkItemV1 = {
+      ...dependency(),
+      workItemId: cycleAId,
+      creationOrder: 0,
+      dependencyIds: [cycleBId],
+    };
+    const cycleB: ProgramSemanticWorkItemV1 = {
+      ...dependency(),
+      workItemId: cycleBId,
+      creationOrder: 1,
+      dependencyIds: [cycleAId],
+    };
+    const cycleTarget: ProgramSemanticWorkItemV1 = {
+      ...target(),
+      creationOrder: 2,
+      dependencyIds: [cycleAId],
+    };
+    const state: ProgramSemanticStateV1 = {
+      ...semanticState(),
+      workItems: [cycleA, cycleB, cycleTarget],
+    };
+    expect(() => issueProgramAttemptAuthorityV2(facts(snapshot(state, assumptions()))))
+      .toThrow("semantic_state_invalid");
   });
 
   it("retains authority across an unrelated semantic ProgramRevision", () => {
