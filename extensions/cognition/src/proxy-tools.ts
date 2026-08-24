@@ -6,17 +6,19 @@ import type {
   ProgramAttemptAuthorityV1,
 } from "@alcode/agent-protocol";
 import type {
-  CognitionCapabilityRequest,
   CognitionCapabilityRequestV2Aware,
   CognitionHostClient,
   CognitionHostClientV2Aware,
 } from "./host-client.ts";
 
+type CognitionCapabilityRequestFor<TAuthority extends ProgramAttemptAuthorityAny> =
+  Omit<CognitionCapabilityRequestV2Aware, "programAttemptAuthority"> & {
+    programAttemptAuthority?: TAuthority;
+  };
+
 type CapabilityClient<TAuthority extends ProgramAttemptAuthorityAny> = {
   requestCapability(
-    request: TAuthority extends ProgramAttemptAuthorityV1
-      ? CognitionCapabilityRequest
-      : CognitionCapabilityRequestV2Aware,
+    request: CognitionCapabilityRequestFor<TAuthority>,
   ): Promise<CapabilityResult>;
 };
 
@@ -47,7 +49,7 @@ export function createProtocolProxyTool<TAuthority extends ProgramAttemptAuthori
     inputSchema: structuredClone(options.inputSchema ?? { type: "object", properties: {} }),
     ...(options.isReadOnly !== undefined ? { isReadOnly: options.isReadOnly } : {}),
     async execute(input, context): Promise<AgentToolResult<unknown>> {
-      const request = {
+      const request: CognitionCapabilityRequestFor<TAuthority> = {
         sessionId: options.sessionId(),
         toolCallId: context.toolCallId ?? randomUUID(),
         toolName: options.name,
@@ -59,10 +61,7 @@ export function createProtocolProxyTool<TAuthority extends ProgramAttemptAuthori
           ? { programAttemptAuthority: structuredClone(programAttemptAuthority) }
           : {}),
       };
-      const requestCapability = options.client.requestCapability.bind(options.client) as (
-        request: CognitionCapabilityRequestV2Aware,
-      ) => Promise<CapabilityResult>;
-      const response = await requestCapability(request);
+      const response = await options.client.requestCapability(request);
       const text = response.error ?? JSON.stringify(response.result ?? null);
       const executionOutcome = response.outcome === "denied" || response.outcome === "stale"
         ? "failed"
