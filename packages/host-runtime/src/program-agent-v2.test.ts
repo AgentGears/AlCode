@@ -25,6 +25,7 @@ import {
 } from "./program-agent-v2.ts";
 
 const programStateId = asProgramStateId("018f0000-0000-7000-8000-000000000951");
+const sessionId = "018f0000-0000-7000-8000-000000000952";
 const dependencyId = asProgramWorkItemId("adaptive-dependency");
 const workId = asProgramWorkItemId("adaptive-work");
 const attemptId = asProgramAttemptId("adaptive-attempt");
@@ -115,11 +116,11 @@ function makeCut(revision = r1, targetGeneration = 3): ProgramAdaptiveExecutionC
         semanticState: semanticState(revision, targetGeneration),
         activeAttempt: assumptions(targetGeneration),
         lifecycle: "active",
-        attachedSessionIds: ["session-adaptive"],
+        attachedSessionIds: [sessionId],
       },
       runtime: {
         programAttemptId: String(attemptId),
-        sessionId: "session-adaptive",
+        sessionId,
         agentGeneration: 4,
         sessionActive: true,
         agentGenerationCurrent: true,
@@ -199,7 +200,7 @@ function capability(authority: ProgramAttemptAuthorityV2): CapabilityRequestV2 {
   return {
     type: "capability.request",
     requestId: "cap-1",
-    sessionId: "session-adaptive",
+    sessionId,
     toolCallId: "tool-call-1",
     toolName: "read",
     args: { path: "src/b.ts" },
@@ -217,14 +218,14 @@ describe("A1 adaptive Program execution V2 boundary", () => {
     });
     service.attach({
       generationId: "connection-1",
-      sessionId: "session-adaptive",
+      sessionId,
       capabilities: [PROGRAM_STATE_V2_CAPABILITY, PROGRAM_EXECUTION_V2_CAPABILITY],
       transport: transport(sent),
     });
 
-    const projection = await service.currentAttemptProjection("session-adaptive", "connection-1");
+    const projection = await service.currentAttemptProjection(sessionId, "connection-1");
     expect(projection?.authority.issuedUnderProgramRevisionId).toBe(String(r1));
-    const execute = await service.requestCurrentAttemptExecution("session-adaptive", "connection-1");
+    const execute = await service.requestCurrentAttemptExecution(sessionId, "connection-1");
     expect(execute?.version).toBe(2);
     expect(sent.at(-1)).toMatchObject({ type: "program.attempt.execute", version: 2 });
 
@@ -234,14 +235,14 @@ describe("A1 adaptive Program execution V2 boundary", () => {
       {
         message: capability(projection!.authority),
         generationId: "connection-1",
-        sessionId: asSessionId("session-adaptive"),
+        sessionId: asSessionId(sessionId),
       },
       async (request) => {
         operationalRevision = request.program?.expectedProgramRevision;
         return {
           type: "capability.result",
           requestId: "cap-1",
-          sessionId: "session-adaptive",
+          sessionId,
           toolCallId: "tool-call-1",
           toolName: "read",
           outcome: "succeeded",
@@ -264,17 +265,17 @@ describe("A1 adaptive Program execution V2 boundary", () => {
     });
     service.attach({
       generationId: "connection-1",
-      sessionId: "session-adaptive",
+      sessionId,
       capabilities: [PROGRAM_STATE_V2_CAPABILITY, PROGRAM_EXECUTION_V2_CAPABILITY],
       transport: transport([]),
     });
-    const authority = (await service.currentAttemptProjection("session-adaptive", "connection-1"))!.authority;
+    const authority = (await service.currentAttemptProjection(sessionId, "connection-1"))!.authority;
     const execute = async () => {
       executions += 1;
       return {
         type: "capability.result" as const,
         requestId: "cap-1",
-        sessionId: "session-adaptive",
+        sessionId,
         toolCallId: "tool-call-1",
         toolName: "read",
         outcome: "succeeded" as const,
@@ -285,7 +286,7 @@ describe("A1 adaptive Program execution V2 boundary", () => {
     expect((await service.handleCapability({
       message: capability(authority),
       generationId: "connection-1",
-      sessionId: asSessionId("session-adaptive"),
+      sessionId: asSessionId(sessionId),
     }, execute))).toMatchObject({ outcome: "stale", errorCode: "program_execution_stale" });
 
     cut = makeCut(r2);
@@ -293,7 +294,7 @@ describe("A1 adaptive Program execution V2 boundary", () => {
     expect((await service.handleCapability({
       message: capability(authority),
       generationId: "connection-1",
-      sessionId: asSessionId("session-adaptive"),
+      sessionId: asSessionId(sessionId),
     }, execute))).toMatchObject({ outcome: "stale", errorCode: "program_execution_stale" });
     expect(executions).toBe(0);
   });
@@ -307,15 +308,15 @@ describe("A1 adaptive Program execution V2 boundary", () => {
     });
     service.attach({
       generationId: "connection-1",
-      sessionId: "session-adaptive",
+      sessionId,
       capabilities: [PROGRAM_STATE_V2_CAPABILITY, PROGRAM_EXECUTION_V2_CAPABILITY],
       transport: transport([]),
     });
-    const authority = (await service.currentAttemptProjection("session-adaptive", "connection-1"))!.authority;
+    const authority = (await service.currentAttemptProjection(sessionId, "connection-1"))!.authority;
     service.detach("connection-1");
     service.attach({
       generationId: "connection-2",
-      sessionId: "session-adaptive",
+      sessionId,
       capabilities: [PROGRAM_STATE_V2_CAPABILITY, PROGRAM_EXECUTION_V2_CAPABILITY],
       transport: transport([]),
     });
@@ -323,7 +324,7 @@ describe("A1 adaptive Program execution V2 boundary", () => {
     expect((await service.handleCapability({
       message: capability(authority),
       generationId: "connection-1",
-      sessionId: asSessionId("session-adaptive"),
+      sessionId: asSessionId(sessionId),
     }, async () => { throw new Error("must not execute"); }))).toMatchObject({ outcome: "stale" });
     expect(progressCalls).toBe(0);
   });
