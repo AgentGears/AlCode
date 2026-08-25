@@ -17,7 +17,7 @@ import {
   type ProtocolTransport,
 } from "@alcode/agent-protocol";
 import { digestOf } from "@alcode/context";
-import type { SessionId } from "@alcode/events";
+import { uuidv7, type SessionId } from "@alcode/events";
 import type { AgentConnection } from "./agent-supervisor.ts";
 import type { CapabilityBrokerRequest, CapabilityBrokerResult } from "./capability-broker.ts";
 import { COGNITION_TOOL_NAMES } from "./cognition-service.ts";
@@ -26,8 +26,10 @@ import type {
   AttachedAgent,
   HostRuntime,
 } from "./host.ts";
+import type { ProgramAdaptiveExecutionControlV2 } from "./program-adaptive-control-v2.ts";
 import {
   ProgramAgentServiceV2,
+  ProgramAgentV2ControlError,
   type ProgramAgentServiceV2Options,
 } from "./program-agent-v2.ts";
 import type { ProgramExecutionRuntimeV1 } from "./program-execution-runtime.ts";
@@ -97,25 +99,30 @@ export interface ProgramExecutionRuntimeOptionsV2 {
    */
   fixedTopology: ProgramExecutionRuntimeV1;
   adaptive: ProgramAgentServiceV2Options;
+  /** Host-owned semantic eligibility/Completion control for adaptive Programs. */
+  control: ProgramAdaptiveExecutionControlV2;
   /** Canonical routing decision. False delegates through ProgramExecutionRuntimeV1 unchanged. */
   isAdaptiveProgramSession(sessionId: string): Promise<boolean>;
 }
 
 /**
- * Operational A1 adapter. It deliberately does not own adaptive Completion,
- * eligibility, semantic baseline adoption, or scheduler policy. Fixed-topology
- * Programs retain the production V1 runtime exactly.
+ * Operational A1 adapter. Fixed-topology Programs retain the production V1
+ * runtime exactly; adaptive Programs delegate semantic eligibility and terminal
+ * closure to the frozen Host control without pulling product integration into
+ * this slice.
  */
 export class ProgramExecutionRuntimeV2 {
   readonly fixedTopology: ProgramExecutionRuntimeV1;
   readonly host: HostRuntime;
   readonly agent: ProgramAgentServiceV2;
+  private readonly control: ProgramAdaptiveExecutionControlV2;
   private readonly isAdaptiveProgramSession: (sessionId: string) => Promise<boolean>;
   private readonly contextCache = new Map<string, ContextUpdateV2>();
 
   constructor(options: ProgramExecutionRuntimeOptionsV2) {
     this.fixedTopology = options.fixedTopology;
     this.host = this.fixedTopology.host;
+    this.control = options.control;
     this.isAdaptiveProgramSession = options.isAdaptiveProgramSession;
     this.agent = new ProgramAgentServiceV2(options.adaptive);
   }
@@ -294,15 +301,50 @@ export class ProgramExecutionRuntimeV2 {
         }
 
         if (message.type === "agent.idle" && message.sessionId === sessionId) {
-          // This session was canonically classified adaptive before attachment.
-          // A1 adaptive Completion is intentionally not implemented in this slice,
-          // so the legacy Completion Oracle must not decide this idle transition.
+          // A displaced generation may still drain a buffered idle before its
+          // process exits. It has no authority to schedule or complete work.
+          if (!this.agent.isCurrentConnection(sessionId, connection.generationId)) return;
+          const decision = await this.control.handleAgentIdle(sessionId);
+          if (decision.status === "not_program") return;
+          if (decision.terminal === "none") {
+            if (decision.reason === "successor_dispatched") {
+              try {
+                await this.agent.requestCurrentAttemptExecution(sessionId, connection.generationId);
+              } catch {
+                // A successor is already canonical. If its directive cannot be
+                // delivered to the still-current generation, fail that process
+                // closed so normal replacement/recovery can replay the Attempt.
+                if (this.agent.isCurrentConnection(sessionId, connection.generationId)) {
+                  connection.terminate();
+                }
+              }
+            }
+            return;
+          }
+
+          const sessionState = await this.host.sessions.getState(session.sessionId);
+          if (sessionState.started && !sessionState.stopped) {
+            await this.host.sessions.stop(session.sessionId, decision.terminal);
+          }
+          try {
+            await adaptiveTransport.send({
+              type: "shutdown",
+              requestId: uuidv7(),
+              sessionId,
+              reason: decision.terminal,
+            });
+          } catch {
+            // Terminal Program/session truth is already durable. Ensure a failed
+            // notification cannot leave the disposable Agent process orphaned.
+          } finally {
+            connection.terminate();
+          }
           return;
         }
       } catch {
         // Protocol handlers are invoked fire-and-forget by the IPC transport.
-        // Convert failures into bounded protocol outcomes so no rejection escapes
-        // the Host callback and no Agent request waits indefinitely.
+        // Convert failures into bounded outcomes or fail the disposable Agent
+        // generation closed so no rejection escapes the Host callback.
         if (message.type === "context.refresh.request" && message.sessionId === sessionId) {
           try {
             await adaptiveTransport.send({
@@ -327,6 +369,12 @@ export class ProgramExecutionRuntimeV2 {
             && isProgramProgressProposalV2(message)
             && message.sessionId === sessionId) {
           try { await adaptiveTransport.send(progressFailure(message)); } catch {}
+          return;
+        }
+        if (message.type === "agent.idle" && message.sessionId === sessionId) {
+          if (this.agent.isCurrentConnection(sessionId, connection.generationId)) {
+            connection.terminate();
+          }
         }
       }
     });
@@ -361,6 +409,13 @@ export class ProgramExecutionRuntimeV2 {
     if (!await this.isAdaptiveProgramSession(sessionId)) {
       return this.fixedTopology.requestCurrentAttemptExecution(connection, session);
     }
+    // Mirror the V1 runtime's generation-currentness guard before any Host
+    // scheduler/admission call. A displaced caller cannot create a successor.
+    if (!this.agent.isCurrentConnection(sessionId, connection.generationId)) {
+      throw new ProgramAgentV2ControlError("Adaptive Program execution connection is not current");
+    }
+    const scheduled = await this.control.ensureCurrentAttempt(sessionId);
+    if (scheduled.status !== "issued" && scheduled.status !== "already_started") return undefined;
     return this.agent.requestCurrentAttemptExecution(sessionId, connection.generationId);
   }
 }
