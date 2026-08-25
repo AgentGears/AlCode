@@ -8,6 +8,8 @@ on:
       - 'packages/agent-protocol/src/program-execution-v2.test.ts'
       - 'packages/agent-protocol/src/program-execution-v2-routing.ts'
       - 'packages/agent-protocol/src/program-execution-v2-routing.test.ts'
+      - 'packages/agent-protocol/src/program-revision-v1.ts'
+      - 'packages/agent-protocol/src/program-revision-v1.test.ts'
       - 'packages/agent-protocol/src/node-process-transport.ts'
       - 'packages/agent-protocol/src/index.ts'
       - 'extensions/cognition/src/host-client.ts'
@@ -15,6 +17,9 @@ on:
       - 'extensions/cognition/src/index.ts'
       - 'packages/coding-agent/src/agent-protocol-bridge-v2.ts'
       - 'packages/coding-agent/src/agent-protocol-bridge-v2.test.ts'
+      - 'packages/coding-agent/src/program-revision-protocol-client-v1.ts'
+      - 'packages/coding-agent/src/program-revision-protocol-client-v1.test.ts'
+      - 'packages/coding-agent/src/index.ts'
       - 'packages/coding-agent/src/agent-worker.ts'
       - 'packages/coding-agent/src/inference-context.ts'
       - 'packages/coding-agent/src/inference-runtime.ts'
@@ -22,6 +27,13 @@ on:
       - 'packages/host-runtime/src/program-revision.ts'
       - 'packages/host-runtime/src/program-revision.test.ts'
       - 'packages/host-runtime/src/program-revision-race.test.ts'
+      - 'packages/host-runtime/src/program-revision-protocol-v1.ts'
+      - 'packages/host-runtime/src/program-revision-protocol-v1.test.ts'
+      - 'packages/host-runtime/src/program-semantic-recovery-v1.ts'
+      - 'packages/host-runtime/src/program-semantic-recovery-v1.test.ts'
+      - 'packages/host-runtime/src/program-semantic-recovery-currentness-v1.test.ts'
+      - 'packages/host-runtime/src/program-semantic-recovery-review-regressions-v1.test.ts'
+      - 'packages/host-runtime/src/program-adaptive-application-projection-v1.ts'
       - 'packages/host-runtime/src/program-attempt-authority-v2.ts'
       - 'packages/host-runtime/src/program-attempt-authority-v2.test.ts'
       - 'packages/host-runtime/src/program-agent-v2.ts'
@@ -49,6 +61,8 @@ on:
       - 'packages/agent-protocol/src/program-execution-v2.test.ts'
       - 'packages/agent-protocol/src/program-execution-v2-routing.ts'
       - 'packages/agent-protocol/src/program-execution-v2-routing.test.ts'
+      - 'packages/agent-protocol/src/program-revision-v1.ts'
+      - 'packages/agent-protocol/src/program-revision-v1.test.ts'
       - 'packages/agent-protocol/src/node-process-transport.ts'
       - 'packages/agent-protocol/src/index.ts'
       - 'extensions/cognition/src/host-client.ts'
@@ -56,6 +70,9 @@ on:
       - 'extensions/cognition/src/index.ts'
       - 'packages/coding-agent/src/agent-protocol-bridge-v2.ts'
       - 'packages/coding-agent/src/agent-protocol-bridge-v2.test.ts'
+      - 'packages/coding-agent/src/program-revision-protocol-client-v1.ts'
+      - 'packages/coding-agent/src/program-revision-protocol-client-v1.test.ts'
+      - 'packages/coding-agent/src/index.ts'
       - 'packages/coding-agent/src/agent-worker.ts'
       - 'packages/coding-agent/src/inference-context.ts'
       - 'packages/coding-agent/src/inference-runtime.ts'
@@ -63,6 +80,13 @@ on:
       - 'packages/host-runtime/src/program-revision.ts'
       - 'packages/host-runtime/src/program-revision.test.ts'
       - 'packages/host-runtime/src/program-revision-race.test.ts'
+      - 'packages/host-runtime/src/program-revision-protocol-v1.ts'
+      - 'packages/host-runtime/src/program-revision-protocol-v1.test.ts'
+      - 'packages/host-runtime/src/program-semantic-recovery-v1.ts'
+      - 'packages/host-runtime/src/program-semantic-recovery-v1.test.ts'
+      - 'packages/host-runtime/src/program-semantic-recovery-currentness-v1.test.ts'
+      - 'packages/host-runtime/src/program-semantic-recovery-review-regressions-v1.test.ts'
+      - 'packages/host-runtime/src/program-adaptive-application-projection-v1.ts'
       - 'packages/host-runtime/src/program-attempt-authority-v2.ts'
       - 'packages/host-runtime/src/program-attempt-authority-v2.test.ts'
       - 'packages/host-runtime/src/program-agent-v2.ts'
@@ -99,15 +123,15 @@ jobs:
         run: pnpm --filter @alcode/program-state exec vitest run src/semantic-a1.test.ts src/revision-a1.test.ts
       - name: Typecheck negotiated Agent protocol V2 boundary
         run: pnpm --filter @alcode/agent-protocol exec tsc --noEmit -p tsconfig.json
-      - name: Verify V2 wire schemas and negotiated routing
-        run: pnpm exec vitest run packages/agent-protocol/src/program-execution-v2.test.ts packages/agent-protocol/src/program-execution-v2-routing.test.ts
+      - name: Verify V2 wire schemas, negotiated routing, and semantic revision protocol
+        run: pnpm exec vitest run packages/agent-protocol/src/program-execution-v2.test.ts packages/agent-protocol/src/program-execution-v2-routing.test.ts packages/agent-protocol/src/program-revision-v1.test.ts
       - name: Typecheck cognition and coding-Agent V2 propagation
         run: |
           pnpm --filter @alcode/cognition-extension exec tsc --noEmit -p tsconfig.json
           pnpm --filter @alcode/coding-agent exec tsc --noEmit -p tsconfig.json
-      - name: Verify transitional Agent bridge
-        run: pnpm exec vitest run packages/coding-agent/src/agent-protocol-bridge-v2.test.ts
-      - name: Typecheck Host semantic admission, eligibility, Completion, baseline adoption, and adaptive V2 execution
+      - name: Verify transitional Agent bridge and semantic revision client
+        run: pnpm exec vitest run packages/coding-agent/src/agent-protocol-bridge-v2.test.ts packages/coding-agent/src/program-revision-protocol-client-v1.test.ts
+      - name: Typecheck Host semantic admission, recovery, projection, eligibility, Completion, baseline adoption, and adaptive V2 execution
         run: pnpm --filter @alcode/host-runtime exec tsc --noEmit -p tsconfig.json
-      - name: Verify Host semantic admission, eligibility, Completion, baseline adoption, V2 authority, and adaptive execution routing
-        run: pnpm exec vitest run packages/host-runtime/src/program-revision.test.ts packages/host-runtime/src/program-revision-race.test.ts packages/host-runtime/src/program-attempt-authority-v2.test.ts packages/host-runtime/src/program-agent-v2.test.ts packages/host-runtime/src/program-agent-v2-replay.test.ts packages/host-runtime/src/program-execution-runtime-v2.test.ts packages/host-runtime/src/program-adaptive-control-v2.test.ts packages/host-runtime/src/program-semantic-baseline.test.ts
+      - name: Verify Host semantic admission, recovery, projection, eligibility, Completion, baseline adoption, V2 authority, and adaptive execution routing
+        run: pnpm exec vitest run packages/host-runtime/src/program-revision.test.ts packages/host-runtime/src/program-revision-race.test.ts packages/host-runtime/src/program-revision-protocol-v1.test.ts packages/host-runtime/src/program-semantic-recovery-v1.test.ts packages/host-runtime/src/program-semantic-recovery-currentness-v1.test.ts packages/host-runtime/src/program-semantic-recovery-review-regressions-v1.test.ts packages/host-runtime/src/program-attempt-authority-v2.test.ts packages/host-runtime/src/program-agent-v2.test.ts packages/host-runtime/src/program-agent-v2-replay.test.ts packages/host-runtime/src/program-execution-runtime-v2.test.ts packages/host-runtime/src/program-adaptive-control-v2.test.ts packages/host-runtime/src/program-semantic-baseline.test.ts
