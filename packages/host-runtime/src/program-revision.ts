@@ -212,7 +212,8 @@ function draftBody(
   return draft;
 }
 
-function finalCutFromDraft(
+/** Deterministically reconstruct the only semantic cut authorized by an exact sealed draft. */
+export function createProgramSemanticRevisionCutFromDraftV1(
   previous: ProgramSemanticStateV1,
   draft: ProgramSemanticRevisionDraftV1,
 ): ProgramSemanticRevisionCutV1 {
@@ -286,7 +287,7 @@ export function assertProgramSemanticRevisionDraftV1(
     if (String(previous.currentRevision.programRevisionId) !== draft.parentProgramRevisionId) {
       throw new ProgramRevisionStaleError("Semantic revision draft parent is stale");
     }
-    const cut = finalCutFromDraft(previous, draft);
+    const cut = createProgramSemanticRevisionCutFromDraftV1(previous, draft);
     if (!sameCanonical(cut.revisionImpact, draft.revisionImpact)) {
       throw new ProgramRevisionControlError("Sealed RevisionImpact does not match deterministic recomputation");
     }
@@ -407,7 +408,7 @@ function assertSourceReflectsLatestAdmission(
   const latest = latestAdmittedCut(events, programStateId);
   if (latest === undefined) return;
   if (
-    snapshot.programStateRevision !== latest.toProgramStateRevision
+    snapshot.programStateRevision < latest.toProgramStateRevision
     || !sameCanonical(snapshot.semanticState, latest.nextSemanticState)
   ) {
     throw new ProgramRevisionControlError(
@@ -674,7 +675,7 @@ export class ProgramRevisionControlServiceV1 {
       }
 
       assertProgramSemanticRevisionDraftV1(draft, current.semanticState);
-      const cut = finalCutFromDraft(current.semanticState, draft);
+      const cut = createProgramSemanticRevisionCutFromDraftV1(current.semanticState, draft);
       if (!sameCanonical(cut.revisionImpact, draft.revisionImpact)) {
         throw new ProgramRevisionControlError("Accepted semantic cut does not match sealed RevisionImpact");
       }

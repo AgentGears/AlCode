@@ -19,6 +19,14 @@ import {
   type ProgramAttemptProjectionV2,
   type ProgramProgressProposalV2,
 } from "./program-execution-v2.ts";
+import {
+  isProgramRevisionPlanWireV1,
+  isProgramRevisionProposalResultWireV1,
+  isProgramRevisionProposalWireV1,
+  type ProgramRevisionPlanWireV1,
+  type ProgramRevisionProposalResultWireV1,
+  type ProgramRevisionProposalWireV1,
+} from "./program-revision-v1.ts";
 
 export type ProgramAttemptAuthorityAny = ProgramAttemptAuthorityV1 | ProgramAttemptAuthorityV2;
 export type ProgramAttemptProjectionAny = ProgramAttemptProjectionV1 | ProgramAttemptProjectionV2;
@@ -36,8 +44,16 @@ export interface ProgramProgressResultV2 extends Omit<ProgramProgressResult, "ve
   programRevisionId?: string;
 }
 
-export type AgentToHostMessageV2Aware = AgentToHostMessage | CapabilityRequestV2 | ProgramProgressProposalV2;
-export type HostToAgentMessageV2Aware = HostToAgentMessage | ContextUpdateV2 | ProgramAttemptExecuteV2 | ProgramProgressResultV2;
+export type AgentToHostMessageV2Aware = AgentToHostMessage
+  | CapabilityRequestV2
+  | ProgramProgressProposalV2
+  | ProgramRevisionProposalWireV1;
+export type HostToAgentMessageV2Aware = HostToAgentMessage
+  | ContextUpdateV2
+  | ProgramAttemptExecuteV2
+  | ProgramProgressResultV2
+  | ProgramRevisionPlanWireV1
+  | ProgramRevisionProposalResultWireV1;
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -74,11 +90,19 @@ function isProgramProgressResultV2(value: unknown): value is ProgramProgressResu
 }
 
 export function isAgentToHostMessageV2Aware(value: unknown): value is AgentToHostMessageV2Aware {
-  return isAgentToHostMessage(value) || isCapabilityRequestV2(value) || isProgramProgressProposalV2(value);
+  return isAgentToHostMessage(value)
+    || isCapabilityRequestV2(value)
+    || isProgramProgressProposalV2(value)
+    || isProgramRevisionProposalWireV1(value);
 }
 
 export function isHostToAgentMessageV2Aware(value: unknown): value is HostToAgentMessageV2Aware {
-  return isHostToAgentMessage(value) || isContextUpdateV2(value) || isProgramAttemptExecuteV2(value) || isProgramProgressResultV2(value);
+  return isHostToAgentMessage(value)
+    || isContextUpdateV2(value)
+    || isProgramAttemptExecuteV2(value)
+    || isProgramProgressResultV2(value)
+    || isProgramRevisionPlanWireV1(value)
+    || isProgramRevisionProposalResultWireV1(value);
 }
 
 export function assertAgentToHostMessageV2Aware(value: unknown): asserts value is AgentToHostMessageV2Aware {
