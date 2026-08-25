@@ -315,6 +315,7 @@ describeLocked("A1 quiescent legacy semantic baseline adoption", () => {
   it("never converts an active V1 Attempt in place", async () => {
     const f = await fixture((state, workspaceId) => {
       const base = executionBase(workspaceId);
+      state.acceptedExecutionBase = base;
       state.workItems[0] = { ...state.workItems[0]!, lifecycle: "in_progress" };
       state.activeAttempt = {
         programAttemptId: asProgramAttemptId("baseline-active-attempt"),
