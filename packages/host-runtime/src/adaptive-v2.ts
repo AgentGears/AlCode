@@ -39,3 +39,27 @@ export {
   type ProgramSemanticCompletionServiceOptionsV2,
   type ProgramSemanticExecutionSchedulerOptionsV2,
 } from "./program-adaptive-control-v2.ts";
+export {
+  PROGRAM_SEMANTIC_BASELINE_DRAFT_PROFILE,
+  ProgramSemanticBaselineBlockedError,
+  ProgramSemanticBaselineControlError,
+  ProgramSemanticBaselineStaleError,
+  evaluateProgramSemanticBaselineQuiescenceV1,
+  type ProgramLegacyBaselineAuthorityDimensionsV1,
+  type ProgramLegacyBaselineAuthoritySourceV1,
+  type ProgramSemanticBaselineAcceptCommandV1,
+  type ProgramSemanticBaselineAcceptedResultV1,
+  type ProgramSemanticBaselineBlockReasonV1,
+  type ProgramSemanticBaselineCutV1,
+  type ProgramSemanticBaselineDraftV1,
+  type ProgramSemanticBaselineSealCommandV1,
+} from "./program-semantic-baseline-kernel.ts";
+export {
+  ProgramSemanticBaselineRegistryV1,
+  type ProgramSemanticBaselineDraftControlV1,
+} from "./program-semantic-baseline-replay.ts";
+export {
+  HostProgramSemanticBaselineApplicationControlV1,
+  ProgramSemanticBaselineServiceV1,
+  type ProgramSemanticBaselineServiceOptionsV1,
+} from "./program-semantic-baseline-service.ts";
