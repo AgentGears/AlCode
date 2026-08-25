@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   asProgramStateId as asEventProgramStateId,
+  asSessionId,
   asWorkspaceId,
   mkEventId,
   type EventDraft,
@@ -191,21 +192,26 @@ function syntheticEvent(
   payload: Record<string, unknown>,
   options: { programStateId?: string } = {},
 ): PersistedDomainEvent<string, unknown> {
-  return {
-    eventId: "018f0000-0000-7000-8000-000000000b99",
-    sequence: 1,
-    workspaceId: "018f0000-0000-7000-8000-000000000b02",
-    sessionId: "018f0000-0000-7000-8000-000000000b03",
-    programStateId: options.programStateId ?? null,
-    operationId: null,
-    occurredAt: new Date().toISOString(),
-    recordedAt: new Date().toISOString(),
-    eventDigest: "0".repeat(64),
+  const occurredAt = new Date().toISOString();
+  const draft: EventDraft<string, unknown> = {
+    eventId: mkEventId(),
+    workspaceId: asWorkspaceId("018f0000-0000-7000-8000-000000000b02"),
+    sessionId: asSessionId("018f0000-0000-7000-8000-000000000b03"),
+    ...(options.programStateId === undefined
+      ? {}
+      : { programStateId: asEventProgramStateId(options.programStateId) }),
+    occurredAt,
     type,
     payload,
     payloadSchemaVersion: 1,
     producer: { kind: "runtime", component: "test" },
-  } as PersistedDomainEvent<string, unknown>;
+  };
+  return {
+    ...draft,
+    sequence: 1,
+    recordedAt: occurredAt,
+    eventDigest: "0".repeat(64),
+  };
 }
 
 const describeLocked = process.platform === "win32" ? describe.skip : describe;
