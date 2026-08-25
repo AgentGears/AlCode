@@ -52,3 +52,9 @@ export {
   type SessionStoppedPayload,
   type SessionRecord,
 } from "./sessions-projection.ts";
+export {
+  createProgramRevisionProtocolClientV1,
+  ProgramRevisionProtocolClientClosedError,
+  type ProgramRevisionProposalClientInputV1,
+  type ProgramRevisionProtocolClientV1,
+} from "./program-revision-protocol-client-v1.ts";
