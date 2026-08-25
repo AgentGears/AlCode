@@ -199,6 +199,8 @@ function syntheticEvent(
     programStateId: options.programStateId ?? null,
     operationId: null,
     occurredAt: new Date().toISOString(),
+    recordedAt: new Date().toISOString(),
+    eventDigest: "0".repeat(64),
     type,
     payload,
     payloadSchemaVersion: 1,
