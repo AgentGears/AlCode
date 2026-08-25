@@ -31,6 +31,10 @@ on:
       - 'packages/host-runtime/src/program-execution-runtime-v2.test.ts'
       - 'packages/host-runtime/src/program-adaptive-control-v2.ts'
       - 'packages/host-runtime/src/program-adaptive-control-v2.test.ts'
+      - 'packages/host-runtime/src/program-semantic-baseline-kernel.ts'
+      - 'packages/host-runtime/src/program-semantic-baseline-replay.ts'
+      - 'packages/host-runtime/src/program-semantic-baseline-service.ts'
+      - 'packages/host-runtime/src/program-semantic-baseline.test.ts'
       - 'packages/host-runtime/src/adaptive-v2.ts'
       - 'packages/host-runtime/src/node-ipc-transport.ts'
       - 'packages/host-runtime/package.json'
@@ -68,6 +72,10 @@ on:
       - 'packages/host-runtime/src/program-execution-runtime-v2.test.ts'
       - 'packages/host-runtime/src/program-adaptive-control-v2.ts'
       - 'packages/host-runtime/src/program-adaptive-control-v2.test.ts'
+      - 'packages/host-runtime/src/program-semantic-baseline-kernel.ts'
+      - 'packages/host-runtime/src/program-semantic-baseline-replay.ts'
+      - 'packages/host-runtime/src/program-semantic-baseline-service.ts'
+      - 'packages/host-runtime/src/program-semantic-baseline.test.ts'
       - 'packages/host-runtime/src/adaptive-v2.ts'
       - 'packages/host-runtime/src/node-ipc-transport.ts'
       - 'packages/host-runtime/package.json'
@@ -99,7 +107,7 @@ jobs:
           pnpm --filter @alcode/coding-agent exec tsc --noEmit -p tsconfig.json
       - name: Verify transitional Agent bridge
         run: pnpm exec vitest run packages/coding-agent/src/agent-protocol-bridge-v2.test.ts
-      - name: Typecheck Host semantic admission, eligibility, Completion, and adaptive V2 execution
+      - name: Typecheck Host semantic admission, eligibility, Completion, baseline adoption, and adaptive V2 execution
         run: pnpm --filter @alcode/host-runtime exec tsc --noEmit -p tsconfig.json
-      - name: Verify Host semantic admission, eligibility, Completion, V2 authority, and adaptive execution routing
-        run: pnpm exec vitest run packages/host-runtime/src/program-revision.test.ts packages/host-runtime/src/program-revision-race.test.ts packages/host-runtime/src/program-attempt-authority-v2.test.ts packages/host-runtime/src/program-agent-v2.test.ts packages/host-runtime/src/program-agent-v2-replay.test.ts packages/host-runtime/src/program-execution-runtime-v2.test.ts packages/host-runtime/src/program-adaptive-control-v2.test.ts
+      - name: Verify Host semantic admission, eligibility, Completion, baseline adoption, V2 authority, and adaptive execution routing
+        run: pnpm exec vitest run packages/host-runtime/src/program-revision.test.ts packages/host-runtime/src/program-revision-race.test.ts packages/host-runtime/src/program-attempt-authority-v2.test.ts packages/host-runtime/src/program-agent-v2.test.ts packages/host-runtime/src/program-agent-v2-replay.test.ts packages/host-runtime/src/program-execution-runtime-v2.test.ts packages/host-runtime/src/program-adaptive-control-v2.test.ts packages/host-runtime/src/program-semantic-baseline.test.ts
