@@ -25,7 +25,13 @@ export interface ProgramRevisionProposalClientInputV1 {
 }
 
 export interface ProgramRevisionProtocolClientOptionsV1 {
-  proposalTimeoutMs?: number;
+  /**
+   * Bounds a pending proposal for tests/non-production transports. Set to null
+   * when the transport/generation lifecycle is the authority for cancellation;
+   * this prevents the Agent from abandoning a Host-consumed planning episode
+   * while Host validation/sealing is still in flight.
+   */
+  proposalTimeoutMs?: number | null;
 }
 
 export interface ProgramRevisionProtocolClientV1 {
@@ -66,7 +72,7 @@ export class ProgramRevisionProtocolClientPlanHandlerError extends Error {
 interface PendingProposal {
   sessionId: string;
   planningEpisodeId: string;
-  timer: ReturnType<typeof setTimeout>;
+  timer?: ReturnType<typeof setTimeout>;
   resolve(result: ProgramRevisionProposalResultWireV1): void;
   reject(error: unknown): void;
 }
@@ -76,16 +82,18 @@ class ProgramRevisionProtocolClientImplV1 implements ProgramRevisionProtocolClie
   private readonly errors = new Set<(error: ProgramRevisionProtocolClientPlanHandlerError) => void | Promise<void>>();
   private readonly pending = new Map<string, PendingProposal>();
   private readonly unsubscribe: () => void;
-  private readonly proposalTimeoutMs: number;
+  private readonly proposalTimeoutMs: number | null;
   private closed = false;
 
   constructor(
     private readonly transport: ProtocolTransport<AgentToHostMessageV2Aware, HostToAgentMessageV2Aware>,
     options: ProgramRevisionProtocolClientOptionsV1,
   ) {
-    const timeout = options.proposalTimeoutMs ?? DEFAULT_PROGRAM_REVISION_PROPOSAL_TIMEOUT_MS;
-    if (!Number.isSafeInteger(timeout) || timeout <= 0) {
-      throw new Error("proposalTimeoutMs must be a positive safe integer");
+    const timeout = options.proposalTimeoutMs === undefined
+      ? DEFAULT_PROGRAM_REVISION_PROPOSAL_TIMEOUT_MS
+      : options.proposalTimeoutMs;
+    if (timeout !== null && (!Number.isSafeInteger(timeout) || timeout <= 0)) {
+      throw new Error("proposalTimeoutMs must be null or a positive safe integer");
     }
     this.proposalTimeoutMs = timeout;
     this.unsubscribe = transport.onMessage((message) => this.receive(message));
@@ -136,18 +144,20 @@ class ProgramRevisionProtocolClientImplV1 implements ProgramRevisionProtocolClie
         if (settled) return;
         settled = true;
         const pending = this.pending.get(requestId);
-        if (pending !== undefined) clearTimeout(pending.timer);
+        if (pending?.timer !== undefined) clearTimeout(pending.timer);
         this.pending.delete(requestId);
         action();
       };
-      const timer = setTimeout(
-        () => finish(() => reject(new ProgramRevisionProtocolClientTimeoutError())),
-        this.proposalTimeoutMs,
-      );
+      const timer = this.proposalTimeoutMs === null
+        ? undefined
+        : setTimeout(
+            () => finish(() => reject(new ProgramRevisionProtocolClientTimeoutError())),
+            this.proposalTimeoutMs,
+          );
       this.pending.set(requestId, {
         sessionId: input.sessionId,
         planningEpisodeId: input.planningEpisodeId,
-        timer,
+        ...(timer !== undefined ? { timer } : {}),
         resolve: (result) => finish(() => resolve(result)),
         reject: (error) => finish(() => reject(error)),
       });
