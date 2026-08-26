@@ -12,6 +12,11 @@ export {
   type ProgramExecutionRuntimeOptionsV2,
 } from "./program-execution-runtime-v2.ts";
 export {
+  ProgramAdaptiveRevisionRuntimeV1,
+  createProgramAdaptiveRevisionRuntimeV1,
+  type ProgramAdaptiveRevisionRuntimeOptionsV1,
+} from "./program-revision-runtime-v1.ts";
+export {
   ProgramAdaptiveExecutionControlV2,
   ProgramSemanticCompletionServiceV2,
   ProgramSemanticExecutionSchedulerV2,
