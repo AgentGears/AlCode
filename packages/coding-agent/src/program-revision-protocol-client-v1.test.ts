@@ -7,6 +7,7 @@ import {
   type ProtocolTransport,
 } from "@alcode/agent-protocol";
 import {
+  ProgramRevisionProtocolClientClosedError,
   ProgramRevisionProtocolClientPlanHandlerError,
   ProgramRevisionProtocolClientTimeoutError,
   ProgramRevisionProtocolClientValidationError,
@@ -111,6 +112,25 @@ describe("coding-Agent program_revision_v1 client", () => {
     });
     await expect(pending).rejects.toBeInstanceOf(ProgramRevisionProtocolClientTimeoutError);
     client.close();
+  });
+
+  it("can leave production proposal lifetime to transport/generation closure", async () => {
+    const pair = createInMemoryTransportPair<HostToAgentMessageV2Aware, AgentToHostMessageV2Aware>();
+    const client = createProgramRevisionProtocolClientV1(pair.b, { proposalTimeoutMs: null });
+    let settled = false;
+    const pending = client.submitProposal({
+      sessionId: "session-generation-owned",
+      planningEpisodeId: "episode-generation-owned",
+      programStateId: "program-generation-owned",
+      parentProgramRevisionId: "revision-generation-owned",
+      proposedChangeClass: "correction",
+      proposedEdit: { workItems: [] },
+    });
+    void pending.then(() => { settled = true; }, () => { settled = true; });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(settled).toBe(false);
+    client.close();
+    await expect(pending).rejects.toBeInstanceOf(ProgramRevisionProtocolClientClosedError);
   });
 
   it("handles a synchronous transport send failure without leaving an unresolved request", async () => {

@@ -11,6 +11,7 @@ import {
   GRAPH_CONTEXT_CAPABILITY,
   PROGRAM_EXECUTION_CAPABILITY,
   PROGRAM_EXECUTION_V2_CAPABILITY,
+  PROGRAM_REVISION_CAPABILITY,
   PROGRAM_STATE_CAPABILITY,
   PROGRAM_STATE_V2_CAPABILITY,
   isProgramAttemptAuthorityV2,
@@ -20,7 +21,6 @@ import {
   type ProgramAttemptAuthorityV1,
   type ProgramAttemptProjectionAny,
 } from "@alcode/agent-protocol";
-import { createProcessAgentProtocolBridgeV2 } from "./agent-protocol-bridge-v2.ts";
 import {
   AGENT_PROGRAM_BEHAVIOR,
   AGENT_RUN_COMPOSITION_FACTORY,
@@ -28,10 +28,15 @@ import {
   type AgentRunComposition,
   type DefaultAgentRuntimeProfileOptions,
 } from "./agent-runtime-profile.ts";
+import { createProcessAdaptiveAgentProtocolSuiteV1 } from "./agent-protocol-suite-v2.ts";
 import { createInferenceCapabilityProjection, type InferenceCapabilityProjection } from "./inference-runtime.ts";
 import { requestInferenceContext } from "./inference-context.ts";
 import { PROGRAM_EXECUTION_PROMPT, renderProgramAttemptContext } from "./program-attempt-context.ts";
+import { createProductionModelProvider } from "./provider-selection.ts";
+import { runProgramRevisionPlanner } from "./program-revision-planner.ts";
 import { RecoverableRunQueueV1 } from "./recoverable-run-queue.ts";
+
+const AGENT_SHUTDOWN_WATCHDOG_MS = 5_000;
 
 class ProgramAttemptExecutionStaleError extends Error {
   constructor(message: string) {
@@ -83,7 +88,7 @@ function projectionExecutable(projection: ProgramAttemptProjectionAny | undefine
 async function main(): Promise<void> {
   const generationId = process.env.ALCODE_AGENT_GENERATION_ID;
   if (!generationId) throw new Error("ALCODE_AGENT_GENERATION_ID is required");
-  const adaptiveProtocol = createProcessAgentProtocolBridgeV2();
+  const { adaptiveProtocol, revisionProtocol } = createProcessAdaptiveAgentProtocolSuiteV1();
   // The existing runtime profile owns behavior/lifecycle. Its compile-time V1
   // surface is a subset of the transitional bridge; runtime authority selects
   // the exact V1 or V2 progress message.
@@ -105,6 +110,15 @@ async function main(): Promise<void> {
     await adaptiveProtocol.reportError(message, activeSessionId);
   };
 
+  revisionProtocol.onError((error) => reportError(error.message, sessionId ?? undefined));
+  revisionProtocol.onPlan((plan) => {
+    void runProgramRevisionPlanner({
+      plan,
+      provider: createProductionModelProvider(),
+      client: revisionProtocol,
+    }).catch((error) => reportError(error instanceof Error ? error.message : String(error), plan.sessionId));
+  });
+
   await adaptiveProtocol.announceHello(generationId, [
     "capability.request",
     "criterion.evidence",
@@ -116,6 +130,7 @@ async function main(): Promise<void> {
     PROGRAM_EXECUTION_CAPABILITY,
     PROGRAM_STATE_V2_CAPABILITY,
     PROGRAM_EXECUTION_V2_CAPABILITY,
+    PROGRAM_REVISION_CAPABILITY,
   ]);
 
   const runInput = async (
@@ -144,8 +159,6 @@ async function main(): Promise<void> {
       composition = await runCompositionFactory.create({
         sessionId: localSessionId,
         context: localContext,
-        // The profile contribution is structurally version-agnostic at runtime;
-        // the transitional bridge inspects the actual authority before sending.
         latestProgramAttemptAuthority: () => latestProgramAttemptAuthority as ProgramAttemptAuthorityV1 | undefined,
       });
       const completeHistory = await runAgentLoop(text, {
@@ -280,16 +293,29 @@ async function main(): Promise<void> {
           abortController = new AbortController();
         }
         break;
-      case "shutdown":
+      case "shutdown": {
         abortController.abort(message.reason);
-        void runtime.dispose().finally(() => process.exit(0));
+        revisionProtocol.close();
+        const watchdog = setTimeout(() => process.exit(0), AGENT_SHUTDOWN_WATCHDOG_MS);
+        void runtime.dispose()
+          .catch((error) => reportError(
+            `Agent runtime disposal failed: ${error instanceof Error ? error.message : String(error)}`,
+            sessionId ?? undefined,
+          ).catch(() => undefined))
+          .finally(() => {
+            clearTimeout(watchdog);
+            process.exit(0);
+          });
         break;
+      }
       case "context.update":
       case "capability.result":
       case "transcript.admitted":
       case "program.planning.read.result":
       case "program.proposal.result":
       case "program.progress.result":
+      case "program.revision.plan":
+      case "program.revision.proposal.result":
         break;
     }
   });
