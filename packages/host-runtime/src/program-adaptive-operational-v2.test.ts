@@ -91,20 +91,13 @@ function semantic(): ProgramSemanticStateV1 {
     workItems: semanticWork(),
     verification: [{
       obligationId: verificationId,
-      predicate: {
-        kind: "workspace_path_state",
-        path: "src/b.ts",
-        requiredState: "file",
-      },
+      predicate: { kind: "workspace_path_state", path: "src/b.ts", requiredState: "file" },
       freshnessScope: { kind: "workspace" },
       subjectGeneration: 2,
       satisfaction: null,
       waiver: null,
     }],
-    verificationBindings: [{
-      obligationId: verificationId,
-      subject: { kind: "program" },
-    }],
+    verificationBindings: [{ obligationId: verificationId, subject: { kind: "program" } }],
     outputSlots: [],
     productionSteps: [],
   };
@@ -130,11 +123,7 @@ function rawState(revision = 6, verificationGeneration = 2): ProgramState {
     }],
     verification: [{
       obligationId: verificationId,
-      predicate: {
-        kind: "workspace_path_state",
-        path: "src/b.ts",
-        requiredState: "file",
-      },
+      predicate: { kind: "workspace_path_state", path: "src/b.ts", requiredState: "file" },
       freshnessScope: { kind: "workspace" },
     }],
     outputSlots: [],
@@ -143,12 +132,7 @@ function rawState(revision = 6, verificationGeneration = 2): ProgramState {
   return {
     ...raw,
     revision,
-    verification: [{
-      ...raw.verification[0]!,
-      subjectGeneration: verificationGeneration,
-      satisfaction: null,
-      waiver: null,
-    }],
+    verification: [{ ...raw.verification[0]!, subjectGeneration: verificationGeneration, satisfaction: null, waiver: null }],
   };
 }
 
@@ -180,9 +164,6 @@ function event(input: {
   state?: ProgramState;
   producerComponent?: string;
 }): PersistedDomainEvent<string, unknown> {
-  const payload = input.state === undefined
-    ? input.payload
-    : { state: input.state, ...input.payload };
   return {
     sequence: input.sequence,
     eventId: `event-${input.sequence}`,
@@ -191,21 +172,16 @@ function event(input: {
     programStateId: String(programStateId),
     occurredAt: "2026-08-27T00:00:00.000Z",
     type: input.type,
-    payload,
+    payload: input.state === undefined ? input.payload : { state: input.state, ...input.payload },
     payloadSchemaVersion: 1,
     producer: { kind: "runtime", component: input.producerComponent ?? "test" },
   } as unknown as PersistedDomainEvent<string, unknown>;
 }
 
 describe("A1 guarded adaptive operational currentness", () => {
-  it("rejects a stale intermediate ProgramState even when a later snapshot advances", () => {
+  it("rejects a stale intermediate ProgramState even when a later adaptive snapshot advances", () => {
     const events = [
-      event({
-        sequence: 10,
-        type: "program.transitioned",
-        state: rawState(5),
-        payload: { transitionKind: "work.lifecycle.set" },
-      }),
+      event({ sequence: 10, type: "program.transitioned", state: rawState(5), payload: { transitionKind: "work.lifecycle.set" } }),
       event({
         sequence: 11,
         type: "program.transitioned",
@@ -214,75 +190,63 @@ describe("A1 guarded adaptive operational currentness", () => {
         producerComponent: "program-adaptive-admission-v2",
       }),
     ];
-    expect(() => validatePostSemanticProgramStateSequenceV2(
-      events,
-      String(programStateId),
-      9,
-      5,
-    )).toThrow(ProgramAdaptiveOperationalOverlayErrorV2);
+    expect(() => validatePostSemanticProgramStateSequenceV2(events, String(programStateId), 9, 5))
+      .toThrow(ProgramAdaptiveOperationalOverlayErrorV2);
   });
 
-  it("accepts an exact adaptive admission anchor followed by a contiguous chain", () => {
-    const events = [
-      event({
-        sequence: 10,
-        type: "program.transitioned",
-        state: rawState(6),
-        payload: { transitionKind: "attempt.issue" },
-        producerComponent: "program-adaptive-admission-v2",
-      }),
-      event({
-        sequence: 11,
-        type: "program.transitioned",
-        state: rawState(7),
-        payload: { transitionKind: "work.lifecycle.set" },
-      }),
-    ];
-    expect(validatePostSemanticProgramStateSequenceV2(
-      events,
-      String(programStateId),
-      9,
-      5,
-    )?.state.revision).toBe(7);
+  it("accepts new Attempt admission as the first exact post-semantic anchor", () => {
+    const events = [event({
+      sequence: 10,
+      type: "program.transitioned",
+      state: rawState(6),
+      payload: { transitionKind: "attempt.issue" },
+      producerComponent: "program-adaptive-admission-v2",
+    })];
+    expect(validatePostSemanticProgramStateSequenceV2(events, String(programStateId), 9, 5)?.state.revision).toBe(6);
   });
 
-  it("rejects a revision gap after the adaptive anchor", () => {
+  it("accepts retained-Attempt progress as an exact materialization anchor", () => {
+    const events = [event({
+      sequence: 10,
+      type: "program.transitioned",
+      state: rawState(6),
+      payload: { transitionKind: "evidence.add" },
+      producerComponent: "program-adaptive-progress-v2",
+    })];
+    expect(validatePostSemanticProgramStateSequenceV2(events, String(programStateId), 9, 5)?.state.revision).toBe(6);
+  });
+
+  it("accepts in-flight mutation settlement after semantic invalidation as an exact anchor", () => {
+    const events = [event({
+      sequence: 10,
+      type: "program.transitioned",
+      state: rawState(6),
+      payload: { transitionKind: "execution_base.unavailable" },
+      producerComponent: "program-adaptive-settlement-v2",
+    })];
+    expect(validatePostSemanticProgramStateSequenceV2(events, String(programStateId), 9, 5)?.state.revision).toBe(6);
+  });
+
+  it("rejects a revision gap after an adaptive anchor", () => {
     const events = [
       event({
         sequence: 10,
         type: "program.transitioned",
         state: rawState(6),
-        payload: { transitionKind: "attempt.issue" },
-        producerComponent: "program-adaptive-admission-v2",
+        payload: { transitionKind: "evidence.add" },
+        producerComponent: "program-adaptive-progress-v2",
       }),
-      event({
-        sequence: 11,
-        type: "program.transitioned",
-        state: rawState(8),
-        payload: { transitionKind: "work.lifecycle.set" },
-      }),
+      event({ sequence: 11, type: "program.transitioned", state: rawState(8), payload: { transitionKind: "work.lifecycle.set" } }),
     ];
-    expect(() => validatePostSemanticProgramStateSequenceV2(
-      events,
-      String(programStateId),
-      9,
-      5,
-    )).toThrow("revision chain is not contiguous");
+    expect(() => validatePostSemanticProgramStateSequenceV2(events, String(programStateId), 9, 5))
+      .toThrow("revision chain is not contiguous");
   });
 
   it("rejects verification proof older than the semantic subject but permits newer operational freshness", () => {
-    expect(() => assertAdaptiveOperationalVerificationGenerationV2(
-      semantic(),
-      rawState(6, 1),
-    )).toThrow("predates the current semantic generation");
-    expect(() => assertAdaptiveOperationalVerificationGenerationV2(
-      semantic(),
-      rawState(6, 2),
-    )).not.toThrow();
-    expect(() => assertAdaptiveOperationalVerificationGenerationV2(
-      semantic(),
-      rawState(6, 3),
-    )).not.toThrow();
+    expect(() => assertAdaptiveOperationalVerificationGenerationV2(semantic(), rawState(6, 1)))
+      .toThrow("predates the current semantic generation");
+    expect(() => assertAdaptiveOperationalVerificationGenerationV2(semantic(), rawState(6, 2))).not.toThrow();
+    expect(() => assertAdaptiveOperationalVerificationGenerationV2(semantic(), rawState(6, 3))).not.toThrow();
   });
 
   it("derives exact issue-time generation, dependency, and envelope assumptions", () => {
@@ -301,39 +265,17 @@ describe("A1 guarded adaptive operational currentness", () => {
     });
   });
 
-  it("records semantic invalidation cumulatively across later revisions", () => {
-    const events = [
-      event({ sequence: 10, type: "program.transitioned", payload: { transitionKind: "attempt.issue" } }),
-      event({
-        sequence: 11,
-        type: "program.semantic_revision.admitted.v1",
-        payload: { cut: { revisionImpact: { invalidatedAttempts: [String(attemptId)] } } },
-      }),
-      event({
-        sequence: 12,
-        type: "program.semantic_revision.admitted.v1",
-        payload: { cut: { revisionImpact: { invalidatedAttempts: [], retainedAttempts: [] } } },
-      }),
+  it("keeps semantic invalidation cumulative and unrelated revisions non-global", () => {
+    const invalidated = [
+      event({ sequence: 11, type: "program.semantic_revision.admitted.v1", payload: { cut: { revisionImpact: { invalidatedAttempts: [String(attemptId)] } } } }),
+      event({ sequence: 12, type: "program.semantic_revision.admitted.v1", payload: { cut: { revisionImpact: { invalidatedAttempts: [] } } } }),
     ];
-    expect(adaptiveAttemptInvalidatedAfterIssueV2(
-      events,
-      String(programStateId),
-      String(attemptId),
-      10,
-    )).toBe(true);
-  });
-
-  it("does not treat an unrelated later semantic revision as global Attempt staleness", () => {
-    const events = [event({
+    expect(adaptiveAttemptInvalidatedAfterIssueV2(invalidated, String(programStateId), String(attemptId), 10)).toBe(true);
+    const retained = [event({
       sequence: 11,
       type: "program.semantic_revision.admitted.v1",
       payload: { cut: { revisionImpact: { invalidatedAttempts: [], retainedAttempts: [String(attemptId)] } } },
     })];
-    expect(adaptiveAttemptInvalidatedAfterIssueV2(
-      events,
-      String(programStateId),
-      String(attemptId),
-      10,
-    )).toBe(false);
+    expect(adaptiveAttemptInvalidatedAfterIssueV2(retained, String(programStateId), String(attemptId), 10)).toBe(false);
   });
 });

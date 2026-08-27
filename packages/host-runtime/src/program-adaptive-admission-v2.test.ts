@@ -12,7 +12,9 @@ import {
   type WorkAuthorityEnvelopeV1,
 } from "@alcode/program-state";
 import {
+  materializeAdaptiveMutationSettlementProgramStateV2,
   materializeAdaptiveOperationalProgramStateV2,
+  materializeAdaptiveRetainedAttemptProgramStateV2,
 } from "./program-adaptive-admission-v2.ts";
 import type { ProgramSemanticCurrentSnapshotV1 } from "./program-revision.ts";
 
@@ -22,6 +24,7 @@ const workId = asProgramWorkItemId("admission-work");
 const attemptId = asProgramAttemptId("admission-old-attempt");
 const revisionId = asProgramRevisionId("admission-r2");
 const verificationId = asVerificationObligationId("admission-verification");
+const retiredVerificationId = asVerificationObligationId("retired-verification");
 
 function envelope(): WorkAuthorityEnvelopeV1 {
   return {
@@ -66,10 +69,10 @@ function rawState(): ProgramState {
       affectedPaths: ["src/a.ts"],
     }],
     verification: [{
-      obligationId: verificationId,
+      obligationId: retiredVerificationId,
       predicate: {
         kind: "workspace_path_state",
-        path: "src/a.ts",
+        path: "src/retired.ts",
         requiredState: "file",
       },
       freshnessScope: { kind: "workspace" },
@@ -82,13 +85,7 @@ function rawState(): ProgramState {
     ...raw,
     revision: 8,
     acceptedExecutionBase: base,
-    workItems: [{ ...raw.workItems[0]!, lifecycle: "completed" }],
-    verification: [{
-      ...raw.verification[0]!,
-      subjectGeneration: 1,
-      satisfaction: null,
-      waiver: null,
-    }],
+    workItems: [{ ...raw.workItems[0]!, lifecycle: "in_progress" }],
     activeAttempt: {
       programAttemptId: attemptId,
       workItemId: workId,
@@ -100,7 +97,7 @@ function rawState(): ProgramState {
   };
 }
 
-function semanticState(): ProgramSemanticStateV1 {
+function semanticState(satisfactionState: "pending" | "active" = "pending"): ProgramSemanticStateV1 {
   return {
     programStateId,
     currentRevision: {
@@ -122,7 +119,7 @@ function semanticState(): ProgramSemanticStateV1 {
       workItemGeneration: 2,
       requirementState: "required",
       topologyState: "leaf",
-      satisfactionState: "pending",
+      satisfactionState,
       parentWorkItemId: null,
       authorityEnvelope: envelope(),
     }],
@@ -151,11 +148,17 @@ function semanticState(): ProgramSemanticStateV1 {
   };
 }
 
-function current(): ProgramSemanticCurrentSnapshotV1 {
+function current(retained = false): ProgramSemanticCurrentSnapshotV1 {
   return {
     programStateRevision: 9,
-    semanticState: semanticState(),
-    activeAttempt: null,
+    semanticState: semanticState(retained ? "active" : "pending"),
+    activeAttempt: retained ? {
+      programAttemptId: attemptId,
+      workItemId: workId,
+      workItemGeneration: 2,
+      directDependencies: [],
+      workAuthorityEnvelope: envelope(),
+    } : null,
     lifecycle: "active",
     attachedSessionIds: [String(sessionId)],
   };
@@ -167,16 +170,14 @@ describe("A1 adaptive Attempt admission materialization", () => {
     expect(next.revision).toBe(9);
     expect(next.activeAttempt).toBeNull();
     expect(next.workItems).toEqual([
-      expect.objectContaining({
-        workItemId: workId,
-        lifecycle: "pending",
-      }),
+      expect.objectContaining({ workItemId: workId, lifecycle: "pending" }),
     ]);
     expect(next.acceptedExecutionBase).toEqual(executionBase(4));
   });
 
-  it("materializes the current verification generation and clears stale raw semantics", () => {
+  it("keeps only bounded current semantic collections instead of unioning retired history", () => {
     const next = materializeAdaptiveOperationalProgramStateV2(rawState(), current(), executionBase(4));
+    expect(next.verification.map(String)).not.toContain(String(retiredVerificationId));
     expect(next.verification).toEqual([
       expect.objectContaining({
         obligationId: verificationId,
@@ -185,5 +186,23 @@ describe("A1 adaptive Attempt admission materialization", () => {
         waiver: null,
       }),
     ]);
+    expect(next.outputSlots).toEqual([]);
+    expect(next.productionSteps).toEqual([]);
+  });
+
+  it("rematerializes a retained Attempt at the semantic head without changing its identity", () => {
+    const next = materializeAdaptiveRetainedAttemptProgramStateV2(rawState(), current(true));
+    expect(next.revision).toBe(9);
+    expect(next.activeAttempt?.programAttemptId).toBe(attemptId);
+    expect(next.workItems[0]?.lifecycle).toBe("in_progress");
+    expect(next.verification[0]?.obligationId).toBe(verificationId);
+  });
+
+  it("drops an invalidated Attempt while preserving its operational base as historical environment truth", () => {
+    const next = materializeAdaptiveMutationSettlementProgramStateV2(rawState(), current(false));
+    expect(next.revision).toBe(9);
+    expect(next.activeAttempt).toBeNull();
+    expect(next.acceptedExecutionBase).toEqual(executionBase(3));
+    expect(next.workItems[0]?.lifecycle).toBe("pending");
   });
 });

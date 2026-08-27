@@ -82,11 +82,6 @@ function semanticHeadEventSequenceV2(
   return event.sequence;
 }
 
-/**
- * A raw operational verification generation may advance beyond the semantic
- * cut because Workspace/effect freshness remains an independent axis, but it
- * may never fall behind the generation established by the semantic head.
- */
 export function assertAdaptiveOperationalVerificationGenerationV2(
   semantic: ProgramSemanticStateV1,
   raw: ProgramState,
@@ -107,10 +102,26 @@ export function assertAdaptiveOperationalVerificationGenerationV2(
   }
 }
 
+function isTrustedAdaptiveAnchorV2(event: PersistedDomainEvent<string, unknown>): boolean {
+  if (event.type !== "program.transitioned" || event.producer.kind !== "runtime") return false;
+  const component = String(record(event.producer).component ?? "");
+  const transitionKind = String(record(event.payload).transitionKind ?? "");
+  if (component === "program-adaptive-admission-v2") return transitionKind === "attempt.issue";
+  if (component === "program-adaptive-progress-v2") {
+    return transitionKind === "evidence.add" || transitionKind === "work.lifecycle.set:awaiting_verification";
+  }
+  if (component === "program-adaptive-settlement-v2") {
+    return transitionKind === "attempt.execution_base.advance" || transitionKind === "execution_base.unavailable";
+  }
+  return false;
+}
+
 /**
- * Validate the raw ProgramState lineage after a known semantic cut. The first
- * post-cut writer must be adaptive Attempt admission, which materializes from
- * the exact semantic whole-state revision before applying attempt.issue.
+ * Validate the complete raw ProgramState lineage after a semantic cut. The
+ * first post-cut ProgramState must descend from an explicitly adaptive Host
+ * adapter that first materialized the exact current semantic state. This admits
+ * both new-Attempt dispatch and retained-Attempt progress/settlement while still
+ * rejecting legacy stale writers.
  */
 export function validatePostSemanticProgramStateSequenceV2(
   events: readonly PersistedDomainEvent<string, unknown>[],
@@ -123,14 +134,10 @@ export function validatePostSemanticProgramStateSequenceV2(
   if (postHead.length === 0) return undefined;
 
   const first = postHead[0]!;
-  const payload = record(first.event.payload);
-  if (first.event.type !== "program.transitioned"
-      || first.event.producer.kind !== "runtime"
-      || String(record(first.event.producer).component ?? "") !== "program-adaptive-admission-v2"
-      || payload.transitionKind !== "attempt.issue"
+  if (!isTrustedAdaptiveAnchorV2(first.event)
       || first.state.revision !== semanticProgramStateRevision + 1) {
     throw new ProgramAdaptiveOperationalOverlayErrorV2(
-      "First post-semantic ProgramState is not an exact adaptive Attempt-admission anchor",
+      "First post-semantic ProgramState is not an exact adaptive materialization anchor",
     );
   }
 
@@ -146,11 +153,6 @@ export function validatePostSemanticProgramStateSequenceV2(
   return postHead[postHead.length - 1]!;
 }
 
-/**
- * Prove that the latest raw ProgramState descends from the exact current
- * semantic cut and that verification proof does not predate that semantic
- * subject generation.
- */
 export function validateAdaptiveOperationalProgramStateSequenceV2(
   events: readonly PersistedDomainEvent<string, unknown>[],
   programStateId: string,
@@ -182,12 +184,6 @@ export function validateAdaptiveOperationalProgramStateSequenceV2(
   );
 }
 
-/**
- * Guard the legacy-compatible overlay with exact post-semantic lineage proof.
- * The underlying projection is reused only after current WorkItem generation
- * provenance is established by the adaptive materialization anchor and stale
- * verification generations are excluded.
- */
 export function recoverAdaptiveProgramCurrentSnapshotV2(
   events: readonly PersistedDomainEvent<string, unknown>[],
   programStateId: string,
@@ -202,7 +198,6 @@ async function replayAllV2(store: WorkspaceEventStore): Promise<PersistedDomainE
   return events;
 }
 
-/** Production guarded current-state source for adaptive semantic/operational consumers. */
 export class ProgramAdaptiveOperationalCurrentStateSourceV2
 implements ProgramSemanticCurrentStateSourceV1,
   ProgramAdaptiveSemanticSessionStateSourceV2,

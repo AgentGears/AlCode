@@ -15,11 +15,11 @@ import {
   canonicalStringify,
   deriveReadySemanticWorkItems,
   isProgramSemanticRequirementComplete,
+  type ProgramAttempt,
   type ProgramAttemptExecutionBase,
   type ProgramSemanticWorkItemV1,
   type ProgramState,
   type ProgramWorkItem,
-  type VerificationObligation,
 } from "@alcode/program-state";
 import type { WorkspaceEventStore } from "@alcode/storage";
 import { CanonicalAdmissionQueue } from "./admission-queue.ts";
@@ -90,7 +90,7 @@ function latestProgramStates(
   return states;
 }
 
-function requireRawProgramState(
+export function requireAdaptiveRawProgramStateV2(
   events: readonly PersistedDomainEvent<string, unknown>[],
   programStateId: string,
 ): ProgramState {
@@ -136,7 +136,7 @@ function outstandingWriterOperations(events: readonly PersistedDomainEvent<strin
   return [...writers.keys()].sort((a, b) => a.localeCompare(b, "en"));
 }
 
-function durableWorkspaceEffectGeneration(
+export function durableAdaptiveWorkspaceEffectGenerationV2(
   events: readonly PersistedDomainEvent<string, unknown>[],
 ): number | null {
   let current: number | null = null;
@@ -155,7 +155,7 @@ function effectiveObservedBase(
   events: readonly PersistedDomainEvent<string, unknown>[],
   base: ProgramAttemptExecutionBase,
 ): ProgramAttemptExecutionBase {
-  const durable = durableWorkspaceEffectGeneration(events);
+  const durable = durableAdaptiveWorkspaceEffectGenerationV2(events);
   if (durable === null || durable <= base.workspaceEffectGeneration) return base;
   return { ...base, workspaceEffectGeneration: durable };
 }
@@ -220,31 +220,10 @@ function lifecycleForSemanticWork(
   }
 }
 
-function mergeHistoricalById<T>(
-  current: readonly T[],
-  historical: readonly T[],
-  id: (value: T) => string,
-): T[] {
-  const currentIds = new Set(current.map(id));
-  return [
-    ...current.map((value) => structuredClone(value)),
-    ...historical.filter((value) => !currentIds.has(id(value))).map((value) => structuredClone(value)),
-  ];
-}
-
-/**
- * Materialize one legacy-compatible operational snapshot at the current A1
- * whole-state revision. Current semantics own work/verification/output shape;
- * historical legacy rows are retained only where required for provenance refs.
- */
-export function materializeAdaptiveOperationalProgramStateV2(
+function materializeSemanticCollections(
   raw: ProgramState,
   current: ProgramSemanticCurrentSnapshotV1,
-  acceptedExecutionBase: ProgramAttemptExecutionBase,
-): ProgramState {
-  if (String(raw.programStateId) !== String(current.semanticState.programStateId)) {
-    throw new ProgramAdaptiveAdmissionControlErrorV2("Semantic and operational ProgramState identity differ");
-  }
+): Pick<ProgramState, "workItems" | "blockers" | "verification" | "outputSlots" | "productionSteps" | "decisiveEvidence" | "artifacts"> {
   const rawWork = new Map(raw.workItems.map((work) => [String(work.workItemId), work]));
   const workItems: ProgramWorkItem[] = current.semanticState.workItems.map((work) => ({
     workItemId: work.workItemId,
@@ -254,45 +233,107 @@ export function materializeAdaptiveOperationalProgramStateV2(
     affectedPaths: [...work.affectedPaths],
     lifecycle: lifecycleForSemanticWork(work, current.semanticState.workItems, rawWork.get(String(work.workItemId))),
   }));
-  const verification = mergeHistoricalById<VerificationObligation>(
-    current.semanticState.verification,
-    raw.verification,
-    (item) => String(item.obligationId),
-  );
-  const outputSlots = mergeHistoricalById(
-    current.semanticState.outputSlots,
-    raw.outputSlots,
-    (item) => String(item.outputSlotId),
-  );
-  const productionSteps = mergeHistoricalById(
-    current.semanticState.productionSteps,
-    raw.productionSteps,
-    (item) => String(item.productionStepId),
-  );
+  const workIds = new Set(workItems.map((work) => String(work.workItemId)));
+  const verification = current.semanticState.verification.map((item) => structuredClone(item));
+  const verificationIds = new Set(verification.map((item) => String(item.obligationId)));
+  const outputSlots = current.semanticState.outputSlots.map((item) => structuredClone(item));
+  const outputSlotIds = new Set(outputSlots.map((item) => String(item.outputSlotId)));
+  const productionSteps = current.semanticState.productionSteps.map((item) => structuredClone(item));
+  const productionStepIds = new Set(productionSteps.map((item) => String(item.productionStepId)));
+  const blockers = raw.blockers
+    .filter((item) => item.workItemId === null || workIds.has(String(item.workItemId)))
+    .map((item) => structuredClone(item));
+  const artifacts = raw.artifacts
+    .filter((item) => (item.outputSlotId === null || outputSlotIds.has(String(item.outputSlotId)))
+      && (item.productionStepId === null || productionStepIds.has(String(item.productionStepId))))
+    .map((item) => structuredClone(item));
+  const artifactRefs = new Set(artifacts.map((item) => item.artifactRef));
+  const decisiveEvidence = raw.decisiveEvidence
+    .filter((item) => (item.workItemId === null || workIds.has(String(item.workItemId)))
+      && (item.verificationObligationId === null || verificationIds.has(String(item.verificationObligationId)))
+      && (item.artifactRef === null || artifactRefs.has(item.artifactRef)))
+    .map((item) => structuredClone(item));
+  return { workItems, blockers, verification, outputSlots, productionSteps, decisiveEvidence, artifacts };
+}
+
+function materializeAdaptiveBase(
+  raw: ProgramState,
+  current: ProgramSemanticCurrentSnapshotV1,
+  activeAttempt: ProgramAttempt | null,
+  acceptedExecutionBase: ProgramAttemptExecutionBase | null,
+  clearExecutionControl: boolean,
+): ProgramState {
+  if (String(raw.programStateId) !== String(current.semanticState.programStateId)) {
+    throw new ProgramAdaptiveAdmissionControlErrorV2("Semantic and operational ProgramState identity differ");
+  }
   const next: ProgramState = {
     ...structuredClone(raw),
+    ...materializeSemanticCollections(raw, current),
     lifecycle: current.lifecycle,
     revision: current.programStateRevision,
-    workItems,
-    verification,
-    outputSlots,
-    productionSteps,
     attachedSessionIds: current.attachedSessionIds.map((id) => asSessionId(id)),
-    activeAttempt: null,
-    acceptedExecutionBase: structuredClone(acceptedExecutionBase),
-    executionBaseMismatch: null,
-    executionBaseUnavailable: false,
+    activeAttempt: activeAttempt === null ? null : structuredClone(activeAttempt),
+    acceptedExecutionBase: acceptedExecutionBase === null ? null : structuredClone(acceptedExecutionBase),
+    executionBaseMismatch: clearExecutionControl ? null : structuredClone(raw.executionBaseMismatch),
+    executionBaseUnavailable: clearExecutionControl ? false : raw.executionBaseUnavailable,
   };
   assertValidProgramState(next);
   return next;
 }
 
-function transitionEvent(
+export function materializeAdaptiveOperationalProgramStateV2(
+  raw: ProgramState,
+  current: ProgramSemanticCurrentSnapshotV1,
+  acceptedExecutionBase: ProgramAttemptExecutionBase,
+): ProgramState {
+  return materializeAdaptiveBase(raw, current, null, acceptedExecutionBase, true);
+}
+
+export function materializeAdaptiveRetainedAttemptProgramStateV2(
+  raw: ProgramState,
+  current: ProgramSemanticCurrentSnapshotV1,
+): ProgramState {
+  if (current.lifecycle !== "active" || current.activeAttempt === null || raw.activeAttempt === null) {
+    throw new ProgramAdaptiveAdmissionControlErrorV2("Adaptive retained-attempt materialization requires one current Attempt");
+  }
+  if (String(raw.activeAttempt.programAttemptId) !== String(current.activeAttempt.programAttemptId)
+      || String(raw.activeAttempt.workItemId) !== String(current.activeAttempt.workItemId)
+      || raw.activeAttempt.agentGeneration <= 0) {
+    throw new ProgramAdaptiveAdmissionControlErrorV2("Raw Attempt does not match current retained semantic authority");
+  }
+  return materializeAdaptiveBase(
+    raw,
+    current,
+    raw.activeAttempt,
+    raw.activeAttempt.expectedExecutionBase,
+    false,
+  );
+}
+
+export function materializeAdaptiveMutationSettlementProgramStateV2(
+  raw: ProgramState,
+  current: ProgramSemanticCurrentSnapshotV1,
+): ProgramState {
+  let activeAttempt: ProgramAttempt | null = null;
+  let acceptedExecutionBase = raw.acceptedExecutionBase;
+  if (current.activeAttempt !== null) {
+    if (raw.activeAttempt === null
+        || String(raw.activeAttempt.programAttemptId) !== String(current.activeAttempt.programAttemptId)) {
+      throw new ProgramAdaptiveAdmissionControlErrorV2("Current retained semantic Attempt lacks matching operational Attempt truth");
+    }
+    activeAttempt = raw.activeAttempt;
+    acceptedExecutionBase = raw.activeAttempt.expectedExecutionBase;
+  }
+  return materializeAdaptiveBase(raw, current, activeAttempt, acceptedExecutionBase, false);
+}
+
+export function adaptiveTransitionEventV2(
   store: WorkspaceEventStore,
   sessionId: EventSessionId,
   state: ProgramState,
   transitionKind: string,
   correlationId: string,
+  component: "program-adaptive-admission-v2" | "program-adaptive-progress-v2" | "program-adaptive-settlement-v2",
 ): EventDraft<string, unknown> {
   return {
     eventId: mkEventId(),
@@ -305,7 +346,7 @@ function transitionEvent(
     type: "program.transitioned",
     payload: { state, transitionKind },
     payloadSchemaVersion: 1,
-    producer: { kind: "runtime", component: "program-adaptive-admission-v2" },
+    producer: { kind: "runtime", component },
   };
 }
 
@@ -318,7 +359,7 @@ implements ProgramAdaptiveAttemptAdmissionV2, ProgramAdaptiveEligibilityFactSour
     semantic: ProgramSemanticCurrentSnapshotV1,
   ): Promise<ProgramAdaptiveEligibilityFactsV2> {
     const events = await replayAll(this.options.store);
-    const raw = requireRawProgramState(events, String(semantic.semanticState.programStateId));
+    const raw = requireAdaptiveRawProgramStateV2(events, String(semantic.semanticState.programStateId));
     const writers = outstandingWriterOperations(events);
     const recoveryClear = await this.options.recovery.isClear();
     const observation = await this.options.observations.observe();
@@ -400,7 +441,7 @@ implements ProgramAdaptiveAttemptAdmissionV2, ProgramAdaptiveEligibilityFactSour
         if (logicalActiveWorkspaceAttempt(events, input.programStateId) !== null) {
           return { status: "blocked", reason: "workspace_busy" };
         }
-        const raw = requireRawProgramState(events, input.programStateId);
+        const raw = requireAdaptiveRawProgramStateV2(events, input.programStateId);
         if (raw.executionBaseMismatch !== null || raw.executionBaseUnavailable) {
           return { status: "blocked", reason: "execution_base_stale" };
         }
@@ -425,12 +466,13 @@ implements ProgramAdaptiveAttemptAdmissionV2, ProgramAdaptiveEligibilityFactSour
           },
         });
         await this.options.store.append([
-          transitionEvent(
+          adaptiveTransitionEventV2(
             this.options.store,
             input.sessionId as EventSessionId,
             next,
             "attempt.issue",
             String(attemptId),
+            "program-adaptive-admission-v2",
           ),
         ]);
         return { status: "issued", programAttemptId: String(attemptId) };
