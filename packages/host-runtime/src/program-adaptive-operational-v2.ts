@@ -273,6 +273,34 @@ function currentAttemptAssumptionsV2(
   return deriveAttemptSemanticAssumptionsV2(semanticAtIssueV2(events, programStateId, issueSequence), attempt);
 }
 
+function resetInvalidatedAttemptOperationalSatisfactionV2(
+  events: readonly PersistedDomainEvent<string, unknown>[],
+  programStateId: string,
+  rawState: ProgramState,
+  semanticState: ProgramSemanticStateV1,
+): ProgramSemanticStateV1 {
+  if (rawState.lifecycle !== "active" || rawState.activeAttempt === null) return semanticState;
+  const attemptId = String(rawState.activeAttempt.programAttemptId);
+  const issueSequence = attemptIssueSequenceV2(events, programStateId, attemptId);
+  if (issueSequence === undefined
+      || !adaptiveAttemptInvalidatedAfterIssueV2(events, programStateId, attemptId, issueSequence)) {
+    return semanticState;
+  }
+  const workItemId = String(rawState.activeAttempt.workItemId);
+  let changed = false;
+  const workItems = semanticState.workItems.map((work) => {
+    if (String(work.workItemId) !== workItemId
+        || work.requirementState !== "required"
+        || work.topologyState !== "leaf"
+        || (work.satisfactionState !== "active" && work.satisfactionState !== "awaiting_verification")) {
+      return work;
+    }
+    changed = true;
+    return { ...work, satisfactionState: "pending" as const };
+  });
+  return changed ? { ...semanticState, workItems } : semanticState;
+}
+
 /**
  * Recover one race-free logical adaptive current state from canonical events.
  * Semantic admission and ordinary ProgramState transitions share the monotonic
@@ -297,10 +325,16 @@ export function recoverAdaptiveProgramCurrentSnapshotV2(
       "Post-semantic operational ProgramState did not advance beyond the current semantic whole-state revision",
     );
   }
-  const semanticState = overlayAdaptiveSemanticOperationalFieldsV2(
+  let semanticState = overlayAdaptiveSemanticOperationalFieldsV2(
     recovered.semanticState,
     raw.state,
     rawAfterSemanticHead,
+  );
+  semanticState = resetInvalidatedAttemptOperationalSatisfactionV2(
+    events,
+    programStateId,
+    raw.state,
+    semanticState,
   );
   return {
     programStateRevision: Math.max(raw.state.revision, recovered.programStateRevision),
