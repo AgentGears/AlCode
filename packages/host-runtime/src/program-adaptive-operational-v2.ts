@@ -8,7 +8,10 @@ import {
 } from "@alcode/program-state";
 import type { WorkspaceEventStore } from "@alcode/storage";
 import { materializeAdaptiveMutationSettlementProgramStateV2 } from "./program-adaptive-admission-v2.ts";
-import type { ProgramSemanticCurrentStateSourceV1 } from "./program-revision.ts";
+import type {
+  ProgramSemanticCurrentSnapshotV1,
+  ProgramSemanticCurrentStateSourceV1,
+} from "./program-revision.ts";
 import {
   ProgramTerminalServiceV1,
   ProgramTerminalStaleError,
@@ -66,6 +69,28 @@ function latestProgramStateEventV2(
   }
   if (latest === undefined) throw new ProgramTerminalStaleError(`Unknown ProgramState ${programStateId}`);
   return latest;
+}
+
+function materializeAdaptiveTerminalProgramStateV2(
+  raw: ProgramState,
+  current: ProgramSemanticCurrentSnapshotV1,
+): ProgramState {
+  const materialized = materializeAdaptiveMutationSettlementProgramStateV2(raw, current);
+  const nonRequiredWorkIds = new Set(
+    current.semanticState.workItems
+      .filter((work) => work.requirementState !== "required")
+      .map((work) => String(work.workItemId)),
+  );
+  if (nonRequiredWorkIds.size === 0) return materialized;
+  const next: ProgramState = {
+    ...materialized,
+    workItems: materialized.workItems.map((work) =>
+      nonRequiredWorkIds.has(String(work.workItemId))
+        ? { ...work, lifecycle: "completed" as const }
+        : work),
+  };
+  assertValidProgramState(next);
+  return next;
 }
 
 function rewriteAdaptiveTerminalProducerV2(
@@ -145,7 +170,7 @@ export class ProgramAdaptiveTerminalServiceV2 extends ProgramTerminalServiceV1 {
       throw new ProgramRevisionConflictError(expectedProgramRevision, raw.state.revision);
     }
     const current = await this.adaptiveOptions.currentState.current(programStateId);
-    const materialized = materializeAdaptiveMutationSettlementProgramStateV2(raw.state, current);
+    const materialized = materializeAdaptiveTerminalProgramStateV2(raw.state, current);
     if (materialized.revision !== current.programStateRevision || materialized.revision < raw.state.revision) {
       throw new ProgramTerminalStaleError("Adaptive terminal materialization did not preserve monotonic currentness");
     }

@@ -31,6 +31,7 @@ const programStateId = asProgramStateId("018f0000-0000-7000-8000-000000000971");
 const sessionId = asSessionId("018f0000-0000-4000-8000-000000000972");
 const dependencyId = asProgramWorkItemId("operational-dependency");
 const targetId = asProgramWorkItemId("operational-target");
+const retiredId = asProgramWorkItemId("operational-retired");
 const attemptId = asProgramAttemptId("operational-attempt");
 const revisionId = asProgramRevisionId("operational-r1");
 const verificationId = asVerificationObligationId("operational-verification");
@@ -197,7 +198,7 @@ function terminalBase() {
   };
 }
 
-function terminalRaw(completedWork: boolean): ProgramState {
+function terminalRaw(completedWork: boolean, includeRetired = false): ProgramState {
   const raw = createProgramState({
     programStateId,
     sourceSessionId: sessionId,
@@ -208,7 +209,13 @@ function terminalRaw(completedWork: boolean): ProgramState {
       description: "Finish adaptive work",
       dependencyIds: [],
       affectedPaths: ["src/terminal.ts"],
-    }],
+    }, ...(includeRetired ? [{
+      workItemId: retiredId,
+      creationOrder: 1,
+      description: "Retired adaptive work",
+      dependencyIds: [],
+      affectedPaths: ["src/retired.ts"],
+    }] : [])],
     verification: [],
     outputSlots: [],
     productionSteps: [],
@@ -217,11 +224,14 @@ function terminalRaw(completedWork: boolean): ProgramState {
     ...raw,
     revision: 8,
     acceptedExecutionBase: terminalBase(),
-    workItems: [{ ...raw.workItems[0]!, lifecycle: completedWork ? "completed" : "pending" }],
+    workItems: raw.workItems.map((work) => ({
+      ...work,
+      lifecycle: work.workItemId === targetId && completedWork ? "completed" as const : "pending" as const,
+    })),
   };
 }
 
-function terminalCurrent(completedWork: boolean): ProgramSemanticCurrentSnapshotV1 {
+function terminalCurrent(completedWork: boolean, includeRetired = false): ProgramSemanticCurrentSnapshotV1 {
   const terminalRevisionId = asProgramRevisionId("operational-terminal-r2");
   return {
     programStateRevision: 9,
@@ -256,7 +266,26 @@ function terminalCurrent(completedWork: boolean): ProgramSemanticCurrentSnapshot
             anchorWorkItemId: targetId,
           },
         },
-      }],
+      }, ...(includeRetired ? [{
+        workItemId: retiredId,
+        creationOrder: 1,
+        description: "Retired adaptive work",
+        dependencyIds: [],
+        affectedPaths: ["src/retired.ts"],
+        workItemGeneration: 2,
+        requirementState: "withdrawn" as const,
+        topologyState: "leaf" as const,
+        satisfactionState: "pending" as const,
+        parentWorkItemId: null,
+        authorityEnvelope: {
+          ...envelope(),
+          objectiveBoundaryRef: {
+            programStateId,
+            rootProgramRevisionId: terminalRevisionId,
+            anchorWorkItemId: retiredId,
+          },
+        },
+      }] : [])],
       verification: [],
       verificationBindings: [],
       outputSlots: [],
@@ -268,7 +297,7 @@ function terminalCurrent(completedWork: boolean): ProgramSemanticCurrentSnapshot
   };
 }
 
-function terminalFixture(completedWork: boolean) {
+function terminalFixture(completedWork: boolean, includeRetired = false) {
   const events: PersistedDomainEvent<string, unknown>[] = [{
     sequence: 1,
     eventId: "terminal-created",
@@ -277,7 +306,7 @@ function terminalFixture(completedWork: boolean) {
     programStateId: String(programStateId),
     occurredAt: "2026-08-27T00:00:00.000Z",
     type: "program.created",
-    payload: { state: terminalRaw(completedWork) },
+    payload: { state: terminalRaw(completedWork, includeRetired) },
     payloadSchemaVersion: 1,
     producer: { kind: "runtime", component: "test" },
   } as unknown as PersistedDomainEvent<string, unknown>, {
@@ -306,7 +335,7 @@ function terminalFixture(completedWork: boolean) {
       return persisted;
     },
   } as unknown as WorkspaceEventStore;
-  const current = terminalCurrent(completedWork);
+  const current = terminalCurrent(completedWork, includeRetired);
   const service = new ProgramAdaptiveTerminalServiceV2({
     store,
     admission: new CanonicalAdmissionQueue(store),
@@ -438,6 +467,19 @@ describe("A1 guarded adaptive operational currentness", () => {
       2,
       9,
     )?.state.lifecycle).toBe("completed");
+  });
+
+  it("does not let withdrawn unfinished work block adaptive terminal completion", async () => {
+    const fixture = terminalFixture(true, true);
+    const result = await fixture.service.complete({
+      programStateId: String(programStateId),
+      expectedProgramRevision: 8,
+      sessionId: sessionId as never,
+    });
+    expect(result.status).toBe("completed");
+    if (result.status !== "completed") throw new Error("adaptive completion failed");
+    const retired = result.state.workItems.find((work) => work.workItemId === retiredId);
+    expect(retired?.lifecycle).toBe("completed");
   });
 
   it("materializes the exact semantic head before adaptive cancellation and rejects the same legacy terminal event", async () => {
