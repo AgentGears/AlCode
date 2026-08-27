@@ -19,10 +19,11 @@ import type { ProgramSemanticCurrentSnapshotV1 } from "./program-revision.ts";
 
 const programStateId = asProgramStateId("018f0000-0000-7000-8000-0000000009a1");
 const sessionId = asSessionId("018f0000-0000-4000-8000-0000000009a2");
+const workspaceId = "018f0000-0000-7000-8000-0000000009a3";
+const operationId = "018f0000-0000-4000-8000-0000000009a4";
 const workId = asProgramWorkItemId("settlement-work");
 const attemptId = asProgramAttemptId("settlement-invalidated-attempt");
 const revisionId = asProgramRevisionId("settlement-r2");
-const operationId = "settlement-operation";
 
 function envelope(): WorkAuthorityEnvelopeV1 {
   return {
@@ -43,7 +44,7 @@ function base(generation = 2) {
     observation: {
       kind: "workspace-observation-v1" as const,
       providerKind: "test",
-      workspaceIdentity: "workspace-settlement",
+      workspaceIdentity: workspaceId,
       coverageDigest: "coverage",
       stateDigest: `state-${generation}`,
     },
@@ -129,7 +130,7 @@ function requestedEvent(): PersistedDomainEvent<string, unknown> {
   return {
     sequence: 2,
     eventId: "operation-requested",
-    workspaceId: "workspace-settlement",
+    workspaceId,
     sessionId: String(sessionId),
     operationId,
     programStateId: String(programStateId),
@@ -157,7 +158,7 @@ function fakeStore() {
   const events: PersistedDomainEvent<string, unknown>[] = [{
     sequence: 1,
     eventId: "program-created",
-    workspaceId: "workspace-settlement",
+    workspaceId,
     sessionId: String(sessionId),
     programStateId: String(programStateId),
     occurredAt: "2026-08-27T00:00:00.000Z",
@@ -167,7 +168,7 @@ function fakeStore() {
     producer: { kind: "runtime", component: "test" },
   } as unknown as PersistedDomainEvent<string, unknown>, requestedEvent()];
   const store = {
-    workspaceId: "workspace-settlement",
+    workspaceId,
     replay: async function* () { for (const event of events) yield event; },
     headSequence: async () => events.at(-1)?.sequence ?? 0,
     append: async (drafts: readonly EventDraft<string, unknown>[]) => {
@@ -214,7 +215,7 @@ describe("A1 adaptive in-flight mutation settlement", () => {
       quiescenceProven: true,
       buildTerminalDrafts: () => [{
         eventId: "completed-event" as never,
-        workspaceId: "workspace-settlement" as never,
+        workspaceId: workspaceId as never,
         sessionId: sessionId as never,
         operationId: operationId as never,
         programStateId: programStateId as never,
@@ -225,7 +226,7 @@ describe("A1 adaptive in-flight mutation settlement", () => {
         producer: { kind: "runtime", component: "test" },
       }, {
         eventId: "quiesced-event" as never,
-        workspaceId: "workspace-settlement" as never,
+        workspaceId: workspaceId as never,
         sessionId: sessionId as never,
         operationId: operationId as never,
         programStateId: programStateId as never,

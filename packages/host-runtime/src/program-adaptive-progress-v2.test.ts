@@ -20,6 +20,7 @@ import type { ProgramSemanticCurrentSnapshotV1 } from "./program-revision.ts";
 
 const programStateId = asProgramStateId("018f0000-0000-7000-8000-000000000991");
 const sessionId = asSessionId("018f0000-0000-4000-8000-000000000992");
+const workspaceId = "018f0000-0000-7000-8000-000000000993";
 const workId = asProgramWorkItemId("progress-work");
 const attemptId = asProgramAttemptId("progress-attempt");
 const revisionId = asProgramRevisionId("progress-r2");
@@ -43,7 +44,7 @@ function base() {
     observation: {
       kind: "workspace-observation-v1" as const,
       providerKind: "test",
-      workspaceIdentity: "workspace-progress",
+      workspaceIdentity: workspaceId,
       coverageDigest: "coverage",
       stateDigest: "state-2",
     },
@@ -135,7 +136,7 @@ function fakeStore(initial: ProgramState) {
   const events: PersistedDomainEvent<string, unknown>[] = [{
     sequence: 1,
     eventId: "program-created",
-    workspaceId: "workspace-progress",
+    workspaceId,
     sessionId: String(sessionId),
     programStateId: String(programStateId),
     occurredAt: "2026-08-27T00:00:00.000Z",
@@ -145,7 +146,7 @@ function fakeStore(initial: ProgramState) {
     producer: { kind: "runtime", component: "test" },
   } as unknown as PersistedDomainEvent<string, unknown>];
   const store = {
-    workspaceId: "workspace-progress",
+    workspaceId,
     replay: async function* () { for (const event of events) yield event; },
     headSequence: async () => events.length === 0 ? 0 : events[events.length - 1]!.sequence,
     append: async (drafts: readonly EventDraft<string, unknown>[]) => {
