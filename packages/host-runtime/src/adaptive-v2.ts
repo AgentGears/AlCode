@@ -48,10 +48,18 @@ export {
   ProgramAdaptiveOperationalCurrentStateSourceV2,
   ProgramAdaptiveOperationalOverlayErrorV2,
   adaptiveAttemptInvalidatedAfterIssueV2,
+  assertAdaptiveOperationalVerificationGenerationV2,
   deriveAttemptSemanticAssumptionsV2,
-  overlayAdaptiveSemanticOperationalFieldsV2,
   recoverAdaptiveProgramCurrentSnapshotV2,
+  validateAdaptiveOperationalProgramStateSequenceV2,
+  validatePostSemanticProgramStateSequenceV2,
 } from "./program-adaptive-operational-v2.ts";
+export {
+  ProgramAdaptiveAdmissionControlErrorV2,
+  ProgramAdaptiveAdmissionServiceV2,
+  materializeAdaptiveOperationalProgramStateV2,
+  type ProgramAdaptiveAdmissionServiceOptionsV2,
+} from "./program-adaptive-admission-v2.ts";
 export {
   PROGRAM_SEMANTIC_BASELINE_DRAFT_PROFILE,
   ProgramSemanticBaselineBlockedError,

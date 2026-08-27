@@ -52,6 +52,12 @@ on:
       - 'packages/host-runtime/src/program-execution-runtime-v2.test.ts'
       - 'packages/host-runtime/src/program-adaptive-control-v2.ts'
       - 'packages/host-runtime/src/program-adaptive-control-v2.test.ts'
+      - 'packages/host-runtime/src/program-adaptive-operational-v2.ts'
+      - 'packages/host-runtime/src/program-adaptive-operational-guarded-v2.ts'
+      - 'packages/host-runtime/src/program-adaptive-operational-legacy-v2.ts'
+      - 'packages/host-runtime/src/program-adaptive-operational-v2.test.ts'
+      - 'packages/host-runtime/src/program-adaptive-admission-v2.ts'
+      - 'packages/host-runtime/src/program-adaptive-admission-v2.test.ts'
       - 'packages/host-runtime/src/program-semantic-baseline-kernel.ts'
       - 'packages/host-runtime/src/program-semantic-baseline-replay.ts'
       - 'packages/host-runtime/src/program-semantic-baseline-service.ts'
@@ -114,6 +120,12 @@ on:
       - 'packages/host-runtime/src/program-execution-runtime-v2.test.ts'
       - 'packages/host-runtime/src/program-adaptive-control-v2.ts'
       - 'packages/host-runtime/src/program-adaptive-control-v2.test.ts'
+      - 'packages/host-runtime/src/program-adaptive-operational-v2.ts'
+      - 'packages/host-runtime/src/program-adaptive-operational-guarded-v2.ts'
+      - 'packages/host-runtime/src/program-adaptive-operational-legacy-v2.ts'
+      - 'packages/host-runtime/src/program-adaptive-operational-v2.test.ts'
+      - 'packages/host-runtime/src/program-adaptive-admission-v2.ts'
+      - 'packages/host-runtime/src/program-adaptive-admission-v2.test.ts'
       - 'packages/host-runtime/src/program-semantic-baseline-kernel.ts'
       - 'packages/host-runtime/src/program-semantic-baseline-replay.ts'
       - 'packages/host-runtime/src/program-semantic-baseline-service.ts'
@@ -152,4 +164,4 @@ jobs:
       - name: Typecheck Host semantic admission, recovery, projection, eligibility, Completion, baseline adoption, and adaptive V2 execution
         run: pnpm --filter @alcode/host-runtime exec tsc --noEmit -p tsconfig.json
       - name: Verify Host semantic admission, recovery, projection, baseline/revision production wiring, eligibility, Completion, V2 authority, and adaptive execution routing
-        run: pnpm exec vitest run packages/host-runtime/src/program-revision.test.ts packages/host-runtime/src/program-revision-race.test.ts packages/host-runtime/src/program-revision-protocol-v1.test.ts packages/host-runtime/src/program-revision-runtime-v1.test.ts packages/host-runtime/src/program-semantic-recovery-v1.test.ts packages/host-runtime/src/program-semantic-recovery-currentness-v1.test.ts packages/host-runtime/src/program-semantic-recovery-review-regressions-v1.test.ts packages/host-runtime/src/program-semantic-recovery-envelope-regression-v1.test.ts packages/host-runtime/src/program-semantic-baseline-recovery-regression-v1.test.ts packages/host-runtime/src/program-adaptive-application-projection-v1.test.ts packages/host-runtime/src/program-attempt-authority-v2.test.ts packages/host-runtime/src/program-agent-v2.test.ts packages/host-runtime/src/program-agent-v2-replay.test.ts packages/host-runtime/src/program-execution-runtime-v2.test.ts packages/host-runtime/src/program-adaptive-control-v2.test.ts packages/host-runtime/src/program-semantic-baseline.test.ts
+        run: pnpm exec vitest run packages/host-runtime/src/program-revision.test.ts packages/host-runtime/src/program-revision-race.test.ts packages/host-runtime/src/program-revision-protocol-v1.test.ts packages/host-runtime/src/program-revision-runtime-v1.test.ts packages/host-runtime/src/program-semantic-recovery-v1.test.ts packages/host-runtime/src/program-semantic-recovery-currentness-v1.test.ts packages/host-runtime/src/program-semantic-recovery-review-regressions-v1.test.ts packages/host-runtime/src/program-semantic-recovery-envelope-regression-v1.test.ts packages/host-runtime/src/program-semantic-baseline-recovery-regression-v1.test.ts packages/host-runtime/src/program-adaptive-application-projection-v1.test.ts packages/host-runtime/src/program-attempt-authority-v2.test.ts packages/host-runtime/src/program-agent-v2.test.ts packages/host-runtime/src/program-agent-v2-replay.test.ts packages/host-runtime/src/program-execution-runtime-v2.test.ts packages/host-runtime/src/program-adaptive-control-v2.test.ts packages/host-runtime/src/program-adaptive-operational-v2.test.ts packages/host-runtime/src/program-adaptive-admission-v2.test.ts packages/host-runtime/src/program-semantic-baseline.test.ts
