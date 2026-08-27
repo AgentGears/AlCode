@@ -251,7 +251,9 @@ describe("A1 adaptive in-flight mutation settlement", () => {
     const effect = fixture.events.find((event) => event.type === "workspace.effect_generation.advanced");
     expect((effect?.payload as { workspaceEffectGeneration: number }).workspaceEffectGeneration).toBe(3);
     const transition = fixture.events.find((event) =>
-      event.producer.kind === "runtime" && event.producer.component === "program-adaptive-settlement-v2");
+      event.type === "program.transitioned"
+      && event.producer.kind === "runtime"
+      && event.producer.component === "program-adaptive-settlement-v2");
     expect(transition).toBeDefined();
     expect((transition!.payload as { state: ProgramState }).state.revision).toBe(10);
     expect((transition!.payload as { state: ProgramState }).state.activeAttempt).toBeNull();

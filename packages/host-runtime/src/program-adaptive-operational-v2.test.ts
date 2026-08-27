@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { PersistedDomainEvent } from "@alcode/events";
+import type { EventDraft, PersistedDomainEvent } from "@alcode/events";
 import {
   asProgramAttemptId,
   asProgramRevisionId,
@@ -14,13 +14,18 @@ import {
   type ProgramState,
   type WorkAuthorityEnvelopeV1,
 } from "@alcode/program-state";
+import type { WorkspaceEventStore } from "@alcode/storage";
+import { CanonicalAdmissionQueue } from "./admission-queue.ts";
+import { HostArtifactStore } from "./artifact-store.ts";
 import {
   ProgramAdaptiveOperationalOverlayErrorV2,
+  ProgramAdaptiveTerminalServiceV2,
   adaptiveAttemptInvalidatedAfterIssueV2,
   assertAdaptiveOperationalVerificationGenerationV2,
   deriveAttemptSemanticAssumptionsV2,
   validatePostSemanticProgramStateSequenceV2,
 } from "./program-adaptive-operational-v2.ts";
+import type { ProgramSemanticCurrentSnapshotV1 } from "./program-revision.ts";
 
 const programStateId = asProgramStateId("018f0000-0000-7000-8000-000000000971");
 const sessionId = asSessionId("018f0000-0000-4000-8000-000000000972");
@@ -29,6 +34,7 @@ const targetId = asProgramWorkItemId("operational-target");
 const attemptId = asProgramAttemptId("operational-attempt");
 const revisionId = asProgramRevisionId("operational-r1");
 const verificationId = asVerificationObligationId("operational-verification");
+const terminalWorkspaceId = "018f0000-0000-7000-8000-000000000973";
 
 function envelope(): WorkAuthorityEnvelopeV1 {
   return {
@@ -178,6 +184,141 @@ function event(input: {
   } as unknown as PersistedDomainEvent<string, unknown>;
 }
 
+function terminalBase() {
+  return {
+    workspaceEffectGeneration: 4,
+    observation: {
+      kind: "workspace-observation-v1" as const,
+      providerKind: "test",
+      workspaceIdentity: terminalWorkspaceId,
+      coverageDigest: "terminal-coverage",
+      stateDigest: "terminal-state",
+    },
+  };
+}
+
+function terminalRaw(completedWork: boolean): ProgramState {
+  const raw = createProgramState({
+    programStateId,
+    sourceSessionId: sessionId,
+    objective: "Adaptive terminal",
+    workItems: [{
+      workItemId: targetId,
+      creationOrder: 0,
+      description: "Finish adaptive work",
+      dependencyIds: [],
+      affectedPaths: ["src/terminal.ts"],
+    }],
+    verification: [],
+    outputSlots: [],
+    productionSteps: [],
+  });
+  return {
+    ...raw,
+    revision: 8,
+    acceptedExecutionBase: terminalBase(),
+    workItems: [{ ...raw.workItems[0]!, lifecycle: completedWork ? "completed" : "pending" }],
+  };
+}
+
+function terminalCurrent(completedWork: boolean): ProgramSemanticCurrentSnapshotV1 {
+  const terminalRevisionId = asProgramRevisionId("operational-terminal-r2");
+  return {
+    programStateRevision: 9,
+    semanticState: {
+      programStateId,
+      currentRevision: {
+        programRevisionId: terminalRevisionId,
+        parentProgramRevisionId: revisionId,
+        ordinal: 2,
+        changeClass: "refinement",
+        acceptedAtStateRevision: 9,
+        admissionEventId: "terminal-semantic-event",
+        sourceDraftId: "terminal-draft",
+        sourceDraftDigest: "terminal-digest",
+      },
+      workItems: [{
+        workItemId: targetId,
+        creationOrder: 0,
+        description: "Finish adaptive work",
+        dependencyIds: [],
+        affectedPaths: ["src/terminal.ts"],
+        workItemGeneration: 2,
+        requirementState: "required",
+        topologyState: "leaf",
+        satisfactionState: completedWork ? "satisfied" : "pending",
+        parentWorkItemId: null,
+        authorityEnvelope: {
+          ...envelope(),
+          objectiveBoundaryRef: {
+            programStateId,
+            rootProgramRevisionId: terminalRevisionId,
+            anchorWorkItemId: targetId,
+          },
+        },
+      }],
+      verification: [],
+      verificationBindings: [],
+      outputSlots: [],
+      productionSteps: [],
+    },
+    activeAttempt: null,
+    lifecycle: "active",
+    attachedSessionIds: [String(sessionId)],
+  };
+}
+
+function terminalFixture(completedWork: boolean) {
+  const events: PersistedDomainEvent<string, unknown>[] = [{
+    sequence: 1,
+    eventId: "terminal-created",
+    workspaceId: terminalWorkspaceId,
+    sessionId: String(sessionId),
+    programStateId: String(programStateId),
+    occurredAt: "2026-08-27T00:00:00.000Z",
+    type: "program.created",
+    payload: { state: terminalRaw(completedWork) },
+    payloadSchemaVersion: 1,
+    producer: { kind: "runtime", component: "test" },
+  } as unknown as PersistedDomainEvent<string, unknown>, {
+    sequence: 2,
+    eventId: "terminal-semantic-event",
+    workspaceId: terminalWorkspaceId,
+    sessionId: String(sessionId),
+    programStateId: String(programStateId),
+    occurredAt: "2026-08-27T00:00:00.500Z",
+    type: "program.semantic_revision.admitted.v1",
+    payload: {},
+    payloadSchemaVersion: 1,
+    producer: { kind: "runtime", component: "test" },
+  } as unknown as PersistedDomainEvent<string, unknown>];
+  const store = {
+    workspaceId: terminalWorkspaceId,
+    replay: async function* () { for (const item of events) yield item; },
+    headSequence: async () => events.at(-1)?.sequence ?? 0,
+    append: async (drafts: readonly EventDraft<string, unknown>[]) => {
+      const head = events.at(-1)?.sequence ?? 0;
+      const persisted = drafts.map((draft, index) => ({
+        ...draft,
+        sequence: head + index + 1,
+      } as unknown as PersistedDomainEvent<string, unknown>));
+      events.push(...persisted);
+      return persisted;
+    },
+  } as unknown as WorkspaceEventStore;
+  const current = terminalCurrent(completedWork);
+  const service = new ProgramAdaptiveTerminalServiceV2({
+    store,
+    admission: new CanonicalAdmissionQueue(store),
+    workspaceCoordinator: { runExclusive: async (work) => work() },
+    observations: { observe: async () => ({ status: "complete" as const, base: terminalBase() }) },
+    recovery: { isClear: () => true },
+    artifactStore: { verify: async () => { throw new Error("no artifact verification expected"); } } as unknown as HostArtifactStore,
+    currentState: { current: async () => structuredClone(current) },
+  });
+  return { events, service };
+}
+
 describe("A1 guarded adaptive operational currentness", () => {
   it("rejects a stale intermediate ProgramState even when a later adaptive snapshot advances", () => {
     const events = [
@@ -277,5 +418,52 @@ describe("A1 guarded adaptive operational currentness", () => {
       payload: { cut: { revisionImpact: { invalidatedAttempts: [], retainedAttempts: [String(attemptId)] } } },
     })];
     expect(adaptiveAttemptInvalidatedAfterIssueV2(retained, String(programStateId), String(attemptId), 10)).toBe(false);
+  });
+
+  it("materializes the exact semantic head before adaptive completion and trusts the terminal anchor", async () => {
+    const fixture = terminalFixture(true);
+    const result = await fixture.service.complete({
+      programStateId: String(programStateId),
+      expectedProgramRevision: 8,
+      sessionId: sessionId as never,
+    });
+    expect(result.status).toBe("completed");
+    if (result.status !== "completed") throw new Error("adaptive completion failed");
+    expect(result.state.revision).toBe(10);
+    const terminal = fixture.events.find((item) => item.type === "program.completed");
+    expect(terminal?.producer).toEqual({ kind: "runtime", component: "program-adaptive-terminal-v2" });
+    expect(validatePostSemanticProgramStateSequenceV2(
+      fixture.events,
+      String(programStateId),
+      2,
+      9,
+    )?.state.lifecycle).toBe("completed");
+  });
+
+  it("materializes the exact semantic head before adaptive cancellation and rejects the same legacy terminal event", async () => {
+    const fixture = terminalFixture(false);
+    const result = await fixture.service.cancel({
+      programStateId: String(programStateId),
+      expectedProgramRevision: 8,
+      sessionId: sessionId as never,
+      reason: "adaptive cancellation",
+    });
+    expect(result.state.revision).toBe(10);
+    expect(result.state.lifecycle).toBe("cancelled");
+    const terminal = fixture.events.find((item) => item.type === "program.cancelled");
+    expect(terminal?.producer).toEqual({ kind: "runtime", component: "program-adaptive-terminal-v2" });
+    expect(validatePostSemanticProgramStateSequenceV2(
+      fixture.events,
+      String(programStateId),
+      2,
+      9,
+    )?.state.lifecycle).toBe("cancelled");
+
+    const legacy = fixture.events.map((item) => item === terminal ? {
+      ...item,
+      producer: { kind: "runtime", component: "program-terminal" },
+    } as PersistedDomainEvent<string, unknown> : item);
+    expect(() => validatePostSemanticProgramStateSequenceV2(legacy, String(programStateId), 2, 9))
+      .toThrow("not an exact adaptive materialization anchor");
   });
 });

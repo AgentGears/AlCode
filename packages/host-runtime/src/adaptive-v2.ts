@@ -47,12 +47,14 @@ export {
 export {
   ProgramAdaptiveOperationalCurrentStateSourceV2,
   ProgramAdaptiveOperationalOverlayErrorV2,
+  ProgramAdaptiveTerminalServiceV2,
   adaptiveAttemptInvalidatedAfterIssueV2,
   assertAdaptiveOperationalVerificationGenerationV2,
   deriveAttemptSemanticAssumptionsV2,
   recoverAdaptiveProgramCurrentSnapshotV2,
   validateAdaptiveOperationalProgramStateSequenceV2,
   validatePostSemanticProgramStateSequenceV2,
+  type ProgramAdaptiveTerminalServiceOptionsV2,
 } from "./program-adaptive-operational-v2.ts";
 export {
   ProgramAdaptiveAdmissionControlErrorV2,

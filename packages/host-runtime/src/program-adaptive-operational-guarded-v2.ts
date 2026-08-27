@@ -103,9 +103,17 @@ export function assertAdaptiveOperationalVerificationGenerationV2(
 }
 
 function isTrustedAdaptiveAnchorV2(event: PersistedDomainEvent<string, unknown>): boolean {
-  if (event.type !== "program.transitioned" || event.producer.kind !== "runtime") return false;
+  if (event.producer.kind !== "runtime") return false;
   const component = String(record(event.producer).component ?? "");
   const transitionKind = String(record(event.payload).transitionKind ?? "");
+  if (component === "program-adaptive-terminal-v2") {
+    if (event.type === "program.completed" || event.type === "program.cancelled") return true;
+    if (event.type === "program.transitioned") {
+      return transitionKind === "execution_base.unavailable" || transitionKind === "execution_base.mismatch";
+    }
+    return false;
+  }
+  if (event.type !== "program.transitioned") return false;
   if (component === "program-adaptive-admission-v2") return transitionKind === "attempt.issue";
   if (component === "program-adaptive-progress-v2") {
     return transitionKind === "evidence.add" || transitionKind === "work.lifecycle.set:awaiting_verification";
@@ -120,8 +128,8 @@ function isTrustedAdaptiveAnchorV2(event: PersistedDomainEvent<string, unknown>)
  * Validate the complete raw ProgramState lineage after a semantic cut. The
  * first post-cut ProgramState must descend from an explicitly adaptive Host
  * adapter that first materialized the exact current semantic state. This admits
- * both new-Attempt dispatch and retained-Attempt progress/settlement while still
- * rejecting legacy stale writers.
+ * new-Attempt dispatch, retained-Attempt progress/settlement, and terminal
+ * admission while still rejecting legacy stale writers.
  */
 export function validatePostSemanticProgramStateSequenceV2(
   events: readonly PersistedDomainEvent<string, unknown>[],
