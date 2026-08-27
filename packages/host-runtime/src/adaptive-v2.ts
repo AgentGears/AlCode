@@ -45,6 +45,14 @@ export {
   type ProgramSemanticExecutionSchedulerOptionsV2,
 } from "./program-adaptive-control-v2.ts";
 export {
+  ProgramAdaptiveOperationalCurrentStateSourceV2,
+  ProgramAdaptiveOperationalOverlayErrorV2,
+  adaptiveAttemptInvalidatedAfterIssueV2,
+  deriveAttemptSemanticAssumptionsV2,
+  overlayAdaptiveSemanticOperationalFieldsV2,
+  recoverAdaptiveProgramCurrentSnapshotV2,
+} from "./program-adaptive-operational-v2.ts";
+export {
   PROGRAM_SEMANTIC_BASELINE_DRAFT_PROFILE,
   ProgramSemanticBaselineBlockedError,
   ProgramSemanticBaselineControlError,
