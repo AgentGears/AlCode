@@ -177,7 +177,7 @@ describe("A1 adaptive Attempt admission materialization", () => {
 
   it("keeps only bounded current semantic collections instead of unioning retired history", () => {
     const next = materializeAdaptiveOperationalProgramStateV2(rawState(), current(), executionBase(4));
-    expect(next.verification.map(String)).not.toContain(String(retiredVerificationId));
+    expect(next.verification.map((item) => String(item.obligationId))).not.toContain(String(retiredVerificationId));
     expect(next.verification).toEqual([
       expect.objectContaining({
         obligationId: verificationId,
