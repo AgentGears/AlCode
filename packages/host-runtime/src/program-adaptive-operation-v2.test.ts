@@ -260,4 +260,39 @@ describe("A1 adaptive in-flight mutation settlement", () => {
     expect((transition!.payload as { state: ProgramState }).state.executionBaseUnavailable).toBe(true);
     expect(result.state?.activeAttempt).toBeNull();
   });
+
+  it("rejects settlement from a Session that did not request the admitted mutation", async () => {
+    const fixture = fakeStore();
+    const delegate = {
+      resolveCurrentOperation: async () => null,
+      appendRoutedRootOperation: async () => { throw new Error("not used"); },
+      appendRootOperation: async () => { throw new Error("not used"); },
+      settleProgramMutation: async () => { throw new Error("adaptive settlement must not delegate"); },
+    } as unknown as ProgramRootOperationAuthorityV1;
+    const service = new ProgramAdaptiveRootOperationAuthorityV2({
+      store: fixture.store,
+      admission: new CanonicalAdmissionQueue(fixture.store),
+      workspaceCoordinator: { runExclusive: async (work) => work() },
+      observations: { observe: async () => ({ status: "complete" as const, base: base(2) }) },
+      currentState: { current: async () => structuredClone(current()) },
+      delegate,
+    });
+    const otherSessionId = asSessionId("018f0000-0000-4000-8000-0000000009a5");
+
+    await expect(service.settleProgramMutation({
+      sessionId: otherSessionId as never,
+      operationId,
+      program: {
+        programStateId: String(programStateId),
+        expectedProgramRevision: 8,
+        programAttemptId: String(attemptId),
+        workItemId: String(workId),
+        agentGeneration: 5,
+      },
+      quiescenceProven: false,
+      buildTerminalDrafts: () => [],
+    })).rejects.toThrow("Admitted mutation ownership cannot be reassigned after semantic Attempt invalidation");
+
+    expect(fixture.events).toHaveLength(2);
+  });
 });

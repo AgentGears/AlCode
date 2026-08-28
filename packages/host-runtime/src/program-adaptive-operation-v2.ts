@@ -85,7 +85,8 @@ function requestedMutation(
   if (payload.workspaceAccessClass !== "may_write") {
     throw new ProgramAdaptiveSettlementControlErrorV2("Adaptive mutation settlement targets a non-may_write operation");
   }
-  if (String(payload.programAttemptId ?? "") !== input.program.programAttemptId
+  if (String(requested.sessionId ?? "") !== String(input.sessionId)
+      || String(payload.programAttemptId ?? "") !== input.program.programAttemptId
       || String(payload.workItemId ?? "") !== input.program.workItemId
       || Number(payload.agentGeneration) !== input.program.agentGeneration) {
     throw new ProgramAdaptiveSettlementControlErrorV2(
