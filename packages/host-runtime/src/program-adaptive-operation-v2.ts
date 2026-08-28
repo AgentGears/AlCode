@@ -1,5 +1,6 @@
 import {
   asOperationId,
+  asProgramStateId as asEventProgramStateId,
   asWorkspaceId,
   mkEventId,
   type EventDraft,
@@ -21,16 +22,22 @@ import {
   requireAdaptiveRawProgramStateV2,
 } from "./program-adaptive-admission-v2.ts";
 import type {
+  ProgramAgentGenerationAuthorityV1,
   ProgramDispatchWorkspaceCoordinatorV1,
   ProgramExecutionObservationSourceV1,
   ProgramMutationSettlementInputV1,
+  ProgramRecoveryAuthorityV1,
   ProgramRootOperationAuthorityV1,
   ProgramRootOperationContextV1,
   ProgramRootOperationInputV1,
   ProgramRoutedRootOperationInputV1,
   ProgramRoutedRootOperationResultV1,
 } from "./program-dispatch.ts";
-import type { ProgramSemanticCurrentStateSourceV1 } from "./program-revision.ts";
+import {
+  ProgramDispatchControlError,
+  ProgramDispatchStaleError,
+} from "./program-dispatch.ts";
+import type { ProgramSemanticCurrentSnapshotV1, ProgramSemanticCurrentStateSourceV1 } from "./program-revision.ts";
 import { ProgramSemanticRecoveryError } from "./program-semantic-recovery-v1.ts";
 
 export class ProgramAdaptiveSettlementControlErrorV2 extends Error {
@@ -46,6 +53,8 @@ export interface ProgramAdaptiveRootOperationAuthorityOptionsV2 {
   workspaceCoordinator: ProgramDispatchWorkspaceCoordinatorV1;
   observations: ProgramExecutionObservationSourceV1;
   currentState: ProgramSemanticCurrentStateSourceV1;
+  agentGenerations: ProgramAgentGenerationAuthorityV1;
+  recovery: ProgramRecoveryAuthorityV1;
   delegate: ProgramRootOperationAuthorityV1;
 }
 
@@ -67,6 +76,133 @@ function requireObservationWorkspace(store: WorkspaceEventStore, base: ProgramAt
       `Settlement observation belongs to another Workspace: ${base.observation.workspaceIdentity}`,
     );
   }
+}
+
+function sameBase(left: ProgramAttemptExecutionBase, right: ProgramAttemptExecutionBase): boolean {
+  return canonicalStringify(left) === canonicalStringify(right);
+}
+
+function effectiveObservedBase(
+  events: readonly PersistedDomainEvent<string, unknown>[],
+  base: ProgramAttemptExecutionBase,
+): ProgramAttemptExecutionBase {
+  const durable = durableAdaptiveWorkspaceEffectGenerationV2(events);
+  if (durable === null || durable <= base.workspaceEffectGeneration) return base;
+  return { ...base, workspaceEffectGeneration: durable };
+}
+
+function sessionIsActive(
+  events: readonly PersistedDomainEvent<string, unknown>[],
+  sessionId: string,
+): boolean {
+  let started = false;
+  let stopped = false;
+  for (const event of events) {
+    if (String(event.sessionId) !== sessionId) continue;
+    if (event.type === "runtime.session.started") started = true;
+    if (event.type === "runtime.session.stopped") stopped = true;
+  }
+  return started && !stopped;
+}
+
+function outstandingWriterOperations(events: readonly PersistedDomainEvent<string, unknown>[]): string[] {
+  const writers = new Map<string, { legacy: boolean }>();
+  for (const event of events) {
+    if (event.type === "operation.requested") {
+      const payload = record(event.payload);
+      const operationId = String(payload.operationId ?? event.operationId ?? "");
+      const legacyMayWrite = payload.workspaceAccessClass === undefined && payload.isReadOnly === false;
+      if (operationId && payload.workspaceAccessClass === "may_write") writers.set(operationId, { legacy: false });
+      else if (operationId && legacyMayWrite) writers.set(operationId, { legacy: true });
+    } else if (event.type === "operation.completed") {
+      const operationId = String(record(event.payload).operationId ?? event.operationId ?? "");
+      if (operationId && writers.get(operationId)?.legacy) writers.delete(operationId);
+    } else if (event.type === "operation.mutation_quiesced") {
+      const operationId = String(record(event.payload).operationId ?? event.operationId ?? "");
+      if (operationId) writers.delete(operationId);
+    }
+  }
+  return [...writers.keys()].sort((left, right) => left.localeCompare(right, "en"));
+}
+
+function adaptiveCurrentOrNull(
+  currentState: ProgramSemanticCurrentStateSourceV1,
+  programStateId: string,
+): Promise<ProgramSemanticCurrentSnapshotV1 | null> {
+  return currentState.current(programStateId).then(
+    (current) => current,
+    (error: unknown) => {
+      if (error instanceof ProgramSemanticRecoveryError) return null;
+      throw error;
+    },
+  );
+}
+
+function requireAdaptiveProgramOwnership(
+  current: ProgramSemanticCurrentSnapshotV1,
+  raw: ProgramState,
+  program: ProgramRootOperationContextV1,
+  sessionId: string,
+): void {
+  if (current.lifecycle !== "active" || !current.attachedSessionIds.includes(sessionId)) {
+    throw new ProgramDispatchStaleError("Adaptive ProgramAttempt session is detached or Program is not active");
+  }
+  const semanticAttempt = current.activeAttempt;
+  if (semanticAttempt === null
+      || String(semanticAttempt.programAttemptId) !== program.programAttemptId
+      || String(semanticAttempt.workItemId) !== program.workItemId) {
+    throw new ProgramDispatchStaleError("Adaptive ProgramAttempt was invalidated by semantic currentness");
+  }
+  if (raw.revision !== program.expectedProgramRevision) {
+    throw new ProgramDispatchStaleError(
+      `Adaptive Program revision mismatch: expected ${program.expectedProgramRevision}, current ${raw.revision}`,
+    );
+  }
+  const attempt = raw.activeAttempt;
+  if (attempt === null
+      || String(attempt.programAttemptId) !== program.programAttemptId
+      || String(attempt.workItemId) !== program.workItemId
+      || String(attempt.sessionId) !== sessionId
+      || attempt.agentGeneration !== program.agentGeneration) {
+    throw new ProgramDispatchStaleError("Adaptive operational ProgramAttempt authority is stale");
+  }
+}
+
+function validateAdaptiveOperationDrafts(
+  store: WorkspaceEventStore,
+  input: ProgramRoutedRootOperationInputV1,
+  program: ProgramRootOperationContextV1,
+): EventDraft<string, unknown>[] {
+  const operationId = String(asOperationId(input.operationId));
+  const sessionId = String(input.sessionId);
+  return input.drafts.map((draft, index) => {
+    if (String(draft.workspaceId) !== store.workspaceId) {
+      throw new ProgramDispatchControlError("Adaptive Program operation draft belongs to another Workspace");
+    }
+    if (String(draft.sessionId) !== sessionId) {
+      throw new ProgramDispatchControlError("Adaptive Program operation draft session does not match Attempt authority");
+    }
+    if (draft.operationId === undefined || String(draft.operationId) !== operationId) {
+      throw new ProgramDispatchControlError("Adaptive Program operation draft operationId does not match root operation");
+    }
+    if (draft.programStateId !== undefined && String(draft.programStateId) !== program.programStateId) {
+      throw new ProgramDispatchControlError("Adaptive Program operation draft ProgramStateId does not match Attempt authority");
+    }
+    return {
+      ...draft,
+      ...(index === 0 ? {
+        payload: {
+          ...record(draft.payload),
+          programStateId: program.programStateId,
+          expectedProgramRevision: program.expectedProgramRevision,
+          programAttemptId: program.programAttemptId,
+          workItemId: program.workItemId,
+          agentGeneration: program.agentGeneration,
+        },
+      } : {}),
+      programStateId: asEventProgramStateId(program.programStateId),
+    };
+  });
 }
 
 function requestedMutation(
@@ -168,27 +304,121 @@ function effectGenerationDraft(
 }
 
 /**
- * Adapter over the existing V1 Program operation authority. Admission remains
- * on the established Host authority graph. Only adaptive mutation settlement is
- * specialized so an already-admitted operation can publish terminal/effect/
- * quiescence truth after semantic invalidation without reviving its Attempt.
+ * Adaptive Program operation authority. Fixed-topology and ordinary root
+ * operations delegate unchanged. Adaptive operation admission is specialized
+ * so semantic Attempt currentness is rechecked inside the same canonical
+ * admission transaction that persists operation.requested. Once admitted, the
+ * settlement path deliberately stops requiring current Attempt authority and
+ * preserves terminal/effect/quiescence truth after semantic invalidation.
  */
 export class ProgramAdaptiveRootOperationAuthorityV2 implements ProgramRootOperationAuthorityV1 {
   constructor(private readonly options: ProgramAdaptiveRootOperationAuthorityOptionsV2) {}
 
-  resolveCurrentOperation(sessionId: EventSessionId): Promise<ProgramRootOperationContextV1 | null> {
-    return this.options.delegate.resolveCurrentOperation(sessionId);
+  async resolveCurrentOperation(sessionId: EventSessionId): Promise<ProgramRootOperationContextV1 | null> {
+    const raw = await this.options.delegate.resolveCurrentOperation(sessionId);
+    if (raw === null) return null;
+    const current = await adaptiveCurrentOrNull(this.options.currentState, raw.programStateId);
+    if (current === null) return raw;
+    if (current.lifecycle !== "active" || !current.attachedSessionIds.includes(String(sessionId))) return null;
+    const attempt = current.activeAttempt;
+    if (attempt === null
+        || String(attempt.programAttemptId) !== raw.programAttemptId
+        || String(attempt.workItemId) !== raw.workItemId) return null;
+    return raw;
   }
 
-  appendRoutedRootOperation(input: ProgramRoutedRootOperationInputV1): Promise<ProgramRoutedRootOperationResultV1> {
-    return this.options.delegate.appendRoutedRootOperation(input);
+  async appendRoutedRootOperation(
+    input: ProgramRoutedRootOperationInputV1,
+  ): Promise<ProgramRoutedRootOperationResultV1> {
+    if (input.drafts.length === 0 || input.drafts[0]?.type !== "operation.requested") {
+      throw new ProgramDispatchControlError("Root operation must begin with operation.requested");
+    }
+    if (input.program === undefined) return this.options.delegate.appendRoutedRootOperation(input);
+
+    const preliminaryCurrent = await adaptiveCurrentOrNull(this.options.currentState, input.program.programStateId);
+    if (preliminaryCurrent === null) return this.options.delegate.appendRoutedRootOperation(input);
+
+    return this.options.workspaceCoordinator.runExclusive(async () => {
+      const preliminaryEvents = await replayAll(this.options.store);
+      const observation = await this.options.observations.observe();
+      if (observation.status === "unknown") {
+        throw new ProgramDispatchStaleError(`Current execution base is unavailable: ${observation.reason}`);
+      }
+      requireObservationWorkspace(this.options.store, observation.base);
+      const protectedObservation = effectiveObservedBase(preliminaryEvents, observation.base);
+
+      return this.options.admission.enqueue(async () => {
+        const events = await replayAll(this.options.store);
+        const current = await this.options.currentState.current(input.program!.programStateId);
+        const raw = requireAdaptiveRawProgramStateV2(events, input.program!.programStateId);
+        const sessionId = String(input.sessionId);
+        requireAdaptiveProgramOwnership(current, raw, input.program!, sessionId);
+        if (!sessionIsActive(events, sessionId)) {
+          throw new ProgramDispatchStaleError("Adaptive ProgramAttempt session is stopped");
+        }
+        if (!await this.options.agentGenerations.isCurrent(sessionId, input.program!.agentGeneration)) {
+          throw new ProgramDispatchStaleError("Adaptive ProgramAttempt Agent generation is stale");
+        }
+        if (!await this.options.recovery.isClear()) {
+          throw new ProgramDispatchStaleError("Adaptive Program recovery barrier is not clear");
+        }
+        const writers = outstandingWriterOperations(events);
+        if (writers.length > 0) {
+          throw new ProgramDispatchStaleError(`Outstanding Workspace writer barrier: ${writers.join(",")}`);
+        }
+        if (raw.executionBaseMismatch !== null || raw.executionBaseUnavailable || raw.activeAttempt === null) {
+          throw new ProgramDispatchStaleError("Adaptive Program execution base is not current");
+        }
+        if (!sameBase(raw.activeAttempt.expectedExecutionBase, protectedObservation)) {
+          throw new ProgramDispatchStaleError(
+            "Adaptive ProgramAttempt execution base no longer matches the protected current base",
+          );
+        }
+        if (input.workspaceAccessClass === "may_write") {
+          const quiescence = record(record(input.drafts[0]!.payload).quiescenceContract);
+          if (quiescence.containment !== "operation_scoped_containment"
+              || typeof quiescence.proofContractId !== "string" || quiescence.proofContractId.length === 0
+              || !Number.isSafeInteger(Number(quiescence.proofContractVersion)) || Number(quiescence.proofContractVersion) <= 0
+              || typeof quiescence.containmentInstanceId !== "string" || quiescence.containmentInstanceId.length === 0) {
+            return { status: "program_may_write_blocked", program: input.program! } as const;
+          }
+        }
+        const stamped = validateAdaptiveOperationDrafts(this.options.store, input, input.program!);
+        return {
+          status: "appended",
+          events: await this.options.store.append(stamped),
+          program: input.program!,
+        } as const;
+      });
+    });
   }
 
-  appendRootOperation(
+  async appendRootOperation(
     input: ProgramRootOperationInputV1,
     drafts: readonly EventDraft<string, unknown>[],
   ): Promise<PersistedDomainEvent<string, unknown>[]> {
-    return this.options.delegate.appendRootOperation(input, drafts);
+    const requested = record(drafts[0]?.payload);
+    const explicit = requested.workspaceAccessClass;
+    const workspaceAccessClass = explicit === "no_workspace_access" || explicit === "read_only" || explicit === "may_write"
+      ? explicit
+      : requested.isReadOnly === true ? "read_only" : "may_write";
+    const routed = await this.appendRoutedRootOperation({
+      sessionId: input.sessionId,
+      operationId: input.operationId,
+      workspaceAccessClass,
+      program: {
+        programStateId: input.programStateId,
+        expectedProgramRevision: input.expectedProgramRevision,
+        programAttemptId: input.programAttemptId,
+        workItemId: input.workItemId,
+        agentGeneration: input.agentGeneration,
+      },
+      drafts,
+    });
+    if (routed.status === "program_may_write_blocked") {
+      throw new ProgramDispatchControlError("Adaptive Program may_write operation lacks supported quiescence authority");
+    }
+    return routed.events;
   }
 
   async settleProgramMutation(
