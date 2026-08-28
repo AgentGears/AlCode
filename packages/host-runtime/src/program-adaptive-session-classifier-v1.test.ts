@@ -41,7 +41,7 @@ function stateEvent(sequence: number, state: ProgramState): PersistedDomainEvent
     sequence,
     eventId: `event-${sequence}`,
     workspaceId,
-    sessionId: String(state.sourceSessionId),
+    sessionId: String(sessionId),
     programStateId: String(state.programStateId),
     occurredAt: "2026-08-28T00:00:00.000Z",
     type: sequence === 1 ? "program.created" : "program.transitioned",
