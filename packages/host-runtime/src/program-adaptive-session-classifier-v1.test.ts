@@ -67,12 +67,22 @@ function fakeStore(snapshots: readonly (readonly PersistedDomainEvent<string, un
 function classifier(input: {
   snapshots: readonly (readonly PersistedDomainEvent<string, unknown>[])[];
   adopted?: readonly boolean[];
+  adaptiveRevisions?: readonly number[];
 }) {
   const fixture = fakeStore(input.snapshots);
   let adoptionIndex = 0;
+  let adaptiveIndex = 0;
+  let insideExclusive = false;
+  const coordinator = {
+    runExclusive: async <T>(work: () => Promise<T>): Promise<T> => {
+      expect(insideExclusive).toBe(false);
+      insideExclusive = true;
+      try { return await work(); } finally { insideExclusive = false; }
+    },
+  };
   const service = new ProgramAdaptiveSessionClassifierV1({
     store: fixture.store,
-    workspaceCoordinator: { runExclusive: async (work) => work() },
+    workspaceCoordinator: coordinator,
     adoption: {
       isAdopted: async () => {
         const values = input.adopted ?? [false];
@@ -81,43 +91,62 @@ function classifier(input: {
         return value;
       },
     },
+    adaptiveCurrent: {
+      current: async () => {
+        const values = input.adaptiveRevisions ?? [1];
+        const value = values[Math.min(adaptiveIndex, values.length - 1)] ?? 1;
+        adaptiveIndex += 1;
+        return { programStateRevision: value };
+      },
+    },
   });
-  return { service, fixture, adoptionCount: () => adoptionIndex };
+  return {
+    service,
+    fixture,
+    adoptionCount: () => adoptionIndex,
+    adaptiveCount: () => adaptiveIndex,
+    isInsideExclusive: () => insideExclusive,
+  };
 }
 
 describe("A1 durable adaptive Session classification", () => {
   it("routes an active legacy Program through fixed-topology mode", async () => {
     const state = program("018f0000-0000-7000-8000-000000000ab1", 7);
     const events = [stateEvent(1, state)];
-    const { service } = classifier({ snapshots: [events, events], adopted: [false, false] });
+    const { service, adaptiveCount } = classifier({ snapshots: [events, events], adopted: [false, false] });
 
     await expect(service.classify(String(sessionId))).resolves.toEqual({
       mode: "fixed",
       programStateId: String(state.programStateId),
       programStateRevision: 7,
     });
-    await expect(service.isAdaptiveProgramSession(String(sessionId))).resolves.toBe(false);
+    expect(adaptiveCount()).toBe(0);
   });
 
-  it("routes only an explicitly adopted Program through adaptive mode", async () => {
+  it("reports the logical post-adoption whole-state revision for adaptive mode", async () => {
     const state = program("018f0000-0000-7000-8000-000000000ab2", 11);
     const events = [stateEvent(1, state)];
-    const { service } = classifier({ snapshots: [events, events], adopted: [true, true] });
+    const { service } = classifier({
+      snapshots: [events, events],
+      adopted: [true, true],
+      adaptiveRevisions: [14, 14],
+    });
 
     await expect(service.classify(String(sessionId))).resolves.toEqual({
       mode: "adaptive",
       programStateId: String(state.programStateId),
-      programStateRevision: 11,
+      programStateRevision: 14,
     });
   });
 
   it("does not infer adaptive mode from whole-state revision or an unattached Program", async () => {
     const state = program("018f0000-0000-7000-8000-000000000ab3", 99, String(otherSessionId));
     const events = [stateEvent(1, state)];
-    const { service, adoptionCount } = classifier({ snapshots: [events, events], adopted: [true, true] });
+    const { service, adoptionCount, adaptiveCount } = classifier({ snapshots: [events, events], adopted: [true, true] });
 
     await expect(service.classify(String(sessionId))).resolves.toEqual({ mode: "none" });
     expect(adoptionCount()).toBe(0);
+    expect(adaptiveCount()).toBe(0);
   });
 
   it("fails closed when multiple active Programs claim the same Session", async () => {
@@ -134,27 +163,81 @@ describe("A1 durable adaptive Session classification", () => {
   it("retries when baseline adoption changes during classification", async () => {
     const state = program("018f0000-0000-7000-8000-000000000ab6", 5);
     const events = [stateEvent(1, state)];
-    const { service, fixture, adoptionCount } = classifier({
+    const { service, fixture, adoptionCount, adaptiveCount } = classifier({
       snapshots: [events, events, events, events],
       adopted: [false, true, true, true],
+      adaptiveRevisions: [6, 6, 6],
     });
 
-    await expect(service.classify(String(sessionId))).resolves.toMatchObject({ mode: "adaptive" });
+    await expect(service.classify(String(sessionId))).resolves.toMatchObject({
+      mode: "adaptive",
+      programStateRevision: 6,
+    });
     expect(fixture.replayCount()).toBe(4);
     expect(adoptionCount()).toBe(4);
+    expect(adaptiveCount()).toBe(3);
+  });
+
+  it("retries adaptive logical-revision churn and returns the converged CAS base", async () => {
+    const state = program("018f0000-0000-7000-8000-000000000ab7", 4);
+    const events = [stateEvent(1, state)];
+    const { service, adaptiveCount } = classifier({
+      snapshots: [events, events, events, events],
+      adopted: [true, true, true, true],
+      adaptiveRevisions: [5, 6, 6, 6],
+    });
+
+    await expect(service.classify(String(sessionId))).resolves.toMatchObject({
+      mode: "adaptive",
+      programStateRevision: 6,
+    });
+    expect(adaptiveCount()).toBe(4);
   });
 
   it("retries operational attachment churn and returns the converged route", async () => {
-    const state = program("018f0000-0000-7000-8000-000000000ab7", 4);
+    const state = program("018f0000-0000-7000-8000-000000000ab8", 4);
     const attached = [stateEvent(1, state)];
     const detachedState = { ...state, revision: 5, attachedSessionIds: [otherSessionId] };
     const detached = [stateEvent(1, state), stateEvent(2, detachedState)];
     const { service, fixture } = classifier({
       snapshots: [attached, detached, detached, detached],
       adopted: [true],
+      adaptiveRevisions: [5],
     });
 
     await expect(service.classify(String(sessionId))).resolves.toEqual({ mode: "none" });
     expect(fixture.replayCount()).toBe(4);
+  });
+
+  it("keeps the selected route action inside the same Workspace-exclusive section", async () => {
+    const state = program("018f0000-0000-7000-8000-000000000ab9", 7);
+    const events = [stateEvent(1, state)];
+    const { service, isInsideExclusive } = classifier({
+      snapshots: [events, events],
+      adopted: [true, true],
+      adaptiveRevisions: [8, 8],
+    });
+
+    const result = await service.withClassification(String(sessionId), async (classification) => {
+      expect(isInsideExclusive()).toBe(true);
+      expect(classification).toMatchObject({ mode: "adaptive", programStateRevision: 8 });
+      return "routed";
+    });
+    expect(result).toBe("routed");
+    expect(isInsideExclusive()).toBe(false);
+  });
+
+  it("rejects adaptive currentness that predates the raw ProgramState", async () => {
+    const state = program("018f0000-0000-7000-8000-000000000aba", 9);
+    const events = [stateEvent(1, state)];
+    const { service } = classifier({
+      snapshots: [events],
+      adopted: [true],
+      adaptiveRevisions: [8],
+    });
+
+    await expect(service.classify(String(sessionId))).rejects.toThrow(
+      "logical revision predates raw ProgramState",
+    );
   });
 });

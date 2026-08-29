@@ -19,13 +19,23 @@ describe("A1 adaptive Program runtime V2 authority composition", () => {
     expect(source).not.toMatch(/expectedProgramRevision[^\n]{0,120}issuedUnderProgramRevisionId/);
   });
 
-  it("classifies session ownership before installing adaptive interception", () => {
-    expect(source).toContain("isAdaptiveProgramSession(sessionId: string): Promise<boolean>");
-    expect(source).toContain("if (!await this.isAdaptiveProgramSession(sessionId))");
-    expect(source).toContain("return this.fixedTopology.attachAgent(connection, session, systemPrompt, resumeReason);");
-    const classification = source.indexOf("if (!await this.isAdaptiveProgramSession(sessionId))");
-    const interception = source.indexOf("this.hostConnectionWithoutAdaptiveAuthorityMessages(connection)");
-    expect(classification).toBeGreaterThan(-1);
+  it("keeps route selection and Agent attachment inside one classification lock", () => {
+    expect(source).toContain("routing: ProgramAdaptiveSessionRoutingAuthorityV1;");
+    expect(source).toContain("this.routing = options.routing;");
+    expect(source).not.toContain("isAdaptiveProgramSession");
+    const attach = source.indexOf("async attachAgent(");
+    const classification = source.indexOf(
+      "return this.routing.withClassification(sessionId, async (classification) => {",
+      attach,
+    );
+    const fixed = source.indexOf(
+      "return this.fixedTopology.attachAgent(connection, session, systemPrompt, resumeReason);",
+      classification,
+    );
+    const interception = source.indexOf("this.hostConnectionWithoutAdaptiveAuthorityMessages(connection)", classification);
+    expect(attach).toBeGreaterThan(-1);
+    expect(classification).toBeGreaterThan(attach);
+    expect(fixed).toBeGreaterThan(classification);
     expect(interception).toBeGreaterThan(classification);
   });
 
@@ -34,6 +44,24 @@ describe("A1 adaptive Program runtime V2 authority composition", () => {
     expect(v1Source).toContain("this.planning.handleAgentMessage");
     expect(v1Source).toContain("this.progress.handleAgentMessage");
     expect(v1Source).toContain("this.handleProgramAgentIdle(connection, session)");
+  });
+
+  it("keeps explicit execution routing inside the same durable classification cut", () => {
+    const method = source.indexOf("async requestCurrentAttemptExecution(");
+    const classification = source.indexOf(
+      "return this.routing.withClassification(sessionId, async (classification) => {",
+      method,
+    );
+    const fixed = source.indexOf("return this.fixedTopology.requestCurrentAttemptExecution(connection, session);", classification);
+    const currentness = source.indexOf(
+      "if (!this.agent.isCurrentConnection(sessionId, connection.generationId))",
+      classification,
+    );
+    const scheduling = source.indexOf("const scheduled = await this.control.ensureCurrentAttempt(sessionId);", classification);
+    expect(classification).toBeGreaterThan(method);
+    expect(fixed).toBeGreaterThan(classification);
+    expect(currentness).toBeGreaterThan(classification);
+    expect(scheduling).toBeGreaterThan(currentness);
   });
 
   it("withholds ordinary Host capability and idle routing only after adaptive ownership is established", () => {
@@ -86,7 +114,7 @@ describe("A1 adaptive Program runtime V2 authority composition", () => {
 
   it("terminates the disposable Agent even when terminal shutdown notification fails", () => {
     expect(source).toContain("Terminal Program/session truth is already durable.");
-    expect(source).toContain("finally {\n            connection.terminate();\n          }");
+    expect(source).toContain("finally {\n              connection.terminate();\n            }");
   });
 
   it("cleans adaptive generation state on displacement, explicit detach, and process exit", () => {
