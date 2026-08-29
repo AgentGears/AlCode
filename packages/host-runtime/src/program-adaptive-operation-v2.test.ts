@@ -83,7 +83,7 @@ function raw(): ProgramState {
   };
 }
 
-function semantic(): ProgramSemanticStateV1 {
+function semantic(satisfactionState: "pending" | "active" = "pending"): ProgramSemanticStateV1 {
   return {
     programStateId,
     currentRevision: {
@@ -105,7 +105,7 @@ function semantic(): ProgramSemanticStateV1 {
       workItemGeneration: 2,
       requirementState: "required",
       topologyState: "leaf",
-      satisfactionState: "pending",
+      satisfactionState,
       parentWorkItemId: null,
       authorityEnvelope: envelope(),
     }],
@@ -121,6 +121,22 @@ function current(): ProgramSemanticCurrentSnapshotV1 {
     programStateRevision: 9,
     semanticState: semantic(),
     activeAttempt: null,
+    lifecycle: "active",
+    attachedSessionIds: [String(sessionId)],
+  };
+}
+
+function retainedCurrent(): ProgramSemanticCurrentSnapshotV1 {
+  return {
+    programStateRevision: 9,
+    semanticState: semantic("active"),
+    activeAttempt: {
+      programAttemptId: attemptId,
+      workItemId: workId,
+      workItemGeneration: 2,
+      directDependencies: [],
+      workAuthorityEnvelope: envelope(),
+    },
     lifecycle: "active",
     attachedSessionIds: [String(sessionId)],
   };
@@ -154,9 +170,9 @@ function requestedEvent(): PersistedDomainEvent<string, unknown> {
   } as unknown as PersistedDomainEvent<string, unknown>;
 }
 
-function fakeStore() {
-  const events: PersistedDomainEvent<string, unknown>[] = [{
-    sequence: 1,
+function programCreated(sequence = 1): PersistedDomainEvent<string, unknown> {
+  return {
+    sequence,
     eventId: "program-created",
     workspaceId,
     sessionId: String(sessionId),
@@ -166,7 +182,27 @@ function fakeStore() {
     payload: { state: raw() },
     payloadSchemaVersion: 1,
     producer: { kind: "runtime", component: "test" },
-  } as unknown as PersistedDomainEvent<string, unknown>, requestedEvent()];
+  } as unknown as PersistedDomainEvent<string, unknown>;
+}
+
+function sessionStarted(): PersistedDomainEvent<string, unknown> {
+  return {
+    sequence: 1,
+    eventId: "session-started",
+    workspaceId,
+    sessionId: String(sessionId),
+    occurredAt: "2026-08-27T00:00:00.000Z",
+    type: "runtime.session.started",
+    payload: {},
+    payloadSchemaVersion: 1,
+    producer: { kind: "runtime", component: "test" },
+  } as unknown as PersistedDomainEvent<string, unknown>;
+}
+
+function fakeStore(initial?: readonly PersistedDomainEvent<string, unknown>[]) {
+  const events: PersistedDomainEvent<string, unknown>[] = initial === undefined
+    ? [programCreated(), requestedEvent()]
+    : [...initial];
   const store = {
     workspaceId,
     replay: async function* () { for (const event of events) yield event; },
@@ -184,34 +220,64 @@ function fakeStore() {
   return { store, events };
 }
 
-describe("A1 adaptive in-flight mutation settlement", () => {
+function delegate(overrides: Partial<ProgramRootOperationAuthorityV1> = {}): ProgramRootOperationAuthorityV1 {
+  return {
+    resolveCurrentOperation: async () => null,
+    appendRoutedRootOperation: async () => { throw new Error("adaptive admission must not delegate"); },
+    appendRootOperation: async () => { throw new Error("adaptive admission must not delegate"); },
+    settleProgramMutation: async () => { throw new Error("adaptive settlement must not delegate"); },
+    ...overrides,
+  } as ProgramRootOperationAuthorityV1;
+}
+
+function service(
+  fixture: ReturnType<typeof fakeStore>,
+  currentState: () => Promise<ProgramSemanticCurrentSnapshotV1>,
+  authority = delegate(),
+) {
+  return new ProgramAdaptiveRootOperationAuthorityV2({
+    store: fixture.store,
+    admission: new CanonicalAdmissionQueue(fixture.store),
+    workspaceCoordinator: { runExclusive: async (work) => work() },
+    observations: { observe: async () => ({ status: "complete" as const, base: base(2) }) },
+    currentState: { current: currentState },
+    agentGenerations: { isCurrent: async () => true },
+    recovery: { isClear: async () => true },
+    delegate: authority,
+  });
+}
+
+function readOnlyRequestedDraft(): EventDraft<string, unknown> {
+  return {
+    eventId: "new-operation-requested" as never,
+    workspaceId: workspaceId as never,
+    sessionId: sessionId as never,
+    operationId: operationId as never,
+    occurredAt: "2026-08-27T00:00:02.000Z",
+    type: "operation.requested",
+    payload: { operationId, workspaceAccessClass: "read_only", isReadOnly: true },
+    payloadSchemaVersion: 1,
+    producer: { kind: "runtime", component: "host-capability-broker" },
+  };
+}
+
+const operationalContext = {
+  programStateId: String(programStateId),
+  expectedProgramRevision: 8,
+  programAttemptId: String(attemptId),
+  workItemId: String(workId),
+  agentGeneration: 5,
+};
+
+describe("A1 adaptive Program operation authority", () => {
   it("settles effect and quiescence truth after semantic Attempt invalidation without reassigning the effect", async () => {
     const fixture = fakeStore();
-    const delegate = {
-      resolveCurrentOperation: async () => null,
-      appendRoutedRootOperation: async () => { throw new Error("not used"); },
-      appendRootOperation: async () => { throw new Error("not used"); },
-      settleProgramMutation: async () => { throw new Error("adaptive settlement must not delegate"); },
-    } as unknown as ProgramRootOperationAuthorityV1;
-    const service = new ProgramAdaptiveRootOperationAuthorityV2({
-      store: fixture.store,
-      admission: new CanonicalAdmissionQueue(fixture.store),
-      workspaceCoordinator: { runExclusive: async (work) => work() },
-      observations: { observe: async () => ({ status: "complete" as const, base: base(2) }) },
-      currentState: { current: async () => structuredClone(current()) },
-      delegate,
-    });
+    const authority = service(fixture, async () => structuredClone(current()));
 
-    const result = await service.settleProgramMutation({
+    const result = await authority.settleProgramMutation({
       sessionId: sessionId as never,
       operationId,
-      program: {
-        programStateId: String(programStateId),
-        expectedProgramRevision: 8,
-        programAttemptId: String(attemptId),
-        workItemId: String(workId),
-        agentGeneration: 5,
-      },
+      program: operationalContext,
       quiescenceProven: true,
       buildTerminalDrafts: () => [{
         eventId: "completed-event" as never,
@@ -263,36 +329,73 @@ describe("A1 adaptive in-flight mutation settlement", () => {
 
   it("rejects settlement from a Session that did not request the admitted mutation", async () => {
     const fixture = fakeStore();
-    const delegate = {
-      resolveCurrentOperation: async () => null,
-      appendRoutedRootOperation: async () => { throw new Error("not used"); },
-      appendRootOperation: async () => { throw new Error("not used"); },
-      settleProgramMutation: async () => { throw new Error("adaptive settlement must not delegate"); },
-    } as unknown as ProgramRootOperationAuthorityV1;
-    const service = new ProgramAdaptiveRootOperationAuthorityV2({
-      store: fixture.store,
-      admission: new CanonicalAdmissionQueue(fixture.store),
-      workspaceCoordinator: { runExclusive: async (work) => work() },
-      observations: { observe: async () => ({ status: "complete" as const, base: base(2) }) },
-      currentState: { current: async () => structuredClone(current()) },
-      delegate,
-    });
+    const authority = service(fixture, async () => structuredClone(current()));
     const otherSessionId = asSessionId("018f0000-0000-4000-8000-0000000009a5");
 
-    await expect(service.settleProgramMutation({
+    await expect(authority.settleProgramMutation({
       sessionId: otherSessionId as never,
       operationId,
-      program: {
-        programStateId: String(programStateId),
-        expectedProgramRevision: 8,
-        programAttemptId: String(attemptId),
-        workItemId: String(workId),
-        agentGeneration: 5,
-      },
+      program: operationalContext,
       quiescenceProven: false,
       buildTerminalDrafts: () => [],
     })).rejects.toThrow("Admitted mutation ownership cannot be reassigned after semantic Attempt invalidation");
 
     expect(fixture.events).toHaveLength(2);
+  });
+
+  it("admits a retained Attempt operation only after semantic currentness is rechecked in canonical admission", async () => {
+    const fixture = fakeStore([sessionStarted(), programCreated(2)]);
+    const authority = service(fixture, async () => structuredClone(retainedCurrent()));
+
+    const result = await authority.appendRoutedRootOperation({
+      sessionId: sessionId as never,
+      operationId,
+      workspaceAccessClass: "read_only",
+      program: operationalContext,
+      drafts: [readOnlyRequestedDraft()],
+    });
+
+    expect(result.status).toBe("appended");
+    expect(result.program).toEqual(operationalContext);
+    const requested = fixture.events.at(-1)!;
+    expect(requested.type).toBe("operation.requested");
+    expect(requested.programStateId).toBe(String(programStateId));
+    expect(requested.payload).toMatchObject({
+      programAttemptId: String(attemptId),
+      workItemId: String(workId),
+      agentGeneration: 5,
+      expectedProgramRevision: 8,
+    });
+  });
+
+  it("rejects operation admission when a semantic cut invalidates the Attempt between the preliminary check and canonical append", async () => {
+    const fixture = fakeStore([sessionStarted(), programCreated(2)]);
+    let reads = 0;
+    const authority = service(fixture, async () => {
+      reads += 1;
+      return structuredClone(reads === 1 ? retainedCurrent() : current());
+    });
+
+    await expect(authority.appendRoutedRootOperation({
+      sessionId: sessionId as never,
+      operationId,
+      workspaceAccessClass: "read_only",
+      program: operationalContext,
+      drafts: [readOnlyRequestedDraft()],
+    })).rejects.toThrow("invalidated by semantic currentness");
+
+    expect(reads).toBe(2);
+    expect(fixture.events).toHaveLength(2);
+  });
+
+  it("does not resolve a semantically invalidated raw Attempt as current operation authority", async () => {
+    const fixture = fakeStore([sessionStarted(), programCreated(2)]);
+    const authority = service(
+      fixture,
+      async () => structuredClone(current()),
+      delegate({ resolveCurrentOperation: async () => structuredClone(operationalContext) }),
+    );
+
+    await expect(authority.resolveCurrentOperation(sessionId as never)).resolves.toBeNull();
   });
 });
