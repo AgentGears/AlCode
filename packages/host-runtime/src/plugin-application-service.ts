@@ -8,6 +8,7 @@ import {
   type ApplicationSnapshot,
   type CommandDecision,
   type PluginCommand,
+  type ProgramAdaptiveSemanticCommand,
   type PublicPlugin,
 } from "@alcode/application-protocol";
 import type { HostPluginRegistration, HostPluginService } from "./plugin-service.ts";
@@ -33,12 +34,17 @@ function publicPlugin(value: HostPluginRegistration): PublicPlugin {
 /** Adds Host plugin configuration/projection without making it workspace-canonical state. */
 export class HostPluginApplicationService implements ApplicationServicePort {
   private readonly decisions = new Map<string, CommandDecision>();
+  readonly executeAdaptiveProgram?: (command: ProgramAdaptiveSemanticCommand) => Promise<CommandDecision>;
 
   constructor(
     private readonly base: ApplicationServicePort,
     private readonly plugins: HostPluginService,
     private readonly workspaceId: string,
-  ) {}
+  ) {
+    if (base.executeAdaptiveProgram !== undefined) {
+      this.executeAdaptiveProgram = (command) => base.executeAdaptiveProgram!(command);
+    }
+  }
 
   execute(command: ApplicationCommand): Promise<CommandDecision> { return this.base.execute(command); }
 

@@ -1,7 +1,12 @@
+import type {
+  ApplicationServicePort,
+} from "@alcode/application-protocol";
 import type { ProgramAttemptProjectionV1, ProgramAttemptProjectionV2 } from "@alcode/agent-protocol";
 import { asSessionId, type SessionId } from "@alcode/events";
 import { isProgramSemanticRequirementComplete, type ProgramSemanticWorkItemV1 } from "@alcode/program-state";
 import type { HostArtifactStore } from "./artifact-store.ts";
+import type { ApplicationAgentControl } from "./application-service.ts";
+import { HostApplicationService } from "./application-service.ts";
 import {
   ProgramAdaptiveExecutionControlV2,
   ProgramSemanticExecutionSchedulerV2,
@@ -10,6 +15,11 @@ import {
   type ProgramAdaptiveEligibilityFactSourceV2,
 } from "./program-adaptive-control-v2.ts";
 import { ProgramAdaptiveAdmissionServiceV2 } from "./program-adaptive-admission-v2.ts";
+import {
+  ProgramAdaptiveApplicationServiceV1,
+  ProgramAdaptiveSemanticApplicationControlV1,
+} from "./program-adaptive-application-control-v1.ts";
+import { ProgramAdaptiveApplicationPortV1 } from "./program-adaptive-application-projection-v1.ts";
 import { ProgramAdaptiveRootOperationAuthorityV2 } from "./program-adaptive-operation-v2.ts";
 import {
   ProgramAdaptiveOperationalCurrentStateSourceV2,
@@ -20,6 +30,7 @@ import {
   ProgramAdaptiveSessionClassifierV1,
   type ProgramAdaptiveSessionRoutingAuthorityV1,
 } from "./program-adaptive-session-classifier-v1.ts";
+import type { ProgramApplicationPortV1 } from "./program-application.ts";
 import type {
   ProgramAgentGenerationAuthorityV1,
   ProgramDispatchWorkspaceCoordinatorV1,
@@ -35,7 +46,17 @@ import type {
   ProgramAdaptiveExecutionCutSourceV2,
   ProgramAdaptiveExecutionCutV2,
 } from "./program-agent-v2.ts";
+import {
+  HostProgramRevisionApplicationControlV1,
+  ProgramRevisionControlServiceV1,
+} from "./program-revision.ts";
 import { ProgramSemanticBaselineRegistryV1 } from "./program-semantic-baseline-replay.ts";
+import type { ProgramLegacyBaselineAuthoritySourceV1 } from "./program-semantic-baseline-kernel.ts";
+import {
+  HostProgramSemanticBaselineApplicationControlV1,
+  ProgramSemanticBaselineServiceV1,
+} from "./program-semantic-baseline-service.ts";
+import { ProgramSemanticRecoveryRegistryV1 } from "./program-semantic-recovery-v1.ts";
 import { ProgramTerminalStaleError } from "./program-terminal.ts";
 
 export class ProgramAdaptiveProductionCompositionErrorV1 extends Error {
@@ -245,6 +266,7 @@ export interface ProgramAdaptiveProductionRuntimeOptionsV1 {
   fixedTopology: ProgramExecutionRuntimeV1;
   observations: ProgramExecutionObservationSourceV1;
   artifactStore: HostArtifactStore;
+  baselineAuthority: ProgramLegacyBaselineAuthoritySourceV1;
 }
 
 export interface ProgramAdaptiveProductionRuntimeV1 {
@@ -255,6 +277,20 @@ export interface ProgramAdaptiveProductionRuntimeV1 {
   progress: ProgramAdaptiveProgressServiceV2;
   terminal: ProgramAdaptiveTerminalServiceV2;
   cuts: ProgramAdaptiveProductionCutSourceV1;
+  semanticRecovery: ProgramSemanticRecoveryRegistryV1;
+  baselineService: ProgramSemanticBaselineServiceV1;
+  revisionControl: ProgramRevisionControlServiceV1;
+  semanticApplication: ProgramAdaptiveSemanticApplicationControlV1;
+  /** Normal product service: fixed Programs retain automatic first dispatch. */
+  createApplicationService(agent: ApplicationAgentControl, maxReplayEvents?: number): ApplicationServicePort;
+  /**
+   * Adoption service for a newly accepted fixed-topology Program that must remain
+   * quiescent until the Application explicitly accepts its semantic baseline.
+   */
+  createBaselineAdoptionApplicationService(
+    agent: ApplicationAgentControl,
+    maxReplayEvents?: number,
+  ): ApplicationServicePort;
 }
 
 /**
@@ -269,11 +305,12 @@ export function createProgramAdaptiveProductionRuntimeV1(
   const fixed = options.fixedTopology;
   const store = fixed.workspaceStore;
   const currentState = new ProgramAdaptiveOperationalCurrentStateSourceV2(store);
-  const baseline = new ProgramSemanticBaselineRegistryV1(store);
+  const baselineRegistry = new ProgramSemanticBaselineRegistryV1(store);
+  const semanticRecovery = new ProgramSemanticRecoveryRegistryV1(store);
   const routing = new ProgramAdaptiveSessionClassifierV1({
     store,
     workspaceCoordinator: fixed.workspaceCoordinator,
-    adoption: baseline,
+    adoption: baselineRegistry,
     adaptiveCurrent: currentState,
   });
   const admission = new ProgramAdaptiveAdmissionServiceV2({
@@ -330,6 +367,43 @@ export function createProgramAdaptiveProductionRuntimeV1(
   });
   fixed.host.setProgramOperationAuthority(operationAuthority);
 
+  const baselineService = new ProgramSemanticBaselineServiceV1({
+    store,
+    admission: fixed.host.admission,
+    workspaceCoordinator: fixed.workspaceCoordinator,
+    recovery: fixed.recovery,
+    authority: options.baselineAuthority,
+  });
+  const revisionControl = new ProgramRevisionControlServiceV1({
+    store,
+    admission: fixed.host.admission,
+    currentState,
+  });
+  const semanticApplication = new ProgramAdaptiveSemanticApplicationControlV1({
+    baseline: new HostProgramSemanticBaselineApplicationControlV1(baselineService),
+    revision: new HostProgramRevisionApplicationControlV1(revisionControl),
+  });
+
+  const createApplication = (
+    agent: ApplicationAgentControl,
+    program: ProgramApplicationPortV1,
+    maxReplayEvents?: number,
+  ): ApplicationServicePort => {
+    const base = new HostApplicationService({
+      store,
+      admission: fixed.host.admission,
+      agent,
+      program: new ProgramAdaptiveApplicationPortV1(program, semanticRecovery),
+      ...(maxReplayEvents !== undefined ? { maxReplayEvents } : {}),
+    });
+    return new ProgramAdaptiveApplicationServiceV1({
+      store,
+      admission: fixed.host.admission,
+      base,
+      semantic: semanticApplication,
+    });
+  };
+
   const runtimeOptions: ProgramExecutionRuntimeOptionsV2 = {
     fixedTopology: fixed,
     adaptive: { cuts, progress },
@@ -344,5 +418,13 @@ export function createProgramAdaptiveProductionRuntimeV1(
     progress,
     terminal,
     cuts,
+    semanticRecovery,
+    baselineService,
+    revisionControl,
+    semanticApplication,
+    createApplicationService: (agent, maxReplayEvents) =>
+      createApplication(agent, fixed.productApplication, maxReplayEvents),
+    createBaselineAdoptionApplicationService: (agent, maxReplayEvents) =>
+      createApplication(agent, fixed.application, maxReplayEvents),
   };
 }

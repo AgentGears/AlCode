@@ -15,6 +15,7 @@ import {
   createProgramExecutionRuntimeV1,
   type ProgramExecutionObservationSourceV1,
 } from "@alcode/host-runtime";
+import { createProgramAdaptiveProductionRuntimeV1 } from "@alcode/host-runtime/adaptive-production-v1";
 import { openLockedWorkspaceStore } from "@alcode/storage";
 import { WorkspaceRegistry } from "@alcode/workspace";
 import { agentErrorStillTargetsLiveConnection } from "./agent-error-arbitration.ts";
@@ -28,6 +29,7 @@ const SYSTEM_PROMPT = "You are ALCODE, a memory-native coding agent.";
 const APPLICATION_PROTOCOL_VERSION = 1 as const;
 const LOCAL_OBSERVATION_PROVIDER = "alcode-local-workspace-v1";
 const LOCAL_COVERAGE_IDENTITY = "alcode-local-workspace-complete-v1";
+const LOCAL_ADAPTIVE_TOPOLOGY_EXPANSION = 8;
 const WAIT_TIMEOUT_MS = 20_000;
 const PROGRAM_DRIVE_TIMEOUT_MS = 5 * 60_000;
 const PROGRAM_REDRIVE_INTERVAL_MS = 100;
@@ -177,8 +179,9 @@ async function main(): Promise<void> {
     capabilities,
     observations,
   });
+  const artifactStore = new HostArtifactStore({ root: join(dirname(workspaceEntry.dbPath), "artifacts") });
 
-  const runtime = createProgramExecutionRuntimeV1({
+  const fixedRuntime = createProgramExecutionRuntimeV1({
     host: {
       store: locked,
       capabilities,
@@ -196,8 +199,27 @@ async function main(): Promise<void> {
     pathObservations: verifierConfiguration.pathObservations,
     operationSpecs: verifierConfiguration.operationSpecs,
     verifierCatalog: verifierConfiguration.verifierCatalog,
-    artifactStore: new HostArtifactStore({ root: join(dirname(workspaceEntry.dbPath), "artifacts") }),
+    artifactStore,
   });
+  const adaptiveProduct = createProgramAdaptiveProductionRuntimeV1({
+    fixedTopology: fixedRuntime,
+    observations,
+    artifactStore,
+    baselineAuthority: {
+      forWorkItem: ({ programState }) => ({
+        allowedRepositoryRoots: ["."],
+        allowedEffectClasses: ["fs.read", "fs.write"],
+        allowedExternalSystems: [],
+        capabilityCeiling: capabilities.map((capability) => capability.name)
+          .sort((left, right) => left.localeCompare(right, "en")),
+        maximumTopologyExpansion: LOCAL_ADAPTIVE_TOPOLOGY_EXPANSION,
+        mandatoryVerificationIds: programState.verification.map((item) => String(item.obligationId))
+          .sort((left, right) => left.localeCompare(right, "en")),
+        forbiddenChangeKinds: ["delete_repository"],
+      }),
+    },
+  });
+  const runtime = adaptiveProduct.runtime;
 
   const supervisor = new AgentSupervisor({
     entrypoint: fileURLToPath(new URL("./agent-worker.ts", import.meta.url)),
@@ -232,12 +254,16 @@ async function main(): Promise<void> {
 
     await attachConnection(connection);
     await runtime.host.admitInput(session.sessionId, prompt);
-    await runtime.beginPlanning(connection, session, prompt);
-    const application = runtime.createApplicationService({
+    await fixedRuntime.beginPlanning(connection, session, prompt);
+    const application = adaptiveProduct.createBaselineAdoptionApplicationService({
       start: async () => false,
       guide: async () => false,
       cancel: async () => false,
     });
+    const executeAdaptiveProgram = application.executeAdaptiveProgram?.bind(application);
+    if (executeAdaptiveProgram === undefined) {
+      throw new Error("Adaptive Application authority is unavailable in the production runtime");
+    }
 
     const pending = await waitFor(
       "a sealed Program creation draft",
@@ -277,10 +303,61 @@ async function main(): Promise<void> {
       };
     };
 
+    const createdProgram = (await readProgram()).program;
+    if (createdProgram === undefined || createdProgram.lifecycle !== "active" || createdProgram.activeAttempt !== undefined) {
+      throw new Error("New Program was not quiescent for explicit adaptive baseline adoption");
+    }
+    const sealedBaseline = await executeAdaptiveProgram({
+      protocolVersion: APPLICATION_PROTOCOL_VERSION,
+      commandId: randomUUID(),
+      clientId: "alcode-cli",
+      sessionId: String(session.sessionId),
+      issuedAt: new Date().toISOString(),
+      type: "program.semantic_baseline.seal",
+      programStateId,
+      expectedProgramStateRevision: createdProgram.revision,
+    });
+    if (sealedBaseline.decision !== "accepted"
+        || sealedBaseline.draftId === undefined
+        || sealedBaseline.draftDigest === undefined) {
+      throw new Error(`Adaptive baseline sealing failed: ${sealedBaseline.decision}${sealedBaseline.reasonCode ? ` (${sealedBaseline.reasonCode})` : ""}`);
+    }
+    const adoptedBaseline = await executeAdaptiveProgram({
+      protocolVersion: APPLICATION_PROTOCOL_VERSION,
+      commandId: randomUUID(),
+      clientId: "alcode-cli",
+      sessionId: String(session.sessionId),
+      issuedAt: new Date().toISOString(),
+      type: "program.semantic_baseline.accept",
+      programStateId,
+      draftId: sealedBaseline.draftId,
+      draftDigest: sealedBaseline.draftDigest,
+    });
+    if (adoptedBaseline.decision !== "accepted" && adoptedBaseline.decision !== "duplicate") {
+      throw new Error(`Adaptive baseline acceptance failed: ${adoptedBaseline.decision}${adoptedBaseline.reasonCode ? ` (${adoptedBaseline.reasonCode})` : ""}`);
+    }
+
+    // The pre-adoption attachment is deliberately V1. Reattach the same
+    // disposable Agent connection after the canonical baseline cut so routing
+    // negotiates V2 authority; no active Attempt or Operation crosses this seam.
+    attachedAgents.pop()?.detach();
+    await attachConnection(connection, "reattach");
+
     const cancelActiveProgram = async (reason: string): Promise<void> => {
       for (let pass = 0; pass < 2; pass++) {
         const { program } = await readProgram();
         if (program === undefined || program.lifecycle !== "active") return;
+        if (await adaptiveProduct.semanticRecovery.isAdaptive(programStateId)) {
+          await adaptiveProduct.terminal.cancel({
+            programStateId,
+            expectedProgramRevision: program.revision,
+            sessionId: session.sessionId,
+            actor: "application",
+            client: "alcode-cli",
+            reason,
+          });
+          return;
+        }
         const result = await application.execute({
           protocolVersion: APPLICATION_PROTOCOL_VERSION,
           commandId: randomUUID(),
@@ -300,11 +377,6 @@ async function main(): Promise<void> {
       const { program } = await readProgram();
       if (program?.lifecycle === "active") throw new Error("Program remained active after bounded cancellation retries");
     };
-
-    if (acceptance.reasonCode === "first_dispatch_stale") {
-      await cancelActiveProgram("first_dispatch_stale");
-      throw new Error("Accepted Program first dispatch became stale and was cancelled");
-    }
 
     let terminalSnapshot: Awaited<ReturnType<typeof application.getSnapshot>> | undefined;
     const driveDeadline = Date.now() + PROGRAM_DRIVE_TIMEOUT_MS;
@@ -331,15 +403,7 @@ async function main(): Promise<void> {
         if (supervisor.getCurrent() === null) {
           connection = await supervisor.start();
           await attachConnection(connection, "agent_replaced");
-          await recoverAfterAgentReplacement(locked.store, runtime.recovery);
-        }
-
-        if (program.activeAttempt === undefined) {
-          const scheduled = await runtime.scheduler.dispatchNext({
-            programStateId,
-            sessionId: session.sessionId,
-          });
-          if (scheduled.status === "program_not_active") continue;
+          await recoverAfterAgentReplacement(locked.store, fixedRuntime.recovery);
         }
 
         try {

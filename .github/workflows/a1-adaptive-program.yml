@@ -8,6 +8,8 @@ on:
       - 'packages/application-protocol/src/index.ts'
       - 'packages/application-protocol/src/validation.ts'
       - 'packages/application-protocol/src/program-validation.test.ts'
+      - 'packages/application-protocol/src/loopback.ts'
+      - 'packages/application-protocol/src/loopback-adaptive.test.ts'
       - 'packages/agent-protocol/src/program-execution-v2.ts'
       - 'packages/agent-protocol/src/program-execution-v2.test.ts'
       - 'packages/agent-protocol/src/program-execution-v2-routing.ts'
@@ -27,6 +29,8 @@ on:
       - 'packages/coding-agent/src/program-revision-planner.ts'
       - 'packages/coding-agent/src/program-revision-planner.test.ts'
       - 'packages/coding-agent/src/program-revision-production-wiring.test.ts'
+      - 'packages/coding-agent/src/adaptive-production-cli-wiring.test.ts'
+      - 'packages/coding-agent/src/cli.ts'
       - 'packages/coding-agent/src/index.ts'
       - 'packages/coding-agent/src/agent-worker.ts'
       - 'packages/coding-agent/src/inference-context.ts'
@@ -49,6 +53,8 @@ on:
       - 'packages/host-runtime/src/program-adaptive-application-projection-v1.test.ts'
       - 'packages/host-runtime/src/program-adaptive-application-control-v1.ts'
       - 'packages/host-runtime/src/program-adaptive-application-control-v1.test.ts'
+      - 'packages/host-runtime/src/plugin-application-service.ts'
+      - 'packages/host-runtime/src/plugin-application-service-adaptive.test.ts'
       - 'packages/host-runtime/src/program-attempt-authority-v2.ts'
       - 'packages/host-runtime/src/program-attempt-authority-v2.test.ts'
       - 'packages/host-runtime/src/program-agent-v2.ts'
@@ -73,6 +79,7 @@ on:
       - 'packages/host-runtime/src/program-adaptive-session-classifier-v1.test.ts'
       - 'packages/host-runtime/src/program-adaptive-production-v1.ts'
       - 'packages/host-runtime/src/program-adaptive-production-v1.test.ts'
+      - 'packages/host-runtime/src/program-adaptive-production-application-wiring.test.ts'
       - 'packages/host-runtime/src/program-semantic-baseline-kernel.ts'
       - 'packages/host-runtime/src/program-semantic-baseline-replay.ts'
       - 'packages/host-runtime/src/program-semantic-baseline-service.ts'
@@ -91,6 +98,8 @@ on:
       - 'packages/application-protocol/src/index.ts'
       - 'packages/application-protocol/src/validation.ts'
       - 'packages/application-protocol/src/program-validation.test.ts'
+      - 'packages/application-protocol/src/loopback.ts'
+      - 'packages/application-protocol/src/loopback-adaptive.test.ts'
       - 'packages/agent-protocol/src/program-execution-v2.ts'
       - 'packages/agent-protocol/src/program-execution-v2.test.ts'
       - 'packages/agent-protocol/src/program-execution-v2-routing.ts'
@@ -110,6 +119,8 @@ on:
       - 'packages/coding-agent/src/program-revision-planner.ts'
       - 'packages/coding-agent/src/program-revision-planner.test.ts'
       - 'packages/coding-agent/src/program-revision-production-wiring.test.ts'
+      - 'packages/coding-agent/src/adaptive-production-cli-wiring.test.ts'
+      - 'packages/coding-agent/src/cli.ts'
       - 'packages/coding-agent/src/index.ts'
       - 'packages/coding-agent/src/agent-worker.ts'
       - 'packages/coding-agent/src/inference-context.ts'
@@ -132,6 +143,8 @@ on:
       - 'packages/host-runtime/src/program-adaptive-application-projection-v1.test.ts'
       - 'packages/host-runtime/src/program-adaptive-application-control-v1.ts'
       - 'packages/host-runtime/src/program-adaptive-application-control-v1.test.ts'
+      - 'packages/host-runtime/src/plugin-application-service.ts'
+      - 'packages/host-runtime/src/plugin-application-service-adaptive.test.ts'
       - 'packages/host-runtime/src/program-attempt-authority-v2.ts'
       - 'packages/host-runtime/src/program-attempt-authority-v2.test.ts'
       - 'packages/host-runtime/src/program-agent-v2.ts'
@@ -156,6 +169,7 @@ on:
       - 'packages/host-runtime/src/program-adaptive-session-classifier-v1.test.ts'
       - 'packages/host-runtime/src/program-adaptive-production-v1.ts'
       - 'packages/host-runtime/src/program-adaptive-production-v1.test.ts'
+      - 'packages/host-runtime/src/program-adaptive-production-application-wiring.test.ts'
       - 'packages/host-runtime/src/program-semantic-baseline-kernel.ts'
       - 'packages/host-runtime/src/program-semantic-baseline-replay.ts'
       - 'packages/host-runtime/src/program-semantic-baseline-service.ts'
@@ -183,8 +197,8 @@ jobs:
         run: pnpm --filter @alcode/program-state exec vitest run src/semantic-a1.test.ts src/revision-a1.test.ts
       - name: Typecheck additive Application semantic authority
         run: pnpm --filter @alcode/application-protocol exec tsc --noEmit -p tsconfig.json
-      - name: Verify Application semantic command parsing
-        run: pnpm exec vitest run packages/application-protocol/src/program-validation.test.ts
+      - name: Verify Application semantic command parsing and adaptive transport forwarding
+        run: pnpm exec vitest run packages/application-protocol/src/program-validation.test.ts packages/application-protocol/src/loopback-adaptive.test.ts
       - name: Typecheck negotiated Agent protocol V2 boundary
         run: pnpm --filter @alcode/agent-protocol exec tsc --noEmit -p tsconfig.json
       - name: Verify V2 wire schemas, negotiated routing, and semantic revision protocol
@@ -194,8 +208,8 @@ jobs:
           pnpm --filter @alcode/cognition-extension exec tsc --noEmit -p tsconfig.json
           pnpm --filter @alcode/coding-agent exec tsc --noEmit -p tsconfig.json
       - name: Verify Agent bridge, semantic revision client/planner, and production wiring
-        run: pnpm exec vitest run packages/coding-agent/src/agent-protocol-bridge-v2.test.ts packages/coding-agent/src/program-revision-protocol-client-v1.test.ts packages/coding-agent/src/program-revision-planner.test.ts packages/coding-agent/src/program-revision-production-wiring.test.ts
+        run: pnpm exec vitest run packages/coding-agent/src/agent-protocol-bridge-v2.test.ts packages/coding-agent/src/program-revision-protocol-client-v1.test.ts packages/coding-agent/src/program-revision-planner.test.ts packages/coding-agent/src/program-revision-production-wiring.test.ts packages/coding-agent/src/adaptive-production-cli-wiring.test.ts
       - name: Typecheck Host semantic admission, recovery, projection, Application acceptance, eligibility, Completion, baseline adoption, and adaptive V2 execution
         run: pnpm --filter @alcode/host-runtime exec tsc --noEmit -p tsconfig.json
       - name: Verify Host semantic admission, recovery, projection, Application acceptance, baseline/revision production wiring, eligibility, Completion, V2 authority, and adaptive execution routing
-        run: pnpm exec vitest run packages/host-runtime/src/program-revision.test.ts packages/host-runtime/src/program-revision-race.test.ts packages/host-runtime/src/program-revision-protocol-v1.test.ts packages/host-runtime/src/program-revision-runtime-v1.test.ts packages/host-runtime/src/program-semantic-recovery-v1.test.ts packages/host-runtime/src/program-semantic-recovery-currentness-v1.test.ts packages/host-runtime/src/program-semantic-recovery-review-regressions-v1.test.ts packages/host-runtime/src/program-semantic-recovery-envelope-regression-v1.test.ts packages/host-runtime/src/program-semantic-baseline-recovery-regression-v1.test.ts packages/host-runtime/src/program-adaptive-application-projection-v1.test.ts packages/host-runtime/src/program-adaptive-application-control-v1.test.ts packages/host-runtime/src/program-attempt-authority-v2.test.ts packages/host-runtime/src/program-agent-v2.test.ts packages/host-runtime/src/program-agent-v2-replay.test.ts packages/host-runtime/src/program-execution-runtime-v2.test.ts packages/host-runtime/src/program-adaptive-control-v2.test.ts packages/host-runtime/src/program-adaptive-operational-v2.test.ts packages/host-runtime/src/program-adaptive-admission-v2.test.ts packages/host-runtime/src/program-adaptive-progress-v2.test.ts packages/host-runtime/src/program-adaptive-operation-v2.test.ts packages/host-runtime/src/program-adaptive-session-classifier-v1.test.ts packages/host-runtime/src/program-adaptive-production-v1.test.ts packages/host-runtime/src/program-semantic-baseline.test.ts
+        run: pnpm exec vitest run packages/host-runtime/src/program-revision.test.ts packages/host-runtime/src/program-revision-race.test.ts packages/host-runtime/src/program-revision-protocol-v1.test.ts packages/host-runtime/src/program-revision-runtime-v1.test.ts packages/host-runtime/src/program-semantic-recovery-v1.test.ts packages/host-runtime/src/program-semantic-recovery-currentness-v1.test.ts packages/host-runtime/src/program-semantic-recovery-review-regressions-v1.test.ts packages/host-runtime/src/program-semantic-recovery-envelope-regression-v1.test.ts packages/host-runtime/src/program-semantic-baseline-recovery-regression-v1.test.ts packages/host-runtime/src/program-adaptive-application-projection-v1.test.ts packages/host-runtime/src/program-adaptive-application-control-v1.test.ts packages/host-runtime/src/plugin-application-service-adaptive.test.ts packages/host-runtime/src/program-attempt-authority-v2.test.ts packages/host-runtime/src/program-agent-v2.test.ts packages/host-runtime/src/program-agent-v2-replay.test.ts packages/host-runtime/src/program-execution-runtime-v2.test.ts packages/host-runtime/src/program-adaptive-control-v2.test.ts packages/host-runtime/src/program-adaptive-operational-v2.test.ts packages/host-runtime/src/program-adaptive-admission-v2.test.ts packages/host-runtime/src/program-adaptive-progress-v2.test.ts packages/host-runtime/src/program-adaptive-operation-v2.test.ts packages/host-runtime/src/program-adaptive-session-classifier-v1.test.ts packages/host-runtime/src/program-adaptive-production-v1.test.ts packages/host-runtime/src/program-adaptive-production-application-wiring.test.ts packages/host-runtime/src/program-semantic-baseline.test.ts
