@@ -218,6 +218,46 @@ describe("A1 Application semantic authority", () => {
     expect((decision!.payload as { command: ProgramAdaptiveSemanticCommand }).command).toEqual(baselineSeal());
   });
 
+  it("serializes replay and durable semantic decisions across service instances for one Workspace store", async () => {
+    const fixture = fakeStore();
+    let calls = 0;
+    const semantic = {
+      execute: async () => {
+        calls += 1;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return {
+          decision: "accepted" as const,
+          programStateId: "program-a",
+          programStateRevision: 7,
+          programRevisionId: "semantic-r1",
+          draftId: "baseline-draft",
+          draftDigest: "baseline-digest",
+        };
+      },
+    };
+    const serviceA = new ProgramAdaptiveApplicationServiceV1({
+      store: fixture.store,
+      admission: new CanonicalAdmissionQueue(fixture.store),
+      base: basePort(),
+      semantic,
+    });
+    const serviceB = new ProgramAdaptiveApplicationServiceV1({
+      store: fixture.store,
+      admission: new CanonicalAdmissionQueue(fixture.store),
+      base: basePort(),
+      semantic,
+    });
+
+    const [left, right] = await Promise.all([
+      serviceA.executeAdaptiveProgram(baselineSeal("concurrent-id")),
+      serviceB.executeAdaptiveProgram(baselineSeal("concurrent-id")),
+    ]);
+    expect([left.decision, right.decision].sort()).toEqual(["accepted", "duplicate"]);
+    expect(calls).toBe(1);
+    expect(fixture.events.filter((event) => event.type === "application.adaptive_program.command.decided"))
+      .toHaveLength(1);
+  });
+
   it("fails a reused commandId closed when semantic fields change within the same command type", async () => {
     const fixture = fakeStore();
     let calls = 0;

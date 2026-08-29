@@ -225,14 +225,32 @@ function priorDecision(
 }
 
 /**
+ * Current production storage has one Host writer per Workspace. Share a
+ * process-local Workspace serialization lane across Application service
+ * instances so replay + semantic authority + durable decision recording is one
+ * ordered idempotence decision. This is intentionally separate from the
+ * CanonicalAdmissionQueue because semantic acceptance itself enters that queue;
+ * nesting it here would deadlock a non-reentrant admission authority.
+ */
+const adaptiveApplicationWorkspaceTails = new WeakMap<WorkspaceEventStore, Promise<void>>();
+
+function serializeAdaptiveApplicationWorkspace<T>(
+  store: WorkspaceEventStore,
+  work: () => Promise<T>,
+): Promise<T> {
+  const tail = adaptiveApplicationWorkspaceTails.get(store) ?? Promise.resolve();
+  const run = tail.then(work, work);
+  adaptiveApplicationWorkspaceTails.set(store, run.then(() => undefined, () => undefined));
+  return run;
+}
+
+/**
  * Additive Application Protocol composition. Legacy execute/getSnapshot/recover
  * semantics delegate unchanged to the existing service; A1 semantic commands
  * use the dedicated optional executeAdaptiveProgram surface and gain a durable
  * Host decision record for reconnect/replay idempotence.
  */
 export class ProgramAdaptiveApplicationServiceV1 implements ApplicationServicePort {
-  private tail: Promise<void> = Promise.resolve();
-
   constructor(private readonly options: ProgramAdaptiveApplicationServiceOptionsV1) {}
 
   execute(command: ApplicationCommand): Promise<CommandDecision> {
@@ -254,12 +272,10 @@ export class ProgramAdaptiveApplicationServiceV1 implements ApplicationServicePo
   }
 
   executeAdaptiveProgram(command: ProgramAdaptiveSemanticCommand): Promise<CommandDecision> {
-    const run = this.tail.then(
-      () => this.executeAdaptiveProgramSerial(command),
+    return serializeAdaptiveApplicationWorkspace(
+      this.options.store,
       () => this.executeAdaptiveProgramSerial(command),
     );
-    this.tail = run.then(() => undefined, () => undefined);
-    return run;
   }
 
   private async executeAdaptiveProgramSerial(command: ProgramAdaptiveSemanticCommand): Promise<CommandDecision> {
