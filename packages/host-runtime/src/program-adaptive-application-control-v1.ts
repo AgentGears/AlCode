@@ -17,6 +17,7 @@ import {
   type EventDraft,
   type PersistedDomainEvent,
 } from "@alcode/events";
+import { canonicalStringify } from "@alcode/program-state";
 import type { WorkspaceEventStore } from "@alcode/storage";
 import { CanonicalAdmissionQueue } from "./admission-queue.ts";
 import type { ProgramApplicationCommandResultV1 } from "./program-application.ts";
@@ -171,9 +172,7 @@ function decisionDraft(
     occurredAt: new Date().toISOString(),
     type: "application.adaptive_program.command.decided",
     payload: {
-      commandId: command.commandId,
-      clientId: command.clientId,
-      commandType: command.type,
+      command: structuredClone(command),
       decision: result.decision,
       ...(result.reasonCode !== undefined ? { reasonCode: result.reasonCode } : {}),
       ...(result.programStateId !== undefined ? { programStateId: result.programStateId } : {}),
@@ -206,8 +205,9 @@ function priorDecision(
       throw new ProgramRevisionControlError("Adaptive Application decision history has an untrusted producer");
     }
     const payload = record(event.payload);
-    if (String(payload.commandId ?? "") !== command.commandId) continue;
-    if (String(payload.clientId ?? "") !== command.clientId || String(payload.commandType ?? "") !== command.type) {
+    const priorCommand = payload.command as ProgramAdaptiveSemanticCommand | undefined;
+    if (priorCommand === undefined || priorCommand.commandId !== command.commandId) continue;
+    if (canonicalStringify(priorCommand) !== canonicalStringify(command)) {
       return { decision: "stale", reasonCode: "application_command_identity_conflict" };
     }
     const prior = decisionKind(payload.decision);

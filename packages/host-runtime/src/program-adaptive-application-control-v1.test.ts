@@ -23,24 +23,24 @@ const common = {
   issuedAt: "2026-08-29T00:00:00.000Z",
 } as const;
 
-function baselineSeal(commandId = "seal-1"): ProgramAdaptiveSemanticCommand {
+function baselineSeal(commandId = "seal-1", expectedProgramStateRevision = 7): ProgramAdaptiveSemanticCommand {
   return {
     ...common,
     commandId,
     type: "program.semantic_baseline.seal",
     programStateId: "program-a",
-    expectedProgramStateRevision: 7,
+    expectedProgramStateRevision,
   };
 }
 
-function revisionAccept(commandId = "revision-1"): ProgramAdaptiveSemanticCommand {
+function revisionAccept(commandId = "revision-1", draftDigest = "revision-digest"): ProgramAdaptiveSemanticCommand {
   return {
     ...common,
     commandId,
     type: "program.semantic_revision.accept",
     programStateId: "program-a",
     draftId: "revision-draft",
-    draftDigest: "revision-digest",
+    draftDigest,
   };
 }
 
@@ -186,7 +186,7 @@ describe("A1 Application semantic authority", () => {
     });
   });
 
-  it("durably deduplicates the additive semantic Application command surface", async () => {
+  it("durably deduplicates the exact additive semantic Application command", async () => {
     const fixture = fakeStore();
     let calls = 0;
     const service = new ProgramAdaptiveApplicationServiceV1({
@@ -213,10 +213,12 @@ describe("A1 Application semantic authority", () => {
     expect(first).toMatchObject({ decision: "accepted", cursor: 42, programStateRevision: 7 });
     expect(second).toMatchObject({ decision: "duplicate", cursor: 42, draftId: "baseline-draft" });
     expect(calls).toBe(1);
-    expect(fixture.events.filter((event) => event.type === "application.adaptive_program.command.decided")).toHaveLength(1);
+    const decision = fixture.events.find((event) => event.type === "application.adaptive_program.command.decided");
+    expect(decision).toBeDefined();
+    expect((decision!.payload as { command: ProgramAdaptiveSemanticCommand }).command).toEqual(baselineSeal());
   });
 
-  it("fails a reused commandId closed when client or semantic command identity differs", async () => {
+  it("fails a reused commandId closed when semantic fields change within the same command type", async () => {
     const fixture = fakeStore();
     let calls = 0;
     const service = new ProgramAdaptiveApplicationServiceV1({
@@ -225,10 +227,26 @@ describe("A1 Application semantic authority", () => {
       base: basePort(),
       semantic: { execute: async () => { calls += 1; return { decision: "accepted" }; } },
     });
-    await service.executeAdaptiveProgram(baselineSeal("same-id"));
-    const conflicting = revisionAccept("same-id");
-    const result = await service.executeAdaptiveProgram(conflicting);
+    await service.executeAdaptiveProgram(baselineSeal("same-id", 7));
+    const result = await service.executeAdaptiveProgram(baselineSeal("same-id", 8));
     expect(result).toMatchObject({ decision: "stale", reasonCode: "application_command_identity_conflict" });
+    expect(calls).toBe(1);
+  });
+
+  it("fails a reused commandId closed when the semantic command kind or exact draft digest changes", async () => {
+    const fixture = fakeStore();
+    let calls = 0;
+    const service = new ProgramAdaptiveApplicationServiceV1({
+      store: fixture.store,
+      admission: new CanonicalAdmissionQueue(fixture.store),
+      base: basePort(),
+      semantic: { execute: async () => { calls += 1; return { decision: "accepted" }; } },
+    });
+    await service.executeAdaptiveProgram(revisionAccept("same-id", "digest-a"));
+    const changedDigest = await service.executeAdaptiveProgram(revisionAccept("same-id", "digest-b"));
+    expect(changedDigest).toMatchObject({ decision: "stale", reasonCode: "application_command_identity_conflict" });
+    const changedKind = await service.executeAdaptiveProgram(baselineSeal("same-id"));
+    expect(changedKind).toMatchObject({ decision: "stale", reasonCode: "application_command_identity_conflict" });
     expect(calls).toBe(1);
   });
 });
