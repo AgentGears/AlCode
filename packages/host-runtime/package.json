@@ -13,6 +13,10 @@
     "./adaptive-v2": {
       "types": "./src/adaptive-v2.ts",
       "import": "./src/adaptive-v2.ts"
+    },
+    "./adaptive-production-v1": {
+      "types": "./src/program-adaptive-production-v1.ts",
+      "import": "./src/program-adaptive-production-v1.ts"
     }
   },
   "scripts": {
