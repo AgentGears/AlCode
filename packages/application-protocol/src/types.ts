@@ -23,6 +23,12 @@ export interface ProgramSessionAttachCommand extends ApplicationCommandBase { ty
 export interface ProgramSessionDetachCommand extends ApplicationCommandBase { type: "program.session.detach"; programStateId: string; expectedProgramRevision: number; }
 export type ProgramCommand = ProgramCreationAcceptCommand | ProgramRebaseAcceptCommand | ProgramCancelCommand | ProgramSessionAttachCommand | ProgramSessionDetachCommand;
 
+/** A1 semantic authority is an additive Application surface; legacy ApplicationCommand semantics remain byte-for-byte unchanged. */
+export interface ProgramSemanticBaselineSealCommand extends ApplicationCommandBase { type: "program.semantic_baseline.seal"; programStateId: string; expectedProgramStateRevision: number; }
+export interface ProgramSemanticBaselineAcceptCommand extends ApplicationCommandBase { type: "program.semantic_baseline.accept"; programStateId: string; draftId: string; draftDigest: string; }
+export interface ProgramSemanticRevisionAcceptCommand extends ApplicationCommandBase { type: "program.semantic_revision.accept"; programStateId: string; draftId: string; draftDigest: string; }
+export type ProgramAdaptiveSemanticCommand = ProgramSemanticBaselineSealCommand | ProgramSemanticBaselineAcceptCommand | ProgramSemanticRevisionAcceptCommand;
+
 export type ApplicationCommand = InputSubmitCommand | ExecutionCancelCommand | QueuePromoteCommand | PermissionRespondCommand | ProgramCommand;
 
 export interface PluginCommandBase extends ApplicationCommandBase { registrationId?: string; }
@@ -33,7 +39,26 @@ export interface PluginRefreshCommand extends PluginCommandBase { type: "plugin.
 export interface PluginUnregisterCommand extends PluginCommandBase { type: "plugin.unregister"; registrationId: string; }
 export type PluginCommand = PluginRegisterCommand | PluginEnableCommand | PluginDisableCommand | PluginRefreshCommand | PluginUnregisterCommand;
 
-export interface CommandDecision { protocolVersion: ApplicationProtocolVersion; commandId: ApplicationCommandId; sessionId: string; decision: CommandDecisionKind; cursor: ApplicationCursor; reasonCode?: string; admittedDisposition?: AdmittedDisposition; queueItemId?: string; targetExecutionId?: string; programStateId?: string; programRevision?: number; draftId?: string; }
+export interface CommandDecision {
+  protocolVersion: ApplicationProtocolVersion;
+  commandId: ApplicationCommandId;
+  sessionId: string;
+  decision: CommandDecisionKind;
+  cursor: ApplicationCursor;
+  reasonCode?: string;
+  admittedDisposition?: AdmittedDisposition;
+  queueItemId?: string;
+  targetExecutionId?: string;
+  programStateId?: string;
+  /** Legacy fixed-topology whole-state CAS result field retained unchanged. */
+  programRevision?: number;
+  /** A1 explicit whole-state CAS result, distinct from semantic revision identity. */
+  programStateRevision?: number;
+  /** A1 semantic ProgramRevision identity. */
+  programRevisionId?: string;
+  draftId?: string;
+  draftDigest?: string;
+}
 export type PublicTranscriptRole = "user" | "assistant" | "tool_result";
 export interface PublicTranscriptMessage { eventId: string; sequence: number; role: PublicTranscriptRole; text: string; }
 export type PublicOperationLifecycle = "requested" | "started" | "terminal";
@@ -80,4 +105,4 @@ export interface OutputDeltaEvent extends ApplicationEventBase { type: "output.d
 export interface ProtocolTerminalEvent extends ApplicationEventBase { type: "protocol.terminal"; reasonCode: "session_stopped" | "authorization_revoked" | "host_shutdown"; }
 export type ApplicationEvent = TranscriptMessageAppendedEvent | ExecutionUpsertedEvent | OperationUpsertedEvent | InputAdmittedEvent | QueueItemUpsertedEvent | QueueItemRemovedEvent | PermissionInteractionUpsertedEvent | SessionStateUpdatedEvent | OutputDeltaEvent | ProtocolTerminalEvent;
 export type ApplicationRecoveryResult = { mode: "resume"; fromCursor: ApplicationCursor; toCursor: ApplicationCursor; events: ApplicationEvent[] } | { mode: "snapshot"; snapshot: ApplicationSnapshot; reason: "initial" | "stale" | "gap" | "history_unavailable" };
-export interface ApplicationServicePort { execute(command: ApplicationCommand): Promise<CommandDecision>; getSnapshot(sessionId: string): Promise<ApplicationSnapshot>; recover(sessionId: string, cursor?: ApplicationCursor): Promise<ApplicationRecoveryResult>; subscribe(sessionId: string, cursor: ApplicationCursor, listener: (event: ApplicationEvent) => void): () => void; executePlugin?(command: PluginCommand): Promise<CommandDecision>; }
+export interface ApplicationServicePort { execute(command: ApplicationCommand): Promise<CommandDecision>; executeAdaptiveProgram?(command: ProgramAdaptiveSemanticCommand): Promise<CommandDecision>; getSnapshot(sessionId: string): Promise<ApplicationSnapshot>; recover(sessionId: string, cursor?: ApplicationCursor): Promise<ApplicationRecoveryResult>; subscribe(sessionId: string, cursor: ApplicationCursor, listener: (event: ApplicationEvent) => void): () => void; executePlugin?(command: PluginCommand): Promise<CommandDecision>; }
