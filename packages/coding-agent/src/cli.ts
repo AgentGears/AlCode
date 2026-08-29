@@ -350,7 +350,7 @@ async function main(): Promise<void> {
         if (await adaptiveProduct.semanticRecovery.isAdaptive(programStateId)) {
           await adaptiveProduct.terminal.cancel({
             programStateId,
-            expectedProgramRevision: program.revision,
+            expectedProgramRevision: await adaptiveProduct.currentOperationalRevision(programStateId),
             sessionId: session.sessionId,
             actor: "application",
             client: "alcode-cli",

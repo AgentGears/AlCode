@@ -25,4 +25,9 @@ describe("A1 CLI adaptive production wiring", () => {
     expect(cli).toContain("recoverAfterAgentReplacement(locked.store, fixedRuntime.recovery)");
     expect(cli).not.toContain("runtime.scheduler.dispatchNext");
   });
+
+  it("uses the raw operational CAS revision for adaptive cancellation", () => {
+    expect(cli).toContain("expectedProgramRevision: await adaptiveProduct.currentOperationalRevision(programStateId)");
+    expect(cli).not.toContain("expectedProgramRevision: program.revision,\n            sessionId: session.sessionId");
+  });
 });

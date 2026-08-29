@@ -1,20 +1,27 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { ProgramAttemptProjectionV1 } from "@alcode/agent-protocol";
+import type { PersistedDomainEvent } from "@alcode/events";
 import {
   asProgramAttemptId,
   asProgramRevisionId,
   asProgramStateId,
   asProgramWorkItemId,
+  createProgramState,
   type ProgramSemanticStateV1,
   type WorkAuthorityEnvelopeV1,
 } from "@alcode/program-state";
+import type { WorkspaceEventStore } from "@alcode/storage";
 import { issueProgramAttemptAuthorityV2 } from "./program-attempt-authority-v2.ts";
 import type { ProgramRootOperationAuthorityV1 } from "./program-dispatch.ts";
-import { ProgramAdaptiveOperationalCurrentStateSourceV2 } from "./program-adaptive-operational-v2.ts";
+import {
+  ProgramAdaptiveOperationalCurrentStateSourceV2,
+  validatePostSemanticProgramStateSequenceV2,
+} from "./program-adaptive-operational-v2.ts";
 import {
   ProgramAdaptiveProductionCompositionErrorV1,
   ProgramAdaptiveProductionCutSourceV1,
+  adaptiveRawProgramRevisionV1,
 } from "./program-adaptive-production-v1.ts";
 
 const sessionId = "018f0000-0000-7000-8000-000000000c01";
@@ -194,6 +201,45 @@ function cutSource(overrides: { operationAttemptId?: string } = {}) {
   });
 }
 
+function rawProgramState(revision: number) {
+  const state = createProgramState({
+    programStateId,
+    sourceSessionId: sessionId as never,
+    objective: "Raw adaptive revision",
+    workItems: [{
+      workItemId,
+      creationOrder: 0,
+      description: "Raw work",
+      dependencyIds: [],
+      affectedPaths: ["src/raw.ts"],
+    }],
+    verification: [],
+    outputSlots: [],
+    productionSteps: [],
+  });
+  return { ...state, revision };
+}
+
+function storeWithRawRevision(revision: number): WorkspaceEventStore {
+  const state = rawProgramState(revision);
+  const event = {
+    sequence: 1,
+    eventId: "raw-program-state-event",
+    workspaceId: "workspace-adaptive-production",
+    sessionId,
+    programStateId: String(programStateId),
+    occurredAt: "2026-08-29T00:00:00.000Z",
+    type: "program.created",
+    payload: { state },
+    payloadSchemaVersion: 1,
+    producer: { kind: "runtime", component: "test" },
+  } as unknown as PersistedDomainEvent<string, unknown>;
+  return {
+    workspaceId: "workspace-adaptive-production",
+    replay: async function* () { yield event; },
+  } as unknown as WorkspaceEventStore;
+}
+
 describe("A1 production adaptive runtime composition", () => {
   it("builds V2 authority from semantic generations while preserving the independent operational CAS lease", async () => {
     const cut = await cutSource().currentForSession(sessionId, "connection-9");
@@ -234,6 +280,32 @@ describe("A1 production adaptive runtime composition", () => {
       .rejects.toBeInstanceOf(ProgramAdaptiveProductionCompositionErrorV1);
   });
 
+  it("treats adaptive verification transitions as exact trusted post-semantic anchors", () => {
+    const state = rawProgramState(38);
+    const verificationAnchor = {
+      sequence: 10,
+      eventId: "verification-anchor",
+      workspaceId: "workspace-adaptive-production",
+      sessionId,
+      programStateId: String(programStateId),
+      occurredAt: "2026-08-29T00:00:01.000Z",
+      type: "program.transitioned",
+      payload: { state, transitionKind: "attempt.interrupt:verified" },
+      payloadSchemaVersion: 1,
+      producer: { kind: "runtime", component: "program-adaptive-verification-v2" },
+    } as unknown as PersistedDomainEvent<string, unknown>;
+    expect(validatePostSemanticProgramStateSequenceV2(
+      [verificationAnchor],
+      String(programStateId),
+      9,
+      37,
+    )?.state.revision).toBe(38);
+  });
+
+  it("reads the raw operational CAS revision instead of the semantic/Application max revision", async () => {
+    expect(await adaptiveRawProgramRevisionV1(storeWithRawRevision(21), String(programStateId))).toBe(21);
+  });
+
   it("composes around the existing V1 Host and installs a delegating adaptive operation authority", () => {
     const source = readFileSync(new URL("./program-adaptive-production-v1.ts", import.meta.url), "utf8");
     expect(source).not.toContain("new HostRuntime(");
@@ -241,6 +313,7 @@ describe("A1 production adaptive runtime composition", () => {
     expect(source).toContain("delegate: fixed.dispatch");
     expect(source).toContain("adoption: baseline");
     expect(source).toContain("attemptHistory: currentState");
+    expect(source).toContain("currentOperationalRevision");
     expect(source).not.toContain("revision === 1");
   });
 });

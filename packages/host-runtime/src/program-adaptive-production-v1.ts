@@ -241,7 +241,10 @@ export class ProgramAdaptiveProductionCutSourceV1 implements ProgramAdaptiveExec
   }
 }
 
-async function rawProgramRevision(store: WorkspaceEventStore, programStateId: string): Promise<number> {
+export async function adaptiveRawProgramRevisionV1(
+  store: WorkspaceEventStore,
+  programStateId: string,
+): Promise<number> {
   const events: PersistedDomainEvent<string, unknown>[] = [];
   for await (const event of store.replay()) events.push(event);
   return requireAdaptiveRawProgramStateV2(events, programStateId).revision;
@@ -264,7 +267,7 @@ export class ProgramAdaptiveTerminalCompletionPortV1 implements ProgramAdaptiveC
     try {
       const result = await this.terminal.complete({
         programStateId,
-        expectedProgramRevision: await rawProgramRevision(this.store, programStateId),
+        expectedProgramRevision: await adaptiveRawProgramRevisionV1(this.store, programStateId),
         sessionId: asSessionId(sessionId),
       });
       switch (result.status) {
@@ -302,6 +305,7 @@ export interface ProgramAdaptiveProductionRuntimeV1 {
   baselineService: ProgramSemanticBaselineServiceV1;
   revisionControl: ProgramRevisionControlServiceV1;
   semanticApplication: ProgramAdaptiveSemanticApplicationControlV1;
+  currentOperationalRevision(programStateId: string): Promise<number>;
   /** Normal product service: fixed Programs retain automatic first dispatch. */
   createApplicationService(agent: ApplicationAgentControl, maxReplayEvents?: number): ApplicationServicePort;
   /**
@@ -451,6 +455,7 @@ export function createProgramAdaptiveProductionRuntimeV1(
     baselineService,
     revisionControl,
     semanticApplication,
+    currentOperationalRevision: (programStateId) => adaptiveRawProgramRevisionV1(store, programStateId),
     createApplicationService: (agent, maxReplayEvents) =>
       createApplication(agent, fixed.productApplication, maxReplayEvents),
     createBaselineAdoptionApplicationService: (agent, maxReplayEvents) =>
