@@ -89,6 +89,16 @@ export {
   type ProgramAdaptiveSessionRoutingAuthorityV1,
 } from "./program-adaptive-session-classifier-v1.ts";
 export {
+  ProgramAdaptiveApplicationServiceV1,
+  ProgramAdaptiveSemanticApplicationControlV1,
+  type ProgramAdaptiveApplicationCommandResultV1,
+  type ProgramAdaptiveApplicationServiceOptionsV1,
+  type ProgramAdaptiveBaselineApplicationAuthorityV1,
+  type ProgramAdaptiveRevisionApplicationAuthorityV1,
+  type ProgramAdaptiveSemanticApplicationControlOptionsV1,
+  type ProgramAdaptiveSemanticApplicationPortV1,
+} from "./program-adaptive-application-control-v1.ts";
+export {
   PROGRAM_SEMANTIC_BASELINE_DRAFT_PROFILE,
   ProgramSemanticBaselineBlockedError,
   ProgramSemanticBaselineControlError,
