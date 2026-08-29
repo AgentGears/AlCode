@@ -79,6 +79,16 @@ export {
   type ProgramAdaptiveRootOperationAuthorityOptionsV2,
 } from "./program-adaptive-operation-v2.ts";
 export {
+  ProgramAdaptiveSessionClassificationErrorV1,
+  ProgramAdaptiveSessionClassifierV1,
+  type ProgramAdaptiveAdoptionRegistryV1,
+  type ProgramAdaptiveCurrentStateRevisionSourceV1,
+  type ProgramAdaptiveSessionClassificationV1,
+  type ProgramAdaptiveSessionClassifierOptionsV1,
+  type ProgramAdaptiveSessionModeV1,
+  type ProgramAdaptiveSessionRoutingAuthorityV1,
+} from "./program-adaptive-session-classifier-v1.ts";
+export {
   PROGRAM_SEMANTIC_BASELINE_DRAFT_PROFILE,
   ProgramSemanticBaselineBlockedError,
   ProgramSemanticBaselineControlError,
