@@ -2,8 +2,9 @@ import type {
   ApplicationServicePort,
 } from "@alcode/application-protocol";
 import type { ProgramAttemptProjectionV1, ProgramAttemptProjectionV2 } from "@alcode/agent-protocol";
-import { asSessionId, type SessionId } from "@alcode/events";
+import { asSessionId, type PersistedDomainEvent, type SessionId } from "@alcode/events";
 import { isProgramSemanticRequirementComplete, type ProgramSemanticWorkItemV1 } from "@alcode/program-state";
+import type { WorkspaceEventStore } from "@alcode/storage";
 import type { HostArtifactStore } from "./artifact-store.ts";
 import type { ApplicationAgentControl } from "./application-service.ts";
 import { HostApplicationService } from "./application-service.ts";
@@ -14,7 +15,10 @@ import {
   type ProgramAdaptiveCompletionResultV2,
   type ProgramAdaptiveEligibilityFactSourceV2,
 } from "./program-adaptive-control-v2.ts";
-import { ProgramAdaptiveAdmissionServiceV2 } from "./program-adaptive-admission-v2.ts";
+import {
+  ProgramAdaptiveAdmissionServiceV2,
+  requireAdaptiveRawProgramStateV2,
+} from "./program-adaptive-admission-v2.ts";
 import {
   ProgramAdaptiveApplicationServiceV1,
   ProgramAdaptiveSemanticApplicationControlV1,
@@ -30,6 +34,11 @@ import {
   ProgramAdaptiveSessionClassifierV1,
   type ProgramAdaptiveSessionRoutingAuthorityV1,
 } from "./program-adaptive-session-classifier-v1.ts";
+import {
+  ProgramAdaptiveVerificationControlV2,
+  ProgramAdaptiveVerificationEventStoreV2,
+  ProgramAdaptiveVerificationSchedulerV2,
+} from "./program-adaptive-verification-control-v2.ts";
 import type { ProgramApplicationPortV1 } from "./program-application.ts";
 import type {
   ProgramAgentGenerationAuthorityV1,
@@ -109,7 +118,7 @@ function projectV2(
   if (work === undefined
       || work.requirementState !== "required"
       || work.topologyState !== "leaf"
-      || (work.satisfactionState !== "active" && work.satisfactionState !== "awaiting_verification")) {
+      || work.satisfactionState !== "active") {
     throw new ProgramAdaptiveProductionCompositionErrorV1("Adaptive projection target is not current executable work");
   }
   const dependencies = work.dependencyIds.map((dependencyId) => {
@@ -151,8 +160,9 @@ function projectV2(
  * Production protected-cut source for the V2 Agent boundary. It reuses the
  * bounded V1 operational projection for evidence/artifact summaries, but all
  * structural work/dependency authority is rebuilt from the current semantic
- * graph. The Workspace coordinator may be held across the callback; the
- * canonical admission queue is deliberately not held across external effects.
+ * graph. Fresh V2 Agent authority is only minted for executable `active` work;
+ * awaiting-verification work remains Host-owned while existing admitted
+ * operation/effect truth is preserved separately.
  */
 export class ProgramAdaptiveProductionCutSourceV1 implements ProgramAdaptiveExecutionCutSourceV2 {
   constructor(private readonly options: ProgramAdaptiveProductionCutSourceOptionsV1) {}
@@ -164,6 +174,9 @@ export class ProgramAdaptiveProductionCutSourceV1 implements ProgramAdaptiveExec
     const semantic = await this.options.semantic.currentForSession(sessionId);
     if (semantic === undefined || semantic.lifecycle !== "active" || semantic.activeAttempt === null) return undefined;
     if (!semantic.attachedSessionIds.includes(sessionId)) return undefined;
+    const semanticWork = semantic.semanticState.workItems.find((candidate) =>
+      String(candidate.workItemId) === String(semantic.activeAttempt!.workItemId));
+    if (semanticWork?.satisfactionState !== "active") return undefined;
 
     const session = asSessionId(sessionId);
     const operation = await this.options.operations.resolveCurrentOperation(session);
@@ -228,8 +241,15 @@ export class ProgramAdaptiveProductionCutSourceV1 implements ProgramAdaptiveExec
   }
 }
 
+async function rawProgramRevision(store: WorkspaceEventStore, programStateId: string): Promise<number> {
+  const events: PersistedDomainEvent<string, unknown>[] = [];
+  for await (const event of store.replay()) events.push(event);
+  return requireAdaptiveRawProgramStateV2(events, programStateId).revision;
+}
+
 export class ProgramAdaptiveTerminalCompletionPortV1 implements ProgramAdaptiveCompletionControlPortV2 {
   constructor(
+    private readonly store: WorkspaceEventStore,
     private readonly semantic: ProgramAdaptiveOperationalCurrentStateSourceV2,
     private readonly terminal: ProgramAdaptiveTerminalServiceV2,
   ) {}
@@ -240,10 +260,11 @@ export class ProgramAdaptiveTerminalCompletionPortV1 implements ProgramAdaptiveC
     if (current.lifecycle === "completed") return { status: "completed", duplicate: true };
     if (current.lifecycle === "cancelled") return { status: "cancelled" };
     if (!current.attachedSessionIds.includes(sessionId)) return { status: "stale", reason: "Completion session is no longer attached" };
+    const programStateId = String(current.semanticState.programStateId);
     try {
       const result = await this.terminal.complete({
-        programStateId: String(current.semanticState.programStateId),
-        expectedProgramRevision: current.programStateRevision,
+        programStateId,
+        expectedProgramRevision: await rawProgramRevision(this.store, programStateId),
         sessionId: asSessionId(sessionId),
       });
       switch (result.status) {
@@ -334,7 +355,7 @@ export function createProgramAdaptiveProductionRuntimeV1(
     agents: fixed.host.programAgents,
     operations: fixed.dispatch,
   });
-  const scheduler = new ProgramSemanticExecutionSchedulerV2({
+  const semanticScheduler = new ProgramSemanticExecutionSchedulerV2({
     workspaceCoordinator: fixed.workspaceCoordinator,
     semantic: currentState,
     operational: admission,
@@ -342,6 +363,14 @@ export function createProgramAdaptiveProductionRuntimeV1(
     agents: { currentAgentGeneration: (sessionId) => fixed.host.programAgents.currentAgentGeneration(sessionId) },
     attempts: admission,
   });
+  const verificationStore = new ProgramAdaptiveVerificationEventStoreV2(store, currentState);
+  const verificationControl = new ProgramAdaptiveVerificationControlV2({
+    store: verificationStore,
+    admission: fixed.host.admission,
+    currentState,
+    verification: fixed.verification.withStore(verificationStore),
+  });
+  const scheduler = new ProgramAdaptiveVerificationSchedulerV2(verificationControl, semanticScheduler);
   const terminal = new ProgramAdaptiveTerminalServiceV2({
     store,
     admission: fixed.host.admission,
@@ -353,7 +382,7 @@ export function createProgramAdaptiveProductionRuntimeV1(
   });
   const control = new ProgramAdaptiveExecutionControlV2({
     scheduler,
-    completion: new ProgramAdaptiveTerminalCompletionPortV1(currentState, terminal),
+    completion: new ProgramAdaptiveTerminalCompletionPortV1(store, currentState, terminal),
   });
   const operationAuthority = new ProgramAdaptiveRootOperationAuthorityV2({
     store,
