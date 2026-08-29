@@ -69,7 +69,7 @@ function materializeForVerification(
   return {
     ...materialized,
     workItems: materialized.workItems.map((work) =>
-      requirementById.get(String(work.workItemId)) === "not_required"
+      requirementById.get(String(work.workItemId)) !== "required"
         ? { ...work, lifecycle: "completed" as const }
         : work),
   };
@@ -316,12 +316,13 @@ export class ProgramAdaptiveVerificationControlV2 {
             result = await this.options.verification.satisfyWorkspacePathState(command);
             break;
           case "artifact_present": {
-            const slotBound = state.artifacts.some((artifact) => artifact.outputSlotId === pending.predicate.outputSlotId);
+            const outputSlotId = pending.predicate.outputSlotId;
+            const slotBound = state.artifacts.some((artifact) => artifact.outputSlotId === outputSlotId);
             if (!slotBound) {
               const produced = await this.options.verification.executeProductionStep({
                 programStateId,
                 expectedProgramRevision: state.revision,
-                outputSlotId: String(pending.predicate.outputSlotId),
+                outputSlotId: String(outputSlotId),
                 sessionId: sessionId as SessionId,
               });
               if (produced.status !== "bound") {
@@ -336,6 +337,10 @@ export class ProgramAdaptiveVerificationControlV2 {
             });
             break;
           }
+          default:
+            throw new ProgramVerificationControlError(
+              `Unsupported adaptive verification predicate kind: ${String(pending.predicate.kind)}`,
+            );
         }
       } catch (error) {
         if (error instanceof ProgramVerificationStaleError || error instanceof ProgramRevisionConflictError) {
