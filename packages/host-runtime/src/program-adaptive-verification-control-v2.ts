@@ -180,6 +180,19 @@ async function replayAll(store: WorkspaceEventStore): Promise<PersistedDomainEve
   return events;
 }
 
+function semanticWorkForVerification(
+  semanticState: ProgramSemanticStateV1,
+  work: ProgramWorkItem,
+) {
+  const semanticWork = semanticState.workItems.find((candidate) => candidate.workItemId === work.workItemId);
+  if (semanticWork === undefined || semanticWork.requirementState !== "required") {
+    throw new ProgramVerificationControlError(
+      `Adaptive verification work ${String(work.workItemId)} is not a current required semantic WorkItem`,
+    );
+  }
+  return semanticWork;
+}
+
 /**
  * Resolve verification ownership only from the frozen semantic subject binding.
  * Predicate shape, affected paths, and already-existing evidence are not
@@ -190,13 +203,7 @@ export function requiredAdaptiveVerificationForCurrentWorkV2(
   semanticState: ProgramSemanticStateV1,
   work: ProgramWorkItem,
 ): VerificationObligation[] {
-  const semanticWork = semanticState.workItems.find((candidate) => candidate.workItemId === work.workItemId);
-  if (semanticWork === undefined || semanticWork.requirementState !== "required") {
-    throw new ProgramVerificationControlError(
-      `Adaptive verification work ${String(work.workItemId)} is not a current required semantic WorkItem`,
-    );
-  }
-
+  const semanticWork = semanticWorkForVerification(semanticState, work);
   const bindings = new Map(
     semanticState.verificationBindings.map((binding) => [String(binding.obligationId), binding] as const),
   );
@@ -224,6 +231,48 @@ export function requiredAdaptiveVerificationForCurrentWorkV2(
       case "program":
         return programCompleteIfCurrentWorkSatisfied;
     }
+  });
+}
+
+/**
+ * Program-scoped artifact verification may be deferred until semantic closure,
+ * but an artifact production step still belongs to its declared producer
+ * WorkItem. Produce that durable artifact while the owning WorkItem/Attempt is
+ * current so the final leaf never borrows another WorkItem's execution authority.
+ */
+export function requiredAdaptiveProgramArtifactProductionForCurrentWorkV2(
+  state: ProgramState,
+  semanticState: ProgramSemanticStateV1,
+  work: ProgramWorkItem,
+): VerificationObligation[] {
+  const semanticWork = semanticWorkForVerification(semanticState, work);
+  const bindings = new Map(
+    semanticState.verificationBindings.map((binding) => [String(binding.obligationId), binding] as const),
+  );
+
+  return state.verification.filter((obligation) => {
+    const binding = bindings.get(String(obligation.obligationId));
+    if (binding === undefined) {
+      throw new ProgramVerificationControlError(
+        `Adaptive verification obligation ${String(obligation.obligationId)} lacks its semantic subject binding`,
+      );
+    }
+    if (binding.subject.kind !== "program" || obligation.predicate.kind !== "artifact_present") return false;
+    const slot = semanticState.outputSlots.find((candidate) =>
+      candidate.outputSlotId === obligation.predicate.outputSlotId);
+    if (slot === undefined) {
+      throw new ProgramVerificationControlError(
+        `Program-scoped artifact verification ${String(obligation.obligationId)} lacks its semantic output slot`,
+      );
+    }
+    const step = semanticState.productionSteps.find((candidate) =>
+      candidate.productionStepId === slot.productionStepId);
+    if (step === undefined) {
+      throw new ProgramVerificationControlError(
+        `Program-scoped artifact verification ${String(obligation.obligationId)} lacks its semantic production step`,
+      );
+    }
+    return step.producerWorkItemId === semanticWork.workItemId;
   });
 }
 
@@ -290,7 +339,7 @@ export class ProgramAdaptiveVerificationControlV2 {
     }
     if (work.lifecycle !== "awaiting_verification") return { status: "not_ready" };
 
-    const maxVerificationPasses = Math.max(1, state.verification.length * 2 + 2);
+    const maxVerificationPasses = Math.max(1, state.verification.length * 3 + state.productionSteps.length + 2);
     for (let pass = 0; pass < maxVerificationPasses; pass += 1) {
       state = latestProgramState(await replayAll(this.options.store), programStateId);
       const currentAttempt = state.activeAttempt;
@@ -305,6 +354,39 @@ export class ProgramAdaptiveVerificationControlV2 {
           || String(semantic.activeAttempt.programAttemptId) !== String(currentAttempt.programAttemptId)) {
         return { status: "stale" };
       }
+
+      const producerArtifact = requiredAdaptiveProgramArtifactProductionForCurrentWorkV2(
+        state,
+        semantic.semanticState,
+        currentWorkItem,
+      ).find((obligation) => {
+        if (isVerificationCurrent(obligation) || obligation.predicate.kind !== "artifact_present") return false;
+        return !state.artifacts.some((artifact) => artifact.outputSlotId === obligation.predicate.outputSlotId);
+      });
+      if (producerArtifact !== undefined) {
+        if (producerArtifact.predicate.kind !== "artifact_present") {
+          throw new ProgramVerificationControlError("Adaptive program artifact production lost its predicate identity");
+        }
+        try {
+          const produced = await this.options.verification.executeProductionStep({
+            programStateId,
+            expectedProgramRevision: state.revision,
+            outputSlotId: String(producerArtifact.predicate.outputSlotId),
+            sessionId: sessionId as SessionId,
+          });
+          if (produced.status !== "bound") {
+            await this.returnCurrentWorkToPending(programStateId, sessionId as SessionId, String(currentAttempt.programAttemptId));
+            return { status: "advanced" };
+          }
+          continue;
+        } catch (error) {
+          if (error instanceof ProgramVerificationStaleError || error instanceof ProgramRevisionConflictError) {
+            return { status: "stale" };
+          }
+          throw error;
+        }
+      }
+
       const pending = requiredAdaptiveVerificationForCurrentWorkV2(
         state,
         semantic.semanticState,

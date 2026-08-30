@@ -235,6 +235,9 @@ async function main(): Promise<void> {
   try {
     await runtime.host.startup();
     const session = await runtime.host.sessions.openOrResume();
+    if (session.resumed) {
+      await adaptiveProduct.admission.recoverAgentReplacement(String(session.sessionId));
+    }
     let connection = await supervisor.start();
 
     const attachConnection = async (
@@ -407,13 +410,13 @@ async function main(): Promise<void> {
         }
 
         if (supervisor.getCurrent() === null) {
-          connection = await supervisor.start();
-          await attachConnection(connection, "agent_replaced");
           await recoverAfterAgentReplacement(
             locked.store,
             fixedRuntime.recovery,
             { recover: () => adaptiveProduct.admission.recoverAgentReplacement(String(session.sessionId)) },
           );
+          connection = await supervisor.start();
+          await attachConnection(connection, "agent_replaced");
         }
 
         try {

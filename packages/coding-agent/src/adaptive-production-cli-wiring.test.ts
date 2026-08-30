@@ -27,6 +27,22 @@ describe("A1 CLI adaptive production wiring", () => {
     expect(cli).not.toContain("runtime.scheduler.dispatchNext");
   });
 
+  it("recovers a dead adaptive generation before attaching its replacement", () => {
+    const recovery = cli.indexOf("await recoverAfterAgentReplacement(");
+    const replacementAttach = cli.indexOf('await attachConnection(connection, "agent_replaced")');
+    expect(recovery).toBeGreaterThan(-1);
+    expect(replacementAttach).toBeGreaterThan(recovery);
+  });
+
+  it("retires persisted adaptive Attempt authority after Host reopen before the first Agent attachment", () => {
+    const sessionOpen = cli.indexOf("const session = await runtime.host.sessions.openOrResume();");
+    const reopenRecovery = cli.indexOf("if (session.resumed) {\n      await adaptiveProduct.admission.recoverAgentReplacement(String(session.sessionId));\n    }");
+    const firstAttach = cli.indexOf("await attachConnection(connection);");
+    expect(sessionOpen).toBeGreaterThan(-1);
+    expect(reopenRecovery).toBeGreaterThan(sessionOpen);
+    expect(firstAttach).toBeGreaterThan(reopenRecovery);
+  });
+
   it("uses the raw operational CAS revision and retries stale adaptive cancellation races", () => {
     expect(cli).toContain("expectedProgramRevision: await adaptiveProduct.currentOperationalRevision(programStateId)");
     expect(cli).toContain("if (error instanceof ProgramTerminalStaleError) continue;");

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  asProgramArtifactProductionStepId,
+  asProgramOutputSlotId,
   asProgramRevisionId,
   asProgramStateId,
   asProgramWorkItemId,
@@ -14,7 +16,10 @@ import {
   type WorkAuthorityEnvelopeV1,
 } from "@alcode/program-state";
 import { planningCanonicalDigest } from "./planning-read.ts";
-import { requiredAdaptiveVerificationForCurrentWorkV2 } from "./program-adaptive-verification-control-v2.ts";
+import {
+  requiredAdaptiveProgramArtifactProductionForCurrentWorkV2,
+  requiredAdaptiveVerificationForCurrentWorkV2,
+} from "./program-adaptive-verification-control-v2.ts";
 
 const programStateId = asProgramStateId("018f0000-0000-7000-8000-000000000f01");
 const sessionId = asSessionId("018f0000-0000-7000-8000-000000000f02");
@@ -25,8 +30,12 @@ const completedChildId = asProgramWorkItemId("verification-binding-completed-chi
 const finalChildId = asProgramWorkItemId("verification-binding-final-child");
 const workObligationId = asVerificationObligationId("verification-binding-operation");
 const programObligationId = asVerificationObligationId("verification-binding-program");
+const artifactObligationId = asVerificationObligationId("verification-binding-program-artifact");
+const outputSlotId = asProgramOutputSlotId("verification-binding-output");
+const productionStepId = asProgramArtifactProductionStepId("verification-binding-production");
 const revisionId = asProgramRevisionId("verification-binding-r1");
 const operationArgs = { command: "verify-current-work" } as const;
+const productionArgs = { format: "artifact" } as const;
 
 const initial = createProgramState({
   programStateId,
@@ -90,6 +99,14 @@ function envelope(anchorWorkItemId: ReturnType<typeof asProgramWorkItemId>): Wor
     maximumTopologyExpansion: 8,
     mandatoryVerificationIds: [workObligationId, programObligationId],
     forbiddenChangeKinds: ["delete_repository"],
+  };
+}
+
+function artifactEnvelope(anchorWorkItemId: ReturnType<typeof asProgramWorkItemId>): WorkAuthorityEnvelopeV1 {
+  return {
+    ...envelope(anchorWorkItemId),
+    allowedEffectClasses: ["fs.read", "fs.write"],
+    mandatoryVerificationIds: [artifactObligationId],
   };
 }
 
@@ -269,6 +286,85 @@ function decomposedFinalLeafFixture() {
   return { raw, semantic };
 }
 
+function programScopedArtifactFixture(
+  firstLifecycle: ProgramWorkLifecycle,
+  secondLifecycle: ProgramWorkLifecycle,
+  firstSatisfaction: ProgramSatisfactionState,
+  secondSatisfaction: ProgramSatisfactionState,
+) {
+  const raw = createProgramState({
+    programStateId,
+    sourceSessionId: sessionId,
+    objective: "Produce a program-scoped artifact under its owning WorkItem",
+    workItems: [
+      {
+        workItemId: firstWorkId,
+        creationOrder: 0,
+        description: "Own the artifact production step",
+        dependencyIds: [],
+        affectedPaths: ["src/producer.ts"],
+      },
+      {
+        workItemId: secondWorkId,
+        creationOrder: 1,
+        description: "Final semantic work",
+        dependencyIds: [],
+        affectedPaths: ["src/final.ts"],
+      },
+    ],
+    verification: [{
+      obligationId: artifactObligationId,
+      predicate: { kind: "artifact_present", outputSlotId },
+      freshnessScope: { kind: "workspace" },
+    }],
+    outputSlots: [{ outputSlotId, productionStepId }],
+    productionSteps: [{
+      productionStepId,
+      producerWorkItemId: firstWorkId,
+      outputChannel: "artifact",
+      specId: "produce-program-artifact",
+      specVersion: 1,
+      canonicalArgs: productionArgs,
+      canonicalArgsDigest: planningCanonicalDigest(productionArgs),
+    }],
+  });
+  raw.workItems = raw.workItems.map((work) => ({
+    ...work,
+    lifecycle: work.workItemId === firstWorkId ? firstLifecycle : secondLifecycle,
+  }));
+
+  const semantic: ProgramSemanticStateV1 = {
+    programStateId,
+    currentRevision: {
+      programRevisionId: revisionId,
+      parentProgramRevisionId: null,
+      ordinal: 1,
+      changeClass: "initial",
+      acceptedAtStateRevision: 1,
+      admissionEventId: "verification-binding-artifact-baseline",
+      sourceDraftId: null,
+      sourceDraftDigest: null,
+    },
+    workItems: raw.workItems.map((work) => ({
+      ...work,
+      workItemGeneration: 1,
+      requirementState: "required" as const,
+      topologyState: "leaf" as const,
+      satisfactionState: work.workItemId === firstWorkId ? firstSatisfaction : secondSatisfaction,
+      parentWorkItemId: null,
+      authorityEnvelope: artifactEnvelope(work.workItemId),
+    })),
+    verification: raw.verification,
+    verificationBindings: [{
+      obligationId: artifactObligationId,
+      subject: { kind: "program" },
+    }],
+    outputSlots: raw.outputSlots,
+    productionSteps: raw.productionSteps,
+  };
+  return { raw, semantic };
+}
+
 describe("adaptive verification semantic bindings", () => {
   it("selects a pathless operation_result from the authoritative binding while other work remains incomplete", () => {
     const state = operationalState("awaiting_verification", "pending");
@@ -300,5 +396,45 @@ describe("adaptive verification semantic bindings", () => {
     const selected = requiredAdaptiveVerificationForCurrentWorkV2(raw, semantic, current);
 
     expect(selected.map((obligation) => obligation.obligationId)).toEqual([programObligationId]);
+  });
+
+  it("produces a deferred program-scoped artifact only while its declared producer WorkItem owns the Attempt", () => {
+    const producer = programScopedArtifactFixture(
+      "awaiting_verification",
+      "pending",
+      "awaiting_verification",
+      "pending",
+    );
+    const producerWork = producer.raw.workItems.find((work) => work.workItemId === firstWorkId)!;
+
+    expect(requiredAdaptiveProgramArtifactProductionForCurrentWorkV2(
+      producer.raw,
+      producer.semantic,
+      producerWork,
+    ).map((obligation) => obligation.obligationId)).toEqual([artifactObligationId]);
+    expect(requiredAdaptiveVerificationForCurrentWorkV2(
+      producer.raw,
+      producer.semantic,
+      producerWork,
+    )).toEqual([]);
+
+    const final = programScopedArtifactFixture(
+      "completed",
+      "awaiting_verification",
+      "satisfied",
+      "awaiting_verification",
+    );
+    const finalWork = final.raw.workItems.find((work) => work.workItemId === secondWorkId)!;
+
+    expect(requiredAdaptiveProgramArtifactProductionForCurrentWorkV2(
+      final.raw,
+      final.semantic,
+      finalWork,
+    )).toEqual([]);
+    expect(requiredAdaptiveVerificationForCurrentWorkV2(
+      final.raw,
+      final.semantic,
+      finalWork,
+    ).map((obligation) => obligation.obligationId)).toEqual([artifactObligationId]);
   });
 });
