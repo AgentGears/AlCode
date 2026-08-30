@@ -11,6 +11,7 @@ import {
   applyProgramTransition,
   assertValidProgramState,
   isVerificationCurrent,
+  type ProgramSemanticStateV1,
   type ProgramState,
   type ProgramWorkItem,
   type VerificationObligation,
@@ -178,48 +179,47 @@ async function replayAll(store: WorkspaceEventStore): Promise<PersistedDomainEve
   return events;
 }
 
-function pathOverlaps(left: string, right: string): boolean {
-  if (left === right) return true;
-  const l = left.endsWith("/") ? left : `${left}/`;
-  const r = right.endsWith("/") ? right : `${right}/`;
-  return l.startsWith(r) || r.startsWith(l);
-}
-
-function artifactObligationOwnedByWork(
+/**
+ * Resolve verification ownership only from the frozen semantic subject binding.
+ * Predicate shape, affected paths, and already-existing evidence are not
+ * authority for deciding which WorkItem must carry an obligation.
+ */
+export function requiredAdaptiveVerificationForCurrentWorkV2(
   state: ProgramState,
-  work: ProgramWorkItem,
-  obligation: VerificationObligation,
-): boolean {
-  const predicate = obligation.predicate;
-  if (predicate.kind !== "artifact_present") return false;
-  const slot = state.outputSlots.find((item) => item.outputSlotId === predicate.outputSlotId);
-  if (slot === undefined) return false;
-  const step = state.productionSteps.find((item) => item.productionStepId === slot.productionStepId);
-  return step?.producerWorkItemId === work.workItemId;
-}
-
-function obligationIsWorkBound(
-  state: ProgramState,
-  work: ProgramWorkItem,
-  obligation: VerificationObligation,
-): boolean {
-  if (artifactObligationOwnedByWork(state, work, obligation)) return true;
-  const predicate = obligation.predicate;
-  if (predicate.kind === "workspace_path_state"
-      && work.affectedPaths.some((path) => pathOverlaps(path, predicate.path))) return true;
-  return state.decisiveEvidence.some((evidence) =>
-    evidence.workItemId === work.workItemId
-    && evidence.verificationObligationId === obligation.obligationId);
-}
-
-function requiredForCurrentWork(
-  state: ProgramState,
+  semanticState: ProgramSemanticStateV1,
   work: ProgramWorkItem,
 ): VerificationObligation[] {
+  const semanticWork = semanticState.workItems.find((candidate) => candidate.workItemId === work.workItemId);
+  if (semanticWork === undefined || semanticWork.requirementState !== "required") {
+    throw new ProgramVerificationControlError(
+      `Adaptive verification work ${String(work.workItemId)} is not a current required semantic WorkItem`,
+    );
+  }
+
+  const bindings = new Map(
+    semanticState.verificationBindings.map((binding) => [String(binding.obligationId), binding] as const),
+  );
   const otherIncomplete = state.workItems.some((candidate) =>
     candidate.workItemId !== work.workItemId && candidate.lifecycle !== "completed");
-  return state.verification.filter((obligation) =>
-    obligationIsWorkBound(state, work, obligation) || !otherIncomplete);
+
+  return state.verification.filter((obligation) => {
+    const binding = bindings.get(String(obligation.obligationId));
+    if (binding === undefined) {
+      throw new ProgramVerificationControlError(
+        `Adaptive verification obligation ${String(obligation.obligationId)} lacks its semantic subject binding`,
+      );
+    }
+    switch (binding.subject.kind) {
+      case "work_item":
+        return binding.subject.workItemId === semanticWork.workItemId
+          && binding.subject.workItemGeneration === semanticWork.workItemGeneration;
+      case "output":
+        return binding.subject.producerWorkItemId === semanticWork.workItemId
+          && binding.subject.producerWorkItemGeneration === semanticWork.workItemGeneration;
+      case "program":
+        return !otherIncomplete;
+    }
+  });
 }
 
 function currentWork(state: ProgramState): ProgramWorkItem | undefined {
@@ -294,7 +294,17 @@ export class ProgramAdaptiveVerificationControlV2 {
           || String(currentAttempt.programAttemptId) !== String(attempt.programAttemptId)
           || currentWorkItem.lifecycle !== "awaiting_verification") return { status: "stale" };
 
-      const pending = requiredForCurrentWork(state, currentWorkItem).find((obligation) => !isVerificationCurrent(obligation));
+      const semantic = await this.options.currentState.current(programStateId);
+      if (semantic.programStateRevision !== state.revision
+          || semantic.activeAttempt === null
+          || String(semantic.activeAttempt.programAttemptId) !== String(currentAttempt.programAttemptId)) {
+        return { status: "stale" };
+      }
+      const pending = requiredAdaptiveVerificationForCurrentWorkV2(
+        state,
+        semantic.semanticState,
+        currentWorkItem,
+      ).find((obligation) => !isVerificationCurrent(obligation));
       if (pending === undefined) {
         await this.completeCurrentWork(state, sessionId as SessionId, String(currentAttempt.programAttemptId));
         return { status: "advanced" };
@@ -374,7 +384,14 @@ export class ProgramAdaptiveVerificationControlV2 {
           || work.lifecycle !== "awaiting_verification") {
         throw new ProgramVerificationStaleError("Adaptive ProgramAttempt changed before verified work completion");
       }
-      if (requiredForCurrentWork(state, work).some((obligation) => !isVerificationCurrent(obligation))) {
+      const semantic = await this.options.currentState.current(String(state.programStateId));
+      if (semantic.programStateRevision !== state.revision
+          || semantic.activeAttempt === null
+          || String(semantic.activeAttempt.programAttemptId) !== programAttemptId) {
+        throw new ProgramVerificationStaleError("Adaptive semantic verification subject changed before work completion");
+      }
+      if (requiredAdaptiveVerificationForCurrentWorkV2(state, semantic.semanticState, work)
+        .some((obligation) => !isVerificationCurrent(obligation))) {
         throw new ProgramVerificationControlError("Adaptive work verification is not complete");
       }
       const retired = applyProgramTransition(state, {
