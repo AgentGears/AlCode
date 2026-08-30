@@ -110,6 +110,7 @@ function semanticSnapshot() {
       directDependencies: [{
         workItemId: dependencyId,
         workItemGeneration: 3,
+        required: true as const,
         satisfiedOrDischargedAtIssue: true as const,
       }],
       workAuthorityEnvelope: envelope(),
