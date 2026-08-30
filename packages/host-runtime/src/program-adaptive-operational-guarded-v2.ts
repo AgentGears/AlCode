@@ -122,8 +122,7 @@ function isTrustedAdaptiveAnchorV2(event: PersistedDomainEvent<string, unknown>)
     return transitionKind === "attempt.execution_base.advance" || transitionKind === "execution_base.unavailable";
   }
   if (component === "program-adaptive-recovery-v2") {
-    return transitionKind === "attempt.interrupt:agent_replaced"
-      || transitionKind === "work.lifecycle.set:pending";
+    return transitionKind === "attempt.interrupt:agent_replaced";
   }
   if (component === "program-adaptive-verification-v2") {
     return transitionKind === "evidence.add"

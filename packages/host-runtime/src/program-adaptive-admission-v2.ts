@@ -329,15 +329,14 @@ export function materializeAdaptiveMutationSettlementProgramStateV2(
 
 export interface ProgramAdaptiveAgentReplacementMaterializationV2 {
   programAttemptId: string;
-  retired: ProgramState;
-  pending: ProgramState;
+  recovered: ProgramState;
 }
 
 /**
  * Materialize a retained adaptive Attempt at exact semantic currentness before
- * retiring it for Agent replacement. This is the canonical ProgramState bridge
- * that prevents fixed-topology recovery from becoming the first post-semantic
- * writer and returns the interrupted WorkItem to schedulable pending state.
+ * retiring it for Agent replacement. The frozen attempt.interrupt transition
+ * both retires the Attempt and returns its WorkItem to schedulable pending
+ * state, so recovery requires exactly one canonical ProgramState anchor.
  */
 export function materializeAdaptiveAgentReplacementRecoveryV2(
   raw: ProgramState,
@@ -358,24 +357,17 @@ export function materializeAdaptiveAgentReplacementRecoveryV2(
   const materialized = materializeAdaptiveRetainedAttemptProgramStateV2(raw, current);
   const attempt = materialized.activeAttempt;
   if (attempt === null) throw new ProgramAdaptiveAdmissionControlErrorV2("Adaptive replacement materialization lost its Attempt");
-  const work = materialized.workItems.find((item) => item.workItemId === attempt.workItemId);
-  if (work === undefined) throw new ProgramAdaptiveAdmissionControlErrorV2("Adaptive replacement Attempt WorkItem is missing");
   const programAttemptId = String(attempt.programAttemptId);
-  const retired = applyProgramTransition(materialized, {
+  const recovered = applyProgramTransition(materialized, {
     kind: "attempt.interrupt",
     expectedProgramRevision: materialized.revision,
     programAttemptId,
   });
-  const pending = applyProgramTransition(retired, {
-    kind: "work.lifecycle.set",
-    expectedProgramRevision: retired.revision,
-    workItemId: work.workItemId,
-    lifecycle: "pending",
-  });
-  if (pending === retired) {
-    throw new ProgramAdaptiveAdmissionControlErrorV2("Adaptive replacement recovery did not return work to pending");
+  const work = recovered.workItems.find((item) => item.workItemId === attempt.workItemId);
+  if (recovered.activeAttempt !== null || work?.lifecycle !== "pending") {
+    throw new ProgramAdaptiveAdmissionControlErrorV2("Adaptive replacement recovery did not retire the Attempt to pending work");
   }
-  return { programAttemptId, retired, pending };
+  return { programAttemptId, recovered };
 }
 
 export function adaptiveTransitionEventV2(
@@ -444,21 +436,13 @@ implements ProgramAdaptiveAttemptAdmissionV2, ProgramAdaptiveEligibilityFactSour
           adaptiveTransitionEventV2(
             this.options.store,
             sessionId as EventSessionId,
-            recovered.retired,
+            recovered.recovered,
             "attempt.interrupt:agent_replaced",
             recovered.programAttemptId,
             "program-adaptive-recovery-v2",
           ),
-          adaptiveTransitionEventV2(
-            this.options.store,
-            sessionId as EventSessionId,
-            recovered.pending,
-            "work.lifecycle.set:pending",
-            recovered.programAttemptId,
-            "program-adaptive-recovery-v2",
-          ),
         ]);
-        if (persisted.length !== 2) {
+        if (persisted.length !== 1) {
           throw new ProgramAdaptiveAdmissionControlErrorV2("Adaptive replacement recovery admission was not atomic");
         }
         return {

@@ -209,50 +209,35 @@ describe("A1 adaptive Attempt admission materialization", () => {
     expect(next.workItems[0]?.lifecycle).toBe("pending");
   });
 
-  it("retires a retained replacement Attempt through an exact adaptive materialization anchor", () => {
+  it("retires a retained replacement Attempt through one exact adaptive materialization anchor", () => {
     const recovered = materializeAdaptiveAgentReplacementRecoveryV2(
       rawState(),
       current(true),
       String(sessionId),
     );
     expect(recovered.programAttemptId).toBe(String(attemptId));
-    expect(recovered.retired.revision).toBe(10);
-    expect(recovered.retired.activeAttempt).toBeNull();
-    expect(recovered.pending.revision).toBe(11);
-    expect(recovered.pending.workItems[0]?.lifecycle).toBe("pending");
-    expect(recovered.pending.verification[0]?.obligationId).toBe(verificationId);
+    expect(recovered.recovered.revision).toBe(10);
+    expect(recovered.recovered.activeAttempt).toBeNull();
+    expect(recovered.recovered.workItems[0]?.lifecycle).toBe("pending");
+    expect(recovered.recovered.verification[0]?.obligationId).toBe(verificationId);
 
-    const events = [
-      {
-        sequence: 11,
-        eventId: "adaptive-recovery-retired",
-        workspaceId: "workspace-admission",
-        sessionId: String(sessionId),
-        programStateId: String(programStateId),
-        occurredAt: "2026-08-30T00:00:00.000Z",
-        type: "program.transitioned",
-        payload: { state: recovered.retired, transitionKind: "attempt.interrupt:agent_replaced" },
-        payloadSchemaVersion: 1,
-        producer: { kind: "runtime", component: "program-adaptive-recovery-v2" },
-      },
-      {
-        sequence: 12,
-        eventId: "adaptive-recovery-pending",
-        workspaceId: "workspace-admission",
-        sessionId: String(sessionId),
-        programStateId: String(programStateId),
-        occurredAt: "2026-08-30T00:00:01.000Z",
-        type: "program.transitioned",
-        payload: { state: recovered.pending, transitionKind: "work.lifecycle.set:pending" },
-        payloadSchemaVersion: 1,
-        producer: { kind: "runtime", component: "program-adaptive-recovery-v2" },
-      },
-    ] as unknown as PersistedDomainEvent<string, unknown>[];
+    const events = [{
+      sequence: 11,
+      eventId: "adaptive-recovery-retired",
+      workspaceId: "workspace-admission",
+      sessionId: String(sessionId),
+      programStateId: String(programStateId),
+      occurredAt: "2026-08-30T00:00:00.000Z",
+      type: "program.transitioned",
+      payload: { state: recovered.recovered, transitionKind: "attempt.interrupt:agent_replaced" },
+      payloadSchemaVersion: 1,
+      producer: { kind: "runtime", component: "program-adaptive-recovery-v2" },
+    }] as unknown as PersistedDomainEvent<string, unknown>[];
     expect(validatePostSemanticProgramStateSequenceV2(
       events,
       String(programStateId),
       10,
       current(true).programStateRevision,
-    )?.state.revision).toBe(11);
+    )?.state.revision).toBe(10);
   });
 });
