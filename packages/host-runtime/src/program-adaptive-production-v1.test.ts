@@ -33,6 +33,7 @@ const dependencyId = asProgramWorkItemId("adaptive-production-dependency");
 const workItemId = asProgramWorkItemId("adaptive-production-work");
 const attemptId = asProgramAttemptId("adaptive-production-attempt");
 const revisionId = asProgramRevisionId("adaptive-production-r7");
+const verificationOperationId = "018f0000-0000-7000-8000-000000000c03";
 
 function envelope(): WorkAuthorityEnvelopeV1 {
   return {
@@ -338,7 +339,7 @@ function adaptiveVerificationOperationFixture() {
   });
   const input = (expectedProgramRevision: number) => ({
     sessionId: sessionId as never,
-    operationId: "adaptive-host-verification-operation",
+    operationId: verificationOperationId,
     workspaceAccessClass: "read_only" as const,
     program: {
       programStateId: String(programStateId),
@@ -351,11 +352,11 @@ function adaptiveVerificationOperationFixture() {
       eventId: "adaptive-host-verification-request",
       workspaceId: "workspace-adaptive-production",
       sessionId,
-      operationId: "adaptive-host-verification-operation",
+      operationId: verificationOperationId,
       occurredAt: "2026-08-29T00:00:02.000Z",
       type: "operation.requested",
       payload: {
-        operationId: "adaptive-host-verification-operation",
+        operationId: verificationOperationId,
         workspaceAccessClass: "read_only",
         programVerificationInvocation: {
           kind: "operation_result",
