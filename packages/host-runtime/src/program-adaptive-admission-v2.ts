@@ -327,13 +327,68 @@ export function materializeAdaptiveMutationSettlementProgramStateV2(
   return materializeAdaptiveBase(raw, current, activeAttempt, acceptedExecutionBase, false);
 }
 
+export interface ProgramAdaptiveAgentReplacementMaterializationV2 {
+  programAttemptId: string;
+  retired: ProgramState;
+  pending: ProgramState;
+}
+
+/**
+ * Materialize a retained adaptive Attempt at exact semantic currentness before
+ * retiring it for Agent replacement. This is the canonical ProgramState bridge
+ * that prevents fixed-topology recovery from becoming the first post-semantic
+ * writer and returns the interrupted WorkItem to schedulable pending state.
+ */
+export function materializeAdaptiveAgentReplacementRecoveryV2(
+  raw: ProgramState,
+  current: ProgramSemanticCurrentSnapshotV1,
+  sessionId: string,
+): ProgramAdaptiveAgentReplacementMaterializationV2 {
+  if (current.lifecycle !== "active" || current.activeAttempt === null) {
+    throw new ProgramAdaptiveAdmissionControlErrorV2("Adaptive replacement recovery requires one retained current Attempt");
+  }
+  if (raw.activeAttempt === null
+      || String(raw.activeAttempt.programAttemptId) !== String(current.activeAttempt.programAttemptId)
+      || String(raw.activeAttempt.workItemId) !== String(current.activeAttempt.workItemId)) {
+    throw new ProgramAdaptiveAdmissionControlErrorV2("Adaptive replacement recovery Attempt identity is stale");
+  }
+  if (String(raw.activeAttempt.sessionId) !== sessionId) {
+    throw new ProgramAdaptiveAdmissionControlErrorV2("Adaptive replacement recovery Session does not own the retained Attempt");
+  }
+  const materialized = materializeAdaptiveRetainedAttemptProgramStateV2(raw, current);
+  const attempt = materialized.activeAttempt;
+  if (attempt === null) throw new ProgramAdaptiveAdmissionControlErrorV2("Adaptive replacement materialization lost its Attempt");
+  const work = materialized.workItems.find((item) => item.workItemId === attempt.workItemId);
+  if (work === undefined) throw new ProgramAdaptiveAdmissionControlErrorV2("Adaptive replacement Attempt WorkItem is missing");
+  const programAttemptId = String(attempt.programAttemptId);
+  const retired = applyProgramTransition(materialized, {
+    kind: "attempt.interrupt",
+    expectedProgramRevision: materialized.revision,
+    programAttemptId,
+  });
+  const pending = applyProgramTransition(retired, {
+    kind: "work.lifecycle.set",
+    expectedProgramRevision: retired.revision,
+    workItemId: work.workItemId,
+    lifecycle: "pending",
+  });
+  if (pending === retired) {
+    throw new ProgramAdaptiveAdmissionControlErrorV2("Adaptive replacement recovery did not return work to pending");
+  }
+  return { programAttemptId, retired, pending };
+}
+
 export function adaptiveTransitionEventV2(
   store: WorkspaceEventStore,
   sessionId: EventSessionId,
   state: ProgramState,
   transitionKind: string,
   correlationId: string,
-  component: "program-adaptive-admission-v2" | "program-adaptive-progress-v2" | "program-adaptive-settlement-v2",
+  component:
+    | "program-adaptive-admission-v2"
+    | "program-adaptive-progress-v2"
+    | "program-adaptive-settlement-v2"
+    | "program-adaptive-recovery-v2",
 ): EventDraft<string, unknown> {
   return {
     eventId: mkEventId(),
@@ -350,9 +405,69 @@ export function adaptiveTransitionEventV2(
   };
 }
 
+export type ProgramAdaptiveAgentReplacementRecoveryResultV2 =
+  | { status: "not_program" }
+  | { status: "not_active" }
+  | { status: "no_active_attempt" }
+  | { status: "not_attempt_owner" }
+  | { status: "recovered"; programStateId: string; programAttemptId: string };
+
 export class ProgramAdaptiveAdmissionServiceV2
 implements ProgramAdaptiveAttemptAdmissionV2, ProgramAdaptiveEligibilityFactSourceV2 {
   constructor(private readonly options: ProgramAdaptiveAdmissionServiceOptionsV2) {}
+
+  async recoverAgentReplacement(sessionId: string): Promise<ProgramAdaptiveAgentReplacementRecoveryResultV2> {
+    return this.options.workspaceCoordinator.runExclusive(async () =>
+      this.options.admission.enqueue(async () => {
+        const events = await replayAll(this.options.store);
+        let selected: { programStateId: string; current: ProgramSemanticCurrentSnapshotV1 } | undefined;
+        for (const programStateId of latestProgramStates(events).keys()) {
+          const current = recoverAdaptiveProgramCurrentSnapshotV2(events, programStateId);
+          if (current === undefined || !current.attachedSessionIds.includes(sessionId)) continue;
+          if (selected !== undefined) {
+            throw new ProgramAdaptiveAdmissionControlErrorV2(
+              `Multiple adaptive Programs claim attached Session ${sessionId}`,
+            );
+          }
+          selected = { programStateId, current };
+        }
+        if (selected === undefined) return { status: "not_program" } as const;
+        if (selected.current.lifecycle !== "active") return { status: "not_active" } as const;
+        if (selected.current.activeAttempt === null) return { status: "no_active_attempt" } as const;
+
+        const raw = requireAdaptiveRawProgramStateV2(events, selected.programStateId);
+        if (raw.activeAttempt === null || String(raw.activeAttempt.sessionId) !== sessionId) {
+          return { status: "not_attempt_owner" } as const;
+        }
+        const recovered = materializeAdaptiveAgentReplacementRecoveryV2(raw, selected.current, sessionId);
+        const persisted = await this.options.store.append([
+          adaptiveTransitionEventV2(
+            this.options.store,
+            sessionId as EventSessionId,
+            recovered.retired,
+            "attempt.interrupt:agent_replaced",
+            recovered.programAttemptId,
+            "program-adaptive-recovery-v2",
+          ),
+          adaptiveTransitionEventV2(
+            this.options.store,
+            sessionId as EventSessionId,
+            recovered.pending,
+            "work.lifecycle.set:pending",
+            recovered.programAttemptId,
+            "program-adaptive-recovery-v2",
+          ),
+        ]);
+        if (persisted.length !== 2) {
+          throw new ProgramAdaptiveAdmissionControlErrorV2("Adaptive replacement recovery admission was not atomic");
+        }
+        return {
+          status: "recovered",
+          programStateId: selected.programStateId,
+          programAttemptId: recovered.programAttemptId,
+        } as const;
+      }));
+  }
 
   async currentForSession(
     sessionId: string,

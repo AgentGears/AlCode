@@ -22,12 +22,15 @@ describe("A1 CLI adaptive production wiring", () => {
   it("drives post-adoption work only through adaptive execution and terminal authority", () => {
     expect(cli).toContain("runtime.requestCurrentAttemptExecution(connection, session)");
     expect(cli).toContain("adaptiveProduct.terminal.cancel({");
-    expect(cli).toContain("recoverAfterAgentReplacement(locked.store, fixedRuntime.recovery)");
+    expect(cli).toContain("recoverAfterAgentReplacement(");
+    expect(cli).toContain("adaptiveProduct.admission.recoverAgentReplacement(String(session.sessionId))");
     expect(cli).not.toContain("runtime.scheduler.dispatchNext");
   });
 
-  it("uses the raw operational CAS revision for adaptive cancellation", () => {
+  it("uses the raw operational CAS revision and retries stale adaptive cancellation races", () => {
     expect(cli).toContain("expectedProgramRevision: await adaptiveProduct.currentOperationalRevision(programStateId)");
+    expect(cli).toContain("error instanceof ProgramRevisionConflictError || error instanceof ProgramTerminalStaleError");
+    expect(cli).toContain("if (adaptiveCancellationStale) continue;");
     expect(cli).not.toContain("expectedProgramRevision: program.revision,\n            sessionId: session.sessionId");
   });
 });

@@ -12,10 +12,12 @@ import {
   AgentSupervisor,
   DefaultHostPolicy,
   HostArtifactStore,
+  ProgramTerminalStaleError,
   createProgramExecutionRuntimeV1,
   type ProgramExecutionObservationSourceV1,
 } from "@alcode/host-runtime";
 import { createProgramAdaptiveProductionRuntimeV1 } from "@alcode/host-runtime/adaptive-production-v1";
+import { ProgramRevisionConflictError } from "@alcode/program-state";
 import { openLockedWorkspaceStore } from "@alcode/storage";
 import { WorkspaceRegistry } from "@alcode/workspace";
 import { agentErrorStillTargetsLiveConnection } from "./agent-error-arbitration.ts";
@@ -348,15 +350,22 @@ async function main(): Promise<void> {
         const { program } = await readProgram();
         if (program === undefined || program.lifecycle !== "active") return;
         if (await adaptiveProduct.semanticRecovery.isAdaptive(programStateId)) {
-          await adaptiveProduct.terminal.cancel({
-            programStateId,
-            expectedProgramRevision: await adaptiveProduct.currentOperationalRevision(programStateId),
-            sessionId: session.sessionId,
-            actor: "application",
-            client: "alcode-cli",
-            reason,
-          });
-          return;
+          try {
+            await adaptiveProduct.terminal.cancel({
+              programStateId,
+              expectedProgramRevision: await adaptiveProduct.currentOperationalRevision(programStateId),
+              sessionId: session.sessionId,
+              actor: "application",
+              client: "alcode-cli",
+              reason,
+            });
+            return;
+          } catch (error) {
+            const adaptiveCancellationStale = error instanceof ProgramRevisionConflictError
+              || error instanceof ProgramTerminalStaleError;
+            if (adaptiveCancellationStale) continue;
+            throw error;
+          }
         }
         const result = await application.execute({
           protocolVersion: APPLICATION_PROTOCOL_VERSION,
@@ -403,7 +412,11 @@ async function main(): Promise<void> {
         if (supervisor.getCurrent() === null) {
           connection = await supervisor.start();
           await attachConnection(connection, "agent_replaced");
-          await recoverAfterAgentReplacement(locked.store, fixedRuntime.recovery);
+          await recoverAfterAgentReplacement(
+            locked.store,
+            fixedRuntime.recovery,
+            { recover: () => adaptiveProduct.admission.recoverAgentReplacement(String(session.sessionId)) },
+          );
         }
 
         try {
