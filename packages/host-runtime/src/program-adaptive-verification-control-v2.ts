@@ -258,8 +258,8 @@ export function requiredAdaptiveProgramArtifactProductionForCurrentWorkV2(
       );
     }
     if (binding.subject.kind !== "program" || obligation.predicate.kind !== "artifact_present") return false;
-    const slot = semanticState.outputSlots.find((candidate) =>
-      candidate.outputSlotId === obligation.predicate.outputSlotId);
+    const outputSlotId = obligation.predicate.outputSlotId;
+    const slot = semanticState.outputSlots.find((candidate) => candidate.outputSlotId === outputSlotId);
     if (slot === undefined) {
       throw new ProgramVerificationControlError(
         `Program-scoped artifact verification ${String(obligation.obligationId)} lacks its semantic output slot`,
@@ -361,7 +361,8 @@ export class ProgramAdaptiveVerificationControlV2 {
         currentWorkItem,
       ).find((obligation) => {
         if (isVerificationCurrent(obligation) || obligation.predicate.kind !== "artifact_present") return false;
-        return !state.artifacts.some((artifact) => artifact.outputSlotId === obligation.predicate.outputSlotId);
+        const outputSlotId = obligation.predicate.outputSlotId;
+        return !state.artifacts.some((artifact) => artifact.outputSlotId === outputSlotId);
       });
       if (producerArtifact !== undefined) {
         if (producerArtifact.predicate.kind !== "artifact_present") {
