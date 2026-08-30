@@ -3,16 +3,19 @@ import { describe, expect, it } from "vitest";
 import type { ProgramAttemptProjectionV1 } from "@alcode/agent-protocol";
 import type { PersistedDomainEvent } from "@alcode/events";
 import {
+  applyProgramTransition,
   asProgramAttemptId,
   asProgramRevisionId,
   asProgramStateId,
   asProgramWorkItemId,
+  asSessionId,
   createProgramState,
   type ProgramSemanticStateV1,
   type WorkAuthorityEnvelopeV1,
 } from "@alcode/program-state";
 import type { WorkspaceEventStore } from "@alcode/storage";
 import { issueProgramAttemptAuthorityV2 } from "./program-attempt-authority-v2.ts";
+import { ProgramAdaptiveRootOperationAuthorityV2 } from "./program-adaptive-operation-v2.ts";
 import type { ProgramRootOperationAuthorityV1 } from "./program-dispatch.ts";
 import {
   ProgramAdaptiveOperationalCurrentStateSourceV2,
@@ -240,6 +243,135 @@ function storeWithRawRevision(revision: number): WorkspaceEventStore {
   } as unknown as WorkspaceEventStore;
 }
 
+function adaptiveVerificationOperationFixture() {
+  const executionBase = {
+    workspaceEffectGeneration: 0,
+    observation: {
+      kind: "workspace-observation-v1" as const,
+      providerKind: "test",
+      workspaceIdentity: "workspace-adaptive-production",
+      coverageDigest: "coverage-verification",
+      stateDigest: "state-verification",
+    },
+  };
+  const initial = createProgramState({
+    programStateId,
+    sourceSessionId: asSessionId(sessionId),
+    objective: "Adaptive verification operation CAS",
+    workItems: [{
+      workItemId,
+      creationOrder: 0,
+      description: "Verify retained adaptive work",
+      dependencyIds: [],
+      affectedPaths: ["src/current.ts"],
+    }],
+    verification: [],
+    outputSlots: [],
+    productionSteps: [],
+  });
+  const issued = applyProgramTransition(initial, {
+    kind: "attempt.issue",
+    expectedProgramRevision: initial.revision,
+    attempt: {
+      programAttemptId: attemptId,
+      workItemId,
+      sessionId: asSessionId(sessionId),
+      agentGeneration: 9,
+      initialExecutionBase: executionBase,
+      expectedExecutionBase: executionBase,
+    },
+  });
+  const raw = { ...issued, revision: 21 };
+  const events: PersistedDomainEvent<string, unknown>[] = [
+    {
+      sequence: 1,
+      eventId: "adaptive-verification-session-started",
+      workspaceId: "workspace-adaptive-production",
+      sessionId,
+      occurredAt: "2026-08-29T00:00:00.000Z",
+      type: "runtime.session.started",
+      payload: { sessionId },
+      payloadSchemaVersion: 1,
+      producer: { kind: "runtime", component: "test" },
+    } as unknown as PersistedDomainEvent<string, unknown>,
+    {
+      sequence: 2,
+      eventId: "adaptive-verification-raw-program",
+      workspaceId: "workspace-adaptive-production",
+      sessionId,
+      programStateId: String(programStateId),
+      occurredAt: "2026-08-29T00:00:01.000Z",
+      type: "program.transitioned",
+      payload: { state: raw, transitionKind: "attempt.issue" },
+      payloadSchemaVersion: 1,
+      producer: { kind: "runtime", component: "test" },
+    } as unknown as PersistedDomainEvent<string, unknown>,
+  ];
+  const store = {
+    workspaceId: "workspace-adaptive-production",
+    replay: async function* () { for (const event of events) yield event; },
+    append: async (drafts: readonly unknown[]) => {
+      const persisted = drafts.map((draft, index) => ({
+        ...(draft as Record<string, unknown>),
+        sequence: events.length + index + 1,
+      })) as unknown as PersistedDomainEvent<string, unknown>[];
+      events.push(...persisted);
+      return persisted;
+    },
+  } as unknown as WorkspaceEventStore;
+  const delegate = {
+    resolveCurrentOperation: async () => null,
+    appendRoutedRootOperation: async () => { throw new Error("unexpected fixed-topology delegation"); },
+    appendRootOperation: async () => { throw new Error("unexpected fixed-topology delegation"); },
+    settleProgramMutation: async () => { throw new Error("unexpected fixed-topology delegation"); },
+  } as unknown as ProgramRootOperationAuthorityV1;
+  const authority = new ProgramAdaptiveRootOperationAuthorityV2({
+    store,
+    admission: { enqueue: <T>(work: () => Promise<T>) => work() } as never,
+    workspaceCoordinator: coordinator,
+    observations: { observe: async () => ({ status: "complete" as const, base: executionBase }) },
+    currentState: { current: async () => structuredClone(semanticSnapshot()) },
+    agentGenerations: { isCurrent: async () => true },
+    recovery: { isClear: async () => true },
+    delegate,
+  });
+  const input = (expectedProgramRevision: number) => ({
+    sessionId: sessionId as never,
+    operationId: "adaptive-host-verification-operation",
+    workspaceAccessClass: "read_only" as const,
+    program: {
+      programStateId: String(programStateId),
+      expectedProgramRevision,
+      programAttemptId: String(attemptId),
+      workItemId: String(workItemId),
+      agentGeneration: 9,
+    },
+    drafts: [{
+      eventId: "adaptive-host-verification-request",
+      workspaceId: "workspace-adaptive-production",
+      sessionId,
+      operationId: "adaptive-host-verification-operation",
+      occurredAt: "2026-08-29T00:00:02.000Z",
+      type: "operation.requested",
+      payload: {
+        operationId: "adaptive-host-verification-operation",
+        workspaceAccessClass: "read_only",
+        programVerificationInvocation: {
+          kind: "operation_result",
+          specId: "verify-spec",
+          specVersion: 1,
+          canonicalArgsDigest: "verify-digest",
+          verificationObligationId: "verify-current",
+          subjectGeneration: 1,
+        },
+      },
+      payloadSchemaVersion: 1,
+      producer: { kind: "runtime", component: "host-capability-broker" },
+    }],
+  }) as unknown as Parameters<ProgramAdaptiveRootOperationAuthorityV2["appendRoutedRootOperation"]>[0];
+  return { authority, events, input };
+}
+
 describe("A1 production adaptive runtime composition", () => {
   it("builds V2 authority from semantic generations while preserving the independent operational CAS lease", async () => {
     const cut = await cutSource().currentForSession(sessionId, "connection-9");
@@ -304,6 +436,41 @@ describe("A1 production adaptive runtime composition", () => {
 
   it("reads the raw operational CAS revision instead of the semantic/Application max revision", async () => {
     expect(await adaptiveRawProgramRevisionV1(storeWithRawRevision(21), String(programStateId))).toBe(21);
+  });
+
+  it("binds trusted Host verification operations to the raw CAS revision after exact semantic-currentness validation", async () => {
+    const fixture = adaptiveVerificationOperationFixture();
+    const result = await fixture.authority.appendRoutedRootOperation(fixture.input(37));
+    expect(result.status).toBe("appended");
+    if (result.status !== "appended") throw new Error("expected appended verification operation");
+    expect(result.program?.expectedProgramRevision).toBe(21);
+    const requested = result.events.find((event) => event.type === "operation.requested");
+    expect((requested?.payload as Record<string, unknown>).expectedProgramRevision).toBe(21);
+  });
+
+  it("does not use the raw CAS bridge to admit a stale semantic Host verification request", async () => {
+    const fixture = adaptiveVerificationOperationFixture();
+    await expect(fixture.authority.appendRoutedRootOperation(fixture.input(36)))
+      .rejects.toThrow("Adaptive Host verification semantic revision mismatch: expected 36, current 37");
+    expect(fixture.events).toHaveLength(2);
+  });
+
+  it("binds trusted Host artifact production to the same raw CAS revision", async () => {
+    const fixture = adaptiveVerificationOperationFixture();
+    const input = fixture.input(37);
+    const requested = input.drafts[0]! as unknown as { payload: Record<string, unknown> };
+    requested.payload.programVerificationInvocation = {
+      kind: "artifact_production",
+      specId: "produce-spec",
+      specVersion: 1,
+      canonicalArgsDigest: "produce-digest",
+      productionStepId: "produce-current",
+      outputSlotId: "slot-current",
+    };
+    const result = await fixture.authority.appendRoutedRootOperation(input);
+    expect(result.status).toBe("appended");
+    if (result.status !== "appended") throw new Error("expected appended artifact-production operation");
+    expect(result.program?.expectedProgramRevision).toBe(21);
   });
 
   it("composes around the existing V1 Host and installs a delegating adaptive operation authority", () => {
