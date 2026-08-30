@@ -8,6 +8,7 @@ import {
 } from "@alcode/events";
 import {
   ProgramRevisionConflictError,
+  allRequiredSemanticWorkComplete,
   applyProgramTransition,
   assertValidProgramState,
   isVerificationCurrent,
@@ -199,8 +200,12 @@ export function requiredAdaptiveVerificationForCurrentWorkV2(
   const bindings = new Map(
     semanticState.verificationBindings.map((binding) => [String(binding.obligationId), binding] as const),
   );
-  const otherIncomplete = state.workItems.some((candidate) =>
-    candidate.workItemId !== work.workItemId && candidate.lifecycle !== "completed");
+  const programCompleteIfCurrentWorkSatisfied = allRequiredSemanticWorkComplete(
+    semanticState.workItems.map((candidate) =>
+      candidate.workItemId === semanticWork.workItemId
+        ? { ...candidate, satisfactionState: "satisfied" as const }
+        : candidate),
+  );
 
   return state.verification.filter((obligation) => {
     const binding = bindings.get(String(obligation.obligationId));
@@ -217,7 +222,7 @@ export function requiredAdaptiveVerificationForCurrentWorkV2(
         return binding.subject.producerWorkItemId === semanticWork.workItemId
           && binding.subject.producerWorkItemGeneration === semanticWork.workItemGeneration;
       case "program":
-        return !otherIncomplete;
+        return programCompleteIfCurrentWorkSatisfied;
     }
   });
 }
