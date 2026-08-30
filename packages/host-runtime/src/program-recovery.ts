@@ -199,11 +199,21 @@ function nonterminalMayWriteOperations(events: readonly PersistedDomainEvent<str
 }
 
 function latestProgramStates(events: readonly PersistedDomainEvent<string, unknown>[]): Map<string, ProgramState> {
+  // Canonical semantic-baseline adoption permanently transfers ProgramState
+  // mutation authority away from fixed Phase-1 recovery. Treat the durable
+  // adoption marker as fail-closed even if later semantic recovery rejects it.
+  const adoptedProgramStateIds = new Set<string>();
+  for (const event of events) {
+    if (event.type === "program.semantic_baseline.adopted.v1" && event.programStateId !== undefined) {
+      adoptedProgramStateIds.add(String(event.programStateId));
+    }
+  }
+
   const states = new Map<string, ProgramState>();
   for (const event of events) {
     if ((event.type !== "program.created" && event.type !== "program.transitioned" &&
          event.type !== "program.completed" && event.type !== "program.cancelled") ||
-        event.programStateId === undefined) continue;
+        event.programStateId === undefined || adoptedProgramStateIds.has(String(event.programStateId))) continue;
     const state = record(event.payload).state as ProgramState | undefined;
     if (state !== undefined) states.set(String(event.programStateId), state);
   }
