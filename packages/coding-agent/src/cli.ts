@@ -17,7 +17,6 @@ import {
   type ProgramExecutionObservationSourceV1,
 } from "@alcode/host-runtime";
 import { createProgramAdaptiveProductionRuntimeV1 } from "@alcode/host-runtime/adaptive-production-v1";
-import { ProgramRevisionConflictError } from "@alcode/program-state";
 import { openLockedWorkspaceStore } from "@alcode/storage";
 import { WorkspaceRegistry } from "@alcode/workspace";
 import { agentErrorStillTargetsLiveConnection } from "./agent-error-arbitration.ts";
@@ -361,9 +360,7 @@ async function main(): Promise<void> {
             });
             return;
           } catch (error) {
-            const adaptiveCancellationStale = error instanceof ProgramRevisionConflictError
-              || error instanceof ProgramTerminalStaleError;
-            if (adaptiveCancellationStale) continue;
+            if (error instanceof ProgramTerminalStaleError) continue;
             throw error;
           }
         }

@@ -2,7 +2,6 @@ export * from "./program-adaptive-operational-guarded-v2.ts";
 
 import type { EventDraft, PersistedDomainEvent } from "@alcode/events";
 import {
-  ProgramRevisionConflictError,
   assertValidProgramState,
   type ProgramState,
 } from "@alcode/program-state";
@@ -167,7 +166,9 @@ export class ProgramAdaptiveTerminalServiceV2 extends ProgramTerminalServiceV1 {
     const raw = latestProgramStateEventV2(events, programStateId);
     if (raw.state.lifecycle === "completed" || raw.state.lifecycle === "cancelled") return null;
     if (raw.state.revision !== expectedProgramRevision) {
-      throw new ProgramRevisionConflictError(expectedProgramRevision, raw.state.revision);
+      throw new ProgramTerminalStaleError(
+        `Program operational revision changed before adaptive terminal preparation: expected ${expectedProgramRevision}, current ${raw.state.revision}`,
+      );
     }
     const current = await this.adaptiveOptions.currentState.current(programStateId);
     const materialized = materializeAdaptiveTerminalProgramStateV2(raw.state, current);

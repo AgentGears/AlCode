@@ -29,8 +29,8 @@ describe("A1 CLI adaptive production wiring", () => {
 
   it("uses the raw operational CAS revision and retries stale adaptive cancellation races", () => {
     expect(cli).toContain("expectedProgramRevision: await adaptiveProduct.currentOperationalRevision(programStateId)");
-    expect(cli).toContain("error instanceof ProgramRevisionConflictError || error instanceof ProgramTerminalStaleError");
-    expect(cli).toContain("if (adaptiveCancellationStale) continue;");
+    expect(cli).toContain("if (error instanceof ProgramTerminalStaleError) continue;");
+    expect(cli).not.toContain("@alcode/program-state");
     expect(cli).not.toContain("expectedProgramRevision: program.revision,\n            sessionId: session.sessionId");
   });
 });
