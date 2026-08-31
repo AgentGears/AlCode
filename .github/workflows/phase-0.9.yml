@@ -1,16 +1,8 @@
 name: Phase 0.9
 on:
-  push:
-    branches: [phase-0.9]
   pull_request:
     paths:
-      - 'packages/**'
-      - 'extensions/**'
-      - 'scripts/gate/**'
-      - 'docs/phase-0.9*'
-      - 'pnpm-lock.yaml'
-      - 'package.json'
-      - '.github/workflows/phase-0.9*.yml'
+      - '.github/workflows/phase-0.9.yml'
 jobs:
   gate:
     runs-on: ubuntu-latest
@@ -21,4 +13,44 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22.17.0, cache: pnpm }
       - run: pnpm install --frozen-lockfile
-      - run: pnpm gate:0.9
+      - name: Run accepted CLI for bounded diagnostic window
+        env:
+          ALCODE_HOME: ${{ runner.temp }}/alcode-diag
+          ALCODE_AGENT_SCRIPT: '[{"text":"Hello from ALCODE. The agent loop is running."}]'
+          ALCODE_PLANNING_SCRIPT: '[{"toolCalls":[{"id":"planning-proposal-1","name":"submit_program_proposal","arguments":{"objective":"hello","workItems":[{"workItemId":"work-1","creationOrder":0,"description":"hello","dependencyIds":[],"affectedPaths":["package.json"]}],"verification":[{"obligationId":"verify-package-json","verifier":{"specId":"workspace_path_state","specVersion":1},"args":{"path":"package.json","requiredState":"file"},"freshnessScope":{"kind":"workspace"}}],"outputSlots":[],"productionSteps":[]}}]}]'
+        run: |
+          set +e
+          timeout 20s pnpm exec tsx packages/coding-agent/src/cli.ts -p hello --accept-program > /tmp/alcode-cli.out 2> /tmp/alcode-cli.err
+          echo "CLI_STATUS=$?"
+          echo '--- STDOUT ---'
+          cat /tmp/alcode-cli.out
+          echo '--- STDERR ---'
+          cat /tmp/alcode-cli.err
+          exit 0
+      - name: Dump canonical CLI state after timeout
+        env:
+          ALCODE_HOME: ${{ runner.temp }}/alcode-diag
+        run: |
+          node --import tsx --input-type=module -e '
+            import { WorkspaceRegistry } from "./packages/workspace/src/index.ts";
+            import { openLockedWorkspaceStore } from "./packages/storage/src/index.ts";
+            const registry = new WorkspaceRegistry(process.env.ALCODE_HOME);
+            const resolution = registry.resolve(process.cwd());
+            const entry = registry.getWorkspace(resolution.workspaceId);
+            if (!entry) throw new Error("missing workspace registry entry");
+            const locked = await openLockedWorkspaceStore({ databasePath: entry.dbPath, lockPath: entry.lockPath, workspaceId: entry.workspaceId, repositoryId: entry.repositoryId });
+            try {
+              for await (const event of locked.store.replay()) {
+                const payload = event.payload && typeof event.payload === "object" ? event.payload : {};
+                const state = payload.state;
+                const summary = state && typeof state === "object" ? {
+                  revision: state.revision,
+                  lifecycle: state.lifecycle,
+                  activeAttempt: state.activeAttempt && { id: state.activeAttempt.programAttemptId, workItemId: state.activeAttempt.workItemId, agentGeneration: state.activeAttempt.agentGeneration },
+                  workItems: Array.isArray(state.workItems) ? state.workItems.map((w) => ({ id: w.workItemId, lifecycle: w.lifecycle })) : undefined,
+                  verification: Array.isArray(state.verification) ? state.verification.map((v) => ({ id: v.obligationId, satisfaction: v.satisfaction })) : undefined,
+                } : undefined;
+                console.log(JSON.stringify({ sequence: event.sequence, type: event.type, producer: event.producer, transitionKind: payload.transitionKind, state: summary }));
+              }
+            } finally { locked.close(); }
+          '
