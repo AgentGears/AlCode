@@ -168,6 +168,47 @@ function requireAdaptiveProgramOwnership(
   }
 }
 
+function isTrustedHostVerificationOperation(
+  input: ProgramRoutedRootOperationInputV1,
+): boolean {
+  const requested = input.drafts[0];
+  if (requested === undefined || requested.type !== "operation.requested") return false;
+  const producer = record(requested.producer);
+  if (producer.kind !== "runtime" || producer.component !== "host-capability-broker") return false;
+  const invocation = record(record(requested.payload).programVerificationInvocation);
+  if (typeof invocation.specId !== "string" || invocation.specId.length === 0
+      || typeof invocation.specVersion !== "number"
+      || !Number.isSafeInteger(invocation.specVersion) || invocation.specVersion <= 0
+      || typeof invocation.canonicalArgsDigest !== "string" || invocation.canonicalArgsDigest.length === 0) {
+    return false;
+  }
+  if (invocation.kind === "operation_result") {
+    return typeof invocation.verificationObligationId === "string" && invocation.verificationObligationId.length > 0
+      && typeof invocation.subjectGeneration === "number"
+      && Number.isSafeInteger(invocation.subjectGeneration) && invocation.subjectGeneration > 0;
+  }
+  if (invocation.kind === "artifact_production") {
+    return typeof invocation.productionStepId === "string" && invocation.productionStepId.length > 0
+      && typeof invocation.outputSlotId === "string" && invocation.outputSlotId.length > 0;
+  }
+  return false;
+}
+
+function operationalProgramContextForAdaptiveAdmission(
+  current: ProgramSemanticCurrentSnapshotV1,
+  raw: ProgramState,
+  input: ProgramRoutedRootOperationInputV1,
+): ProgramRootOperationContextV1 {
+  const program = input.program!;
+  if (!isTrustedHostVerificationOperation(input)) return program;
+  if (program.expectedProgramRevision !== current.programStateRevision) {
+    throw new ProgramDispatchStaleError(
+      `Adaptive Host verification semantic revision mismatch: expected ${program.expectedProgramRevision}, current ${current.programStateRevision}`,
+    );
+  }
+  return { ...program, expectedProgramRevision: raw.revision };
+}
+
 function validateAdaptiveOperationDrafts(
   store: WorkspaceEventStore,
   input: ProgramRoutedRootOperationInputV1,
@@ -352,11 +393,12 @@ export class ProgramAdaptiveRootOperationAuthorityV2 implements ProgramRootOpera
         const current = await this.options.currentState.current(input.program!.programStateId);
         const raw = requireAdaptiveRawProgramStateV2(events, input.program!.programStateId);
         const sessionId = String(input.sessionId);
-        requireAdaptiveProgramOwnership(current, raw, input.program!, sessionId);
+        const program = operationalProgramContextForAdaptiveAdmission(current, raw, input);
+        requireAdaptiveProgramOwnership(current, raw, program, sessionId);
         if (!sessionIsActive(events, sessionId)) {
           throw new ProgramDispatchStaleError("Adaptive ProgramAttempt session is stopped");
         }
-        if (!await this.options.agentGenerations.isCurrent(sessionId, input.program!.agentGeneration)) {
+        if (!await this.options.agentGenerations.isCurrent(sessionId, program.agentGeneration)) {
           throw new ProgramDispatchStaleError("Adaptive ProgramAttempt Agent generation is stale");
         }
         if (!await this.options.recovery.isClear()) {
@@ -380,14 +422,14 @@ export class ProgramAdaptiveRootOperationAuthorityV2 implements ProgramRootOpera
               || typeof quiescence.proofContractId !== "string" || quiescence.proofContractId.length === 0
               || !Number.isSafeInteger(Number(quiescence.proofContractVersion)) || Number(quiescence.proofContractVersion) <= 0
               || typeof quiescence.containmentInstanceId !== "string" || quiescence.containmentInstanceId.length === 0) {
-            return { status: "program_may_write_blocked", program: input.program! } as const;
+            return { status: "program_may_write_blocked", program } as const;
           }
         }
-        const stamped = validateAdaptiveOperationDrafts(this.options.store, input, input.program!);
+        const stamped = validateAdaptiveOperationDrafts(this.options.store, input, program);
         return {
           status: "appended",
           events: await this.options.store.append(stamped),
-          program: input.program!,
+          program,
         } as const;
       });
     });

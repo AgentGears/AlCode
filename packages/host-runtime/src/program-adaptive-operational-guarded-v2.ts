@@ -121,15 +121,32 @@ function isTrustedAdaptiveAnchorV2(event: PersistedDomainEvent<string, unknown>)
   if (component === "program-adaptive-settlement-v2") {
     return transitionKind === "attempt.execution_base.advance" || transitionKind === "execution_base.unavailable";
   }
+  if (component === "program-adaptive-recovery-v2") {
+    return transitionKind === "attempt.interrupt:agent_replaced";
+  }
+  if (component === "program-adaptive-rebase-v2") {
+    return transitionKind === "execution_base.rebase_accept";
+  }
+  if (component === "program-adaptive-application-v1") {
+    return transitionKind === "session.attach" || transitionKind === "session.detach";
+  }
+  if (component === "program-adaptive-verification-v2") {
+    return transitionKind === "evidence.add"
+      || transitionKind === "verification.satisfy"
+      || transitionKind === "artifact.add"
+      || transitionKind === "attempt.interrupt:verified"
+      || transitionKind === "work.lifecycle.set:completed"
+      || transitionKind === "attempt.interrupt:verification_failed"
+      || transitionKind === "work.lifecycle.set:pending";
+  }
   return false;
 }
 
 /**
- * Validate the complete raw ProgramState lineage after a semantic cut. The
- * first post-cut ProgramState must descend from an explicitly adaptive Host
- * adapter that first materialized the exact current semantic state. This admits
- * new-Attempt dispatch, retained-Attempt progress/settlement, and terminal
- * admission while still rejecting legacy stale writers.
+ * Validate the complete raw ProgramState lineage after a semantic cut. Every
+ * post-cut ProgramState writer must be an explicitly adaptive Host adapter, and
+ * the first one must materialize exactly semantic revision + 1. This prevents a
+ * later fixed-topology writer from hiding behind an earlier trusted anchor.
  */
 export function validatePostSemanticProgramStateSequenceV2(
   events: readonly PersistedDomainEvent<string, unknown>[],
@@ -154,6 +171,11 @@ export function validatePostSemanticProgramStateSequenceV2(
     if (item.state.revision !== expectedRevision) {
       throw new ProgramAdaptiveOperationalOverlayErrorV2(
         `Post-semantic ProgramState revision chain is not contiguous: expected ${expectedRevision}, got ${item.state.revision}`,
+      );
+    }
+    if (!isTrustedAdaptiveAnchorV2(item.event)) {
+      throw new ProgramAdaptiveOperationalOverlayErrorV2(
+        "Post-semantic ProgramState was not written by adaptive Host authority",
       );
     }
     expectedRevision += 1;

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
+import type { PersistedDomainEvent } from "@alcode/events";
 import {
+  asProgramArtifactProductionStepId,
   asProgramAttemptId,
+  asProgramOutputSlotId,
   asProgramRevisionId,
   asProgramStateId,
   asProgramWorkItemId,
@@ -12,10 +15,12 @@ import {
   type WorkAuthorityEnvelopeV1,
 } from "@alcode/program-state";
 import {
+  materializeAdaptiveAgentReplacementRecoveryV2,
   materializeAdaptiveMutationSettlementProgramStateV2,
   materializeAdaptiveOperationalProgramStateV2,
   materializeAdaptiveRetainedAttemptProgramStateV2,
 } from "./program-adaptive-admission-v2.ts";
+import { validatePostSemanticProgramStateSequenceV2 } from "./program-adaptive-operational-v2.ts";
 import type { ProgramSemanticCurrentSnapshotV1 } from "./program-revision.ts";
 
 const programStateId = asProgramStateId("018f0000-0000-7000-8000-000000000981");
@@ -25,6 +30,8 @@ const attemptId = asProgramAttemptId("admission-old-attempt");
 const revisionId = asProgramRevisionId("admission-r2");
 const verificationId = asVerificationObligationId("admission-verification");
 const retiredVerificationId = asVerificationObligationId("retired-verification");
+const outputSlotId = asProgramOutputSlotId("admission-output-slot");
+const productionStepId = asProgramArtifactProductionStepId("admission-production-step");
 
 function envelope(): WorkAuthorityEnvelopeV1 {
   return {
@@ -53,6 +60,18 @@ function executionBase(workspaceEffectGeneration = 4) {
       coverageDigest: "coverage",
       stateDigest: `state-${workspaceEffectGeneration}`,
     },
+  };
+}
+
+function productionStep(argsVersion: number) {
+  return {
+    productionStepId,
+    producerWorkItemId: workId,
+    outputChannel: "artifact",
+    specId: "artifact.production",
+    specVersion: 1,
+    canonicalArgs: { version: argsVersion },
+    canonicalArgsDigest: `artifact-production-v${argsVersion}`,
   };
 }
 
@@ -164,6 +183,32 @@ function current(retained = false): ProgramSemanticCurrentSnapshotV1 {
   };
 }
 
+function rawStateWithArtifact(): ProgramState {
+  const raw = rawState();
+  return {
+    ...raw,
+    outputSlots: [{ outputSlotId, productionStepId }],
+    productionSteps: [productionStep(1)],
+    artifacts: [{
+      artifactRef: "artifact-from-production-v1",
+      outputSlotId,
+      productionStepId,
+    }],
+  };
+}
+
+function currentWithProductionStep(argsVersion: number): ProgramSemanticCurrentSnapshotV1 {
+  const snapshot = current(false);
+  return {
+    ...snapshot,
+    semanticState: {
+      ...snapshot.semanticState,
+      outputSlots: [{ outputSlotId, productionStepId }],
+      productionSteps: [productionStep(argsVersion)],
+    },
+  };
+}
+
 describe("A1 adaptive Attempt admission materialization", () => {
   it("materializes current semantic work instead of resurrecting an invalidated prior generation", () => {
     const next = materializeAdaptiveOperationalProgramStateV2(rawState(), current(), executionBase(4));
@@ -204,5 +249,53 @@ describe("A1 adaptive Attempt admission materialization", () => {
     expect(next.activeAttempt).toBeNull();
     expect(next.acceptedExecutionBase).toEqual(executionBase(3));
     expect(next.workItems[0]?.lifecycle).toBe("pending");
+  });
+
+  it("retains an artifact binding only when its semantic production definition is unchanged", () => {
+    const raw = rawStateWithArtifact();
+    const next = materializeAdaptiveMutationSettlementProgramStateV2(raw, currentWithProductionStep(1));
+    expect(next.artifacts).toEqual(raw.artifacts);
+  });
+
+  it("drops a same-ID artifact binding when the semantic production invocation changes", () => {
+    const next = materializeAdaptiveMutationSettlementProgramStateV2(
+      rawStateWithArtifact(),
+      currentWithProductionStep(2),
+    );
+    expect(next.outputSlots).toEqual([{ outputSlotId, productionStepId }]);
+    expect(next.productionSteps).toEqual([productionStep(2)]);
+    expect(next.artifacts).toEqual([]);
+  });
+
+  it("retires a retained replacement Attempt through one exact adaptive materialization anchor", () => {
+    const recovered = materializeAdaptiveAgentReplacementRecoveryV2(
+      rawState(),
+      current(true),
+      String(sessionId),
+    );
+    expect(recovered.programAttemptId).toBe(String(attemptId));
+    expect(recovered.recovered.revision).toBe(10);
+    expect(recovered.recovered.activeAttempt).toBeNull();
+    expect(recovered.recovered.workItems[0]?.lifecycle).toBe("pending");
+    expect(recovered.recovered.verification[0]?.obligationId).toBe(verificationId);
+
+    const events = [{
+      sequence: 11,
+      eventId: "adaptive-recovery-retired",
+      workspaceId: "workspace-admission",
+      sessionId: String(sessionId),
+      programStateId: String(programStateId),
+      occurredAt: "2026-08-30T00:00:00.000Z",
+      type: "program.transitioned",
+      payload: { state: recovered.recovered, transitionKind: "attempt.interrupt:agent_replaced" },
+      payloadSchemaVersion: 1,
+      producer: { kind: "runtime", component: "program-adaptive-recovery-v2" },
+    }] as unknown as PersistedDomainEvent<string, unknown>[];
+    expect(validatePostSemanticProgramStateSequenceV2(
+      events,
+      String(programStateId),
+      10,
+      current(true).programStateRevision,
+    )?.state.revision).toBe(10);
   });
 });
