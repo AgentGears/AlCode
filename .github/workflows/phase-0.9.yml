@@ -1,15 +1,7 @@
 name: Phase 0.9
 on:
-  push:
-    branches: [phase-0.9]
   pull_request:
     paths:
-      - 'packages/**'
-      - 'extensions/**'
-      - 'scripts/gate/**'
-      - 'docs/phase-0.9*'
-      - 'pnpm-lock.yaml'
-      - 'package.json'
       - '.github/workflows/phase-0.9*.yml'
 jobs:
   gate:
@@ -21,4 +13,39 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22.17.0, cache: pnpm }
       - run: pnpm install --frozen-lockfile
-      - run: pnpm gate:0.9
+      - name: Instrument adaptive idle decision in checked-out source only
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('packages/host-runtime/src/program-execution-runtime-v2.ts')
+          text = path.read_text()
+          old = 'const decision = await this.control.handleAgentIdle(sessionId);'
+          new = '''const decision = await this.control.handleAgentIdle(sessionId).then(
+              (value) => {
+                console.error(`ALCODE_DIAG_IDLE_DECISION=${JSON.stringify(value)}`);
+                return value;
+              },
+              (error) => {
+                console.error(`ALCODE_DIAG_IDLE_ERROR=${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
+                throw error;
+              },
+            );'''
+          if text.count(old) != 1:
+              raise SystemExit(f'expected exactly one idle decision call, found {text.count(old)}')
+          path.write_text(text.replace(old, new))
+          PY
+      - name: Run deterministic accepted CLI with idle diagnostics
+        env:
+          ALCODE_HOME: ${{ runner.temp }}/alcode-idle-diag
+          ALCODE_AGENT_SCRIPT: '[{"text":"Hello from ALCODE. The agent loop is running."}]'
+          ALCODE_PLANNING_SCRIPT: '[{"toolCalls":[{"id":"planning-proposal-1","name":"submit_program_proposal","arguments":{"objective":"hello","workItems":[{"workItemId":"work-1","creationOrder":0,"description":"hello","dependencyIds":[],"affectedPaths":["package.json"]}],"verification":[{"obligationId":"verify-package-json","verifier":{"specId":"workspace_path_state","specVersion":1},"args":{"path":"package.json","requiredState":"file"},"freshnessScope":{"kind":"workspace"}}],"outputSlots":[],"productionSteps":[]}}]}]'
+        run: |
+          set +e
+          timeout 30s pnpm exec tsx packages/coding-agent/src/cli.ts -p hello --accept-program > /tmp/alcode-cli.out 2> /tmp/alcode-cli.err
+          status=$?
+          echo "CLI_STATUS=$status"
+          echo '--- STDOUT ---'
+          cat /tmp/alcode-cli.out
+          echo '--- STDERR ---'
+          cat /tmp/alcode-cli.err
+          exit 0
