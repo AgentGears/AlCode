@@ -168,14 +168,14 @@ export function validatePostSemanticProgramStateSequenceV2(
 
   let expectedRevision = semanticProgramStateRevision + 1;
   for (const item of postHead) {
-    if (!isTrustedAdaptiveAnchorV2(item.event)) {
-      throw new ProgramAdaptiveOperationalOverlayErrorV2(
-        "Post-semantic ProgramState was not written by adaptive Host authority",
-      );
-    }
     if (item.state.revision !== expectedRevision) {
       throw new ProgramAdaptiveOperationalOverlayErrorV2(
         `Post-semantic ProgramState revision chain is not contiguous: expected ${expectedRevision}, got ${item.state.revision}`,
+      );
+    }
+    if (!isTrustedAdaptiveAnchorV2(item.event)) {
+      throw new ProgramAdaptiveOperationalOverlayErrorV2(
+        "Post-semantic ProgramState was not written by adaptive Host authority",
       );
     }
     expectedRevision += 1;
