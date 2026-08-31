@@ -189,15 +189,18 @@ function adaptiveRebaseStore(
     }
   };
 
-  return new Proxy(options.store, {
-    get(target, property, receiver) {
+  // The canonical store can expose replay/append as non-configurable own
+  // properties. Proxy an empty view target so adaptive overrides do not violate
+  // JavaScript Proxy invariants; delegate every other member to the real store.
+  return new Proxy({} as WorkspaceEventStore, {
+    get(_target, property) {
       if (property === "replay") return () => replay();
       if (property === "append") {
         return (drafts: readonly EventDraft<string, unknown>[]) =>
-          target.append(rewriteAdaptiveRebaseDrafts(drafts));
+          options.store.append(rewriteAdaptiveRebaseDrafts(drafts));
       }
-      const value = Reflect.get(target, property, receiver) as unknown;
-      return typeof value === "function" ? value.bind(target) : value;
+      const value = Reflect.get(options.store, property, options.store) as unknown;
+      return typeof value === "function" ? value.bind(options.store) : value;
     },
   }) as WorkspaceEventStore;
 }

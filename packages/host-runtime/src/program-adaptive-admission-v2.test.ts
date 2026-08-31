@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { PersistedDomainEvent } from "@alcode/events";
 import {
+  asProgramArtifactProductionStepId,
   asProgramAttemptId,
+  asProgramOutputSlotId,
   asProgramRevisionId,
   asProgramStateId,
   asProgramWorkItemId,
@@ -28,6 +30,8 @@ const attemptId = asProgramAttemptId("admission-old-attempt");
 const revisionId = asProgramRevisionId("admission-r2");
 const verificationId = asVerificationObligationId("admission-verification");
 const retiredVerificationId = asVerificationObligationId("retired-verification");
+const outputSlotId = asProgramOutputSlotId("admission-output-slot");
+const productionStepId = asProgramArtifactProductionStepId("admission-production-step");
 
 function envelope(): WorkAuthorityEnvelopeV1 {
   return {
@@ -56,6 +60,18 @@ function executionBase(workspaceEffectGeneration = 4) {
       coverageDigest: "coverage",
       stateDigest: `state-${workspaceEffectGeneration}`,
     },
+  };
+}
+
+function productionStep(argsVersion: number) {
+  return {
+    productionStepId,
+    producerWorkItemId: workId,
+    outputChannel: "artifact",
+    specId: "artifact.production",
+    specVersion: 1,
+    canonicalArgs: { version: argsVersion },
+    canonicalArgsDigest: `artifact-production-v${argsVersion}`,
   };
 }
 
@@ -167,6 +183,32 @@ function current(retained = false): ProgramSemanticCurrentSnapshotV1 {
   };
 }
 
+function rawStateWithArtifact(): ProgramState {
+  const raw = rawState();
+  return {
+    ...raw,
+    outputSlots: [{ outputSlotId, productionStepId }],
+    productionSteps: [productionStep(1)],
+    artifacts: [{
+      artifactRef: "artifact-from-production-v1",
+      outputSlotId,
+      productionStepId,
+    }],
+  };
+}
+
+function currentWithProductionStep(argsVersion: number): ProgramSemanticCurrentSnapshotV1 {
+  const snapshot = current(false);
+  return {
+    ...snapshot,
+    semanticState: {
+      ...snapshot.semanticState,
+      outputSlots: [{ outputSlotId, productionStepId }],
+      productionSteps: [productionStep(argsVersion)],
+    },
+  };
+}
+
 describe("A1 adaptive Attempt admission materialization", () => {
   it("materializes current semantic work instead of resurrecting an invalidated prior generation", () => {
     const next = materializeAdaptiveOperationalProgramStateV2(rawState(), current(), executionBase(4));
@@ -207,6 +249,22 @@ describe("A1 adaptive Attempt admission materialization", () => {
     expect(next.activeAttempt).toBeNull();
     expect(next.acceptedExecutionBase).toEqual(executionBase(3));
     expect(next.workItems[0]?.lifecycle).toBe("pending");
+  });
+
+  it("retains an artifact binding only when its semantic production definition is unchanged", () => {
+    const raw = rawStateWithArtifact();
+    const next = materializeAdaptiveMutationSettlementProgramStateV2(raw, currentWithProductionStep(1));
+    expect(next.artifacts).toEqual(raw.artifacts);
+  });
+
+  it("drops a same-ID artifact binding when the semantic production invocation changes", () => {
+    const next = materializeAdaptiveMutationSettlementProgramStateV2(
+      rawStateWithArtifact(),
+      currentWithProductionStep(2),
+    );
+    expect(next.outputSlots).toEqual([{ outputSlotId, productionStepId }]);
+    expect(next.productionSteps).toEqual([productionStep(2)]);
+    expect(next.artifacts).toEqual([]);
   });
 
   it("retires a retained replacement Attempt through one exact adaptive materialization anchor", () => {

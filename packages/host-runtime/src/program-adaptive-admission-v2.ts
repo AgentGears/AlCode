@@ -237,15 +237,43 @@ function materializeSemanticCollections(
   const verification = current.semanticState.verification.map((item) => structuredClone(item));
   const verificationIds = new Set(verification.map((item) => String(item.obligationId)));
   const outputSlots = current.semanticState.outputSlots.map((item) => structuredClone(item));
-  const outputSlotIds = new Set(outputSlots.map((item) => String(item.outputSlotId)));
   const productionSteps = current.semanticState.productionSteps.map((item) => structuredClone(item));
-  const productionStepIds = new Set(productionSteps.map((item) => String(item.productionStepId)));
+  const rawOutputSlots = new Map(raw.outputSlots.map((item) => [String(item.outputSlotId), item]));
+  const currentOutputSlots = new Map(outputSlots.map((item) => [String(item.outputSlotId), item]));
+  const rawProductionSteps = new Map(raw.productionSteps.map((item) => [String(item.productionStepId), item]));
+  const currentProductionSteps = new Map(productionSteps.map((item) => [String(item.productionStepId), item]));
+  const productionStepSemanticsCurrent = (productionStepId: string): boolean => {
+    const previous = rawProductionSteps.get(productionStepId);
+    const next = currentProductionSteps.get(productionStepId);
+    return previous !== undefined && next !== undefined
+      && canonicalStringify(previous) === canonicalStringify(next);
+  };
+  const artifactBindingSemanticsCurrent = (artifact: ProgramState["artifacts"][number]): boolean => {
+    if (artifact.outputSlotId !== null) {
+      const outputSlotId = String(artifact.outputSlotId);
+      const previous = rawOutputSlots.get(outputSlotId);
+      const next = currentOutputSlots.get(outputSlotId);
+      if (previous === undefined || next === undefined
+          || canonicalStringify(previous) !== canonicalStringify(next)
+          || !productionStepSemanticsCurrent(String(next.productionStepId))) {
+        return false;
+      }
+    }
+    if (artifact.productionStepId !== null
+        && !productionStepSemanticsCurrent(String(artifact.productionStepId))) {
+      return false;
+    }
+    return true;
+  };
   const blockers = raw.blockers
     .filter((item) => item.workItemId === null || workIds.has(String(item.workItemId)))
     .map((item) => structuredClone(item));
+  // ArtifactRefs are semantic production claims, not identity-only cache keys.
+  // Retain one only when every referenced output-slot/production-step definition
+  // is mechanically identical across the semantic cut. A reused ID with changed
+  // spec/version/args/producer/output-channel must force fresh production.
   const artifacts = raw.artifacts
-    .filter((item) => (item.outputSlotId === null || outputSlotIds.has(String(item.outputSlotId)))
-      && (item.productionStepId === null || productionStepIds.has(String(item.productionStepId))))
+    .filter(artifactBindingSemanticsCurrent)
     .map((item) => structuredClone(item));
   const artifactRefs = new Set(artifacts.map((item) => item.artifactRef));
   const decisiveEvidence = raw.decisiveEvidence

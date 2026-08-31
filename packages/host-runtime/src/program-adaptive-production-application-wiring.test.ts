@@ -58,6 +58,8 @@ describe("A1 production adaptive Application composition", () => {
     expect(commandSource).toContain("materializeAdaptiveMutationSettlementProgramStateV2");
     expect(commandSource).toContain('component: "program-adaptive-rebase-v2"');
     expect(commandSource).toContain('component: "program-adaptive-application-v1"');
+    expect(commandSource).not.toContain("new Proxy(options.store");
+    expect(commandSource).toContain("new Proxy({} as WorkspaceEventStore");
   });
 
   it("delegates creation and fixed Programs unchanged while routing adopted Program mutation commands", async () => {

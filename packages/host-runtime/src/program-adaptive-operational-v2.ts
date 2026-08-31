@@ -134,15 +134,20 @@ function overlayAdaptiveTerminalStoreV2(
     }
   };
 
-  return new Proxy(store, {
-    get(target, property, receiver) {
+  // Never proxy the concrete WorkspaceEventStore target: production stores may
+  // expose replay/append as non-configurable own properties. Proxy invariants
+  // would then forbid an adaptive view from overriding those methods. The empty
+  // target carries no descriptor authority; every non-overridden member is
+  // explicitly delegated to the canonical store with its original receiver.
+  return new Proxy({} as WorkspaceEventStore, {
+    get(_target, property) {
       if (property === "replay") return () => replay();
       if (property === "append") {
         return (drafts: readonly EventDraft<string, unknown>[]) =>
-          target.append(rewriteAdaptiveTerminalProducerV2(drafts));
+          store.append(rewriteAdaptiveTerminalProducerV2(drafts));
       }
-      const value = Reflect.get(target, property, receiver) as unknown;
-      return typeof value === "function" ? value.bind(target) : value;
+      const value = Reflect.get(store, property, store) as unknown;
+      return typeof value === "function" ? value.bind(store) : value;
     },
   }) as WorkspaceEventStore;
 }
