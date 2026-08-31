@@ -1,0 +1,92 @@
+export * from "./program-adaptive-production-v1.ts";
+export * from "./program-adaptive-application-command-v1.ts";
+
+import type { ApplicationServicePort } from "@alcode/application-protocol";
+import type { ProgramAgentGenerationAuthorityV1 } from "./program-dispatch.ts";
+import type { ApplicationAgentControl } from "./application-service.ts";
+import { HostApplicationService } from "./application-service.ts";
+import {
+  HostProgramAdaptiveApplicationCommandAuthorityV1,
+  ProgramAdaptiveApplicationCommandPortV1,
+} from "./program-adaptive-application-command-v1.ts";
+import {
+  ProgramAdaptiveApplicationServiceV1,
+} from "./program-adaptive-application-control-v1.ts";
+import { ProgramAdaptiveApplicationPortV1 } from "./program-adaptive-application-projection-v1.ts";
+import type { ProgramApplicationPortV1 } from "./program-application.ts";
+import {
+  createProgramAdaptiveProductionRuntimeV1 as createBaseProgramAdaptiveProductionRuntimeV1,
+  type ProgramAdaptiveProductionRuntimeOptionsV1,
+  type ProgramAdaptiveProductionRuntimeV1,
+} from "./program-adaptive-production-v1.ts";
+
+/**
+ * Supported package entry for adaptive production. It composes the frozen A1
+ * production runtime first, then replaces only the Application Program command
+ * port with semantic-aware mutation authority. Agent execution, scheduling,
+ * operation settlement, verification, and Completion remain owned by the base
+ * production runtime.
+ */
+export function createProgramAdaptiveProductionRuntimeV1(
+  options: ProgramAdaptiveProductionRuntimeOptionsV1,
+): ProgramAdaptiveProductionRuntimeV1 {
+  const runtime = createBaseProgramAdaptiveProductionRuntimeV1(options);
+  const fixed = options.fixedTopology;
+  const store = fixed.workspaceStore;
+  const adaptiveApplicationAuthority = new HostProgramAdaptiveApplicationCommandAuthorityV1({
+    store,
+    currentState: runtime.currentState,
+    terminalOptions: {
+      store,
+      admission: fixed.host.admission,
+      workspaceCoordinator: fixed.workspaceCoordinator,
+      observations: options.observations,
+      recovery: fixed.recovery,
+      artifactStore: options.artifactStore,
+      currentState: runtime.currentState,
+    },
+    dispatchOptions: {
+      store,
+      admission: fixed.host.admission,
+      workspaceCoordinator: fixed.workspaceCoordinator,
+      observations: options.observations,
+      agentGenerations: fixed.host.programAgents as ProgramAgentGenerationAuthorityV1,
+      recovery: fixed.recovery,
+      firstDispatchPlanning: fixed.creation,
+    },
+  });
+
+  const createApplication = (
+    agent: ApplicationAgentControl,
+    program: ProgramApplicationPortV1,
+    maxReplayEvents?: number,
+  ): ApplicationServicePort => {
+    const projected = new ProgramAdaptiveApplicationPortV1(program, runtime.semanticRecovery);
+    const controlled = new ProgramAdaptiveApplicationCommandPortV1(
+      projected,
+      runtime.semanticRecovery,
+      adaptiveApplicationAuthority,
+    );
+    const base = new HostApplicationService({
+      store,
+      admission: fixed.host.admission,
+      agent,
+      program: controlled,
+      ...(maxReplayEvents !== undefined ? { maxReplayEvents } : {}),
+    });
+    return new ProgramAdaptiveApplicationServiceV1({
+      store,
+      admission: fixed.host.admission,
+      base,
+      semantic: runtime.semanticApplication,
+    });
+  };
+
+  return {
+    ...runtime,
+    createApplicationService: (agent, maxReplayEvents) =>
+      createApplication(agent, fixed.productApplication, maxReplayEvents),
+    createBaselineAdoptionApplicationService: (agent, maxReplayEvents) =>
+      createApplication(agent, fixed.application, maxReplayEvents),
+  };
+}

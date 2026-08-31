@@ -15,8 +15,8 @@
       "import": "./src/adaptive-v2.ts"
     },
     "./adaptive-production-v1": {
-      "types": "./src/program-adaptive-production-v1.ts",
-      "import": "./src/program-adaptive-production-v1.ts"
+      "types": "./src/program-adaptive-production-entry-v1.ts",
+      "import": "./src/program-adaptive-production-entry-v1.ts"
     }
   },
   "scripts": {
