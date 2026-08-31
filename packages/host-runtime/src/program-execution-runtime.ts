@@ -213,6 +213,11 @@ export class ProgramExecutionRuntimeV1 {
     this.productApplication = new ProgramExecutionApplicationPortV1(this.application, this.scheduler);
   }
 
+  /** Exact Workspace event store already owned by this production authority graph. */
+  get workspaceStore(): WorkspaceEventStore {
+    return this.store;
+  }
+
   private hostConnectionWithoutProgramIdle(connection: AgentConnection): AgentConnection {
     const transport = connection.transport;
     return {
