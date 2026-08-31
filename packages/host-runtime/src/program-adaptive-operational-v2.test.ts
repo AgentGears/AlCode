@@ -335,6 +335,13 @@ function terminalFixture(completedWork: boolean, includeRetired = false) {
       return persisted;
     },
   } as unknown as WorkspaceEventStore;
+  // Mirror the production WorkspaceEventStore descriptor that exposed the
+  // prior Proxy invariant failure: replay is an exact, non-configurable method.
+  Object.defineProperty(store, "replay", {
+    value: store.replay,
+    writable: false,
+    configurable: false,
+  });
   const current = terminalCurrent(completedWork, includeRetired);
   const service = new ProgramAdaptiveTerminalServiceV2({
     store,
