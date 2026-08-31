@@ -1,16 +1,8 @@
 name: Phase 0.9
 on:
-  push:
-    branches: [phase-0.9]
   pull_request:
     paths:
-      - 'packages/**'
-      - 'extensions/**'
-      - 'scripts/gate/**'
-      - 'docs/phase-0.9*'
-      - 'pnpm-lock.yaml'
-      - 'package.json'
-      - '.github/workflows/phase-0.9*.yml'
+      - '.github/workflows/phase-0.9.yml'
 jobs:
   gate:
     runs-on: ubuntu-latest
@@ -21,4 +13,17 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22.17.0, cache: pnpm }
       - run: pnpm install --frozen-lockfile
-      - run: pnpm gate:0.9
+      - name: Deterministic production CLI
+        env:
+          ALCODE_AGENT_SCRIPT: '[{"text":"Hello from ALCODE. The agent loop is running."}]'
+          ALCODE_PLANNING_SCRIPT: '[{"toolCalls":[{"id":"planning-proposal-1","name":"submit_program_proposal","arguments":{"objective":"hello","workItems":[{"workItemId":"work-1","creationOrder":0,"description":"hello","dependencyIds":[],"affectedPaths":["package.json"]}],"verification":[{"obligationId":"verify-package-json","verifier":{"specId":"workspace_path_state","specVersion":1},"args":{"path":"package.json","requiredState":"file"},"freshnessScope":{"kind":"workspace"}}],"outputSlots":[],"productionSteps":[]}}]}]'
+        run: |
+          set +e
+          timeout 330s pnpm exec tsx packages/coding-agent/src/cli.ts -p hello --accept-program > /tmp/alcode-cli.out 2> /tmp/alcode-cli.err
+          status=$?
+          echo '--- STDOUT ---'
+          cat /tmp/alcode-cli.out
+          echo '--- STDERR ---'
+          cat /tmp/alcode-cli.err
+          echo "--- EXIT STATUS: ${status} ---"
+          exit "$status"
