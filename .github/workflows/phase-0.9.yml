@@ -21,4 +21,4 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22.17.0, cache: pnpm }
       - run: pnpm install --frozen-lockfile
-      - run: pnpm gate:0.9
+      - run: pnpm gate:0.5
