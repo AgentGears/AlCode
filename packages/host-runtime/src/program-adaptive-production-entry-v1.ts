@@ -20,11 +20,38 @@ import {
 } from "./program-adaptive-application-control-v1.ts";
 import { ProgramAdaptiveApplicationCurrentPortV2 } from "./program-adaptive-application-current-v2.ts";
 import type { ProgramApplicationPortV1 } from "./program-application.ts";
+import type { Phase1RecoveryLifecycleV1 } from "./program-recovery.ts";
 import {
   createProgramAdaptiveProductionRuntimeV1 as createBaseProgramAdaptiveProductionRuntimeV1,
   type ProgramAdaptiveProductionRuntimeOptionsV1,
   type ProgramAdaptiveProductionRuntimeV1,
 } from "./program-adaptive-production-v1.ts";
+
+/**
+ * Compose Workspace-restart Attempt retirement into the privileged Host startup
+ * lifecycle without weakening Phase-1 recovery as the durable writer-barrier
+ * authority. Host startup still owns interrupted Operation/Work recovery first;
+ * this wrapper inserts adaptive Attempt retirement immediately before the
+ * existing Phase-1 reconciliation pass and delegates every admission query to
+ * that canonical Phase-1 controller unchanged.
+ */
+function withAdaptiveWorkspaceRestartRecoveryV3(
+  base: Phase1RecoveryLifecycleV1,
+  replacement: ProgramAdaptiveAgentReplacementAuthorityV3,
+): Phase1RecoveryLifecycleV1 {
+  return new Proxy({} as Phase1RecoveryLifecycleV1, {
+    get(_target, property) {
+      if (property === "recover") {
+        return async () => {
+          await replacement.recoverWorkspaceRestart();
+          return base.recover();
+        };
+      }
+      const value = Reflect.get(base, property, base) as unknown;
+      return typeof value === "function" ? value.bind(base) : value;
+    },
+  }) as Phase1RecoveryLifecycleV1;
+}
 
 /**
  * Supported package entry for adaptive production. It composes the frozen A1
@@ -67,6 +94,9 @@ export function createProgramAdaptiveProductionRuntimeV1(
     admission: fixed.host.admission,
     workspaceCoordinator: fixed.workspaceCoordinator,
   });
+  fixed.host.setPhase1RecoveryController(
+    withAdaptiveWorkspaceRestartRecoveryV3(fixed.recovery, replacementAuthority),
+  );
   const admission = withAdaptiveAgentReplacementAuthorityV3(
     runtime.admission,
     replacementAuthority,

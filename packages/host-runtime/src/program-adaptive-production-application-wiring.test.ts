@@ -9,6 +9,7 @@ import {
   createProgramState,
 } from "@alcode/program-state";
 import {
+  requireAdaptiveWorkspaceRestartAttemptOwnerV3,
   selectAdaptiveAgentReplacementCandidateV3,
   type ProgramAdaptiveReplacementCandidateV3,
 } from "./program-adaptive-agent-replacement-v3.ts";
@@ -105,6 +106,39 @@ describe("A1 production adaptive Application composition", () => {
       activeOwner,
       replacementCandidate("other-active-program", "active", true),
     ], "session-1")).toThrow("Multiple active adaptive Attempts claim attached Session session-1");
+  });
+
+  it("derives Workspace-restart recovery authority from the retained raw Attempt and composes it before Phase-1 recovery", () => {
+    const activeOwner = replacementCandidate("active-program", "active", true);
+    const rawAttempt = {
+      programAttemptId: "attempt-active-program",
+      workItemId: "work-active-program",
+      sessionId: "session-1",
+    } as never;
+    expect(requireAdaptiveWorkspaceRestartAttemptOwnerV3(
+      activeOwner.programStateId,
+      activeOwner.current,
+      rawAttempt,
+    )).toBe("session-1");
+    expect(() => requireAdaptiveWorkspaceRestartAttemptOwnerV3(
+      activeOwner.programStateId,
+      activeOwner.current,
+      { ...rawAttempt, programAttemptId: "stale-attempt" } as never,
+    )).toThrow("stale Attempt ownership");
+    expect(() => requireAdaptiveWorkspaceRestartAttemptOwnerV3(
+      activeOwner.programStateId,
+      { ...activeOwner.current, attachedSessionIds: ["other-session"] },
+      rawAttempt,
+    )).toThrow("is not attached");
+
+    expect(replacementSource).toContain("recoverWorkspaceRestart()");
+    expect(replacementSource).toContain("const sessionId = requireAdaptiveWorkspaceRestartAttemptOwnerV3(");
+    expect(replacementSource).toContain("prepared.map(({ draft }) => draft)");
+    expect(entrySource).toContain("fixed.host.setPhase1RecoveryController(");
+    const adaptiveRecovery = entrySource.indexOf("await replacement.recoverWorkspaceRestart();");
+    const phaseRecovery = entrySource.indexOf("return base.recover();");
+    expect(adaptiveRecovery).toBeGreaterThan(-1);
+    expect(phaseRecovery).toBeGreaterThan(adaptiveRecovery);
   });
 
   it("uses semantic-aware Host adapters for every legacy mutating Application command after adoption", () => {

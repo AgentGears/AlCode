@@ -1,4 +1,5 @@
 import type { PersistedDomainEvent, SessionId as EventSessionId } from "@alcode/events";
+import type { ProgramState } from "@alcode/program-state";
 import type { WorkspaceEventStore } from "@alcode/storage";
 import { CanonicalAdmissionQueue } from "./admission-queue.ts";
 import {
@@ -30,6 +31,16 @@ export type ProgramAdaptiveReplacementSelectionV3 =
   | { status: "no_active_attempt" }
   | { status: "selected"; candidate: ProgramAdaptiveReplacementCandidateV3 };
 
+export interface ProgramAdaptiveWorkspaceRestartRecoveryItemV3 {
+  programStateId: string;
+  programAttemptId: string;
+  sessionId: string;
+}
+
+export interface ProgramAdaptiveWorkspaceRestartRecoveryResultV3 {
+  recovered: ProgramAdaptiveWorkspaceRestartRecoveryItemV3[];
+}
+
 /**
  * Replacement ownership belongs to a retained active Attempt, not merely to an
  * attached Program. Terminal Programs may remain attached for continuity, and
@@ -54,6 +65,38 @@ export function selectAdaptiveAgentReplacementCandidateV3(
   if (owner !== undefined) return { status: "selected", candidate: owner };
   if (active.length > 0) return { status: "no_active_attempt" };
   return { status: "not_active" };
+}
+
+/**
+ * A successful process-scoped Workspace lock acquisition proves that no prior
+ * product process can still execute the retained Agent generation. Derive the
+ * abandoned Session only from canonical Attempt ownership; never let the new
+ * process assert an old Session identifier as recovery authority.
+ */
+export function requireAdaptiveWorkspaceRestartAttemptOwnerV3(
+  programStateId: string,
+  current: ProgramSemanticCurrentSnapshotV1,
+  rawAttempt: ProgramState["activeAttempt"],
+): string | null {
+  if (current.lifecycle !== "active" || current.activeAttempt === null) return null;
+  if (rawAttempt === null) {
+    throw new ProgramAdaptiveAdmissionControlErrorV2(
+      `Adaptive Workspace restart Program ${programStateId} lost its retained raw Attempt`,
+    );
+  }
+  if (String(rawAttempt.programAttemptId) !== String(current.activeAttempt.programAttemptId)
+      || String(rawAttempt.workItemId) !== String(current.activeAttempt.workItemId)) {
+    throw new ProgramAdaptiveAdmissionControlErrorV2(
+      `Adaptive Workspace restart Program ${programStateId} has stale Attempt ownership`,
+    );
+  }
+  const sessionId = String(rawAttempt.sessionId);
+  if (!current.attachedSessionIds.includes(sessionId)) {
+    throw new ProgramAdaptiveAdmissionControlErrorV2(
+      `Adaptive Workspace restart Attempt owner ${sessionId} is not attached to Program ${programStateId}`,
+    );
+  }
+  return sessionId;
 }
 
 function isProgramStateEvent(type: string): boolean {
@@ -124,6 +167,62 @@ export class ProgramAdaptiveAgentReplacementAuthorityV3 {
           programStateId: selected.programStateId,
           programAttemptId: recovered.programAttemptId,
         };
+      }));
+  }
+
+  /**
+   * Recover every retained adaptive Attempt after this process has acquired the
+   * exclusive Workspace lock and before generic Phase-1 recovery runs. The old
+   * Session owner is derived from each raw canonical Attempt. All recovery
+   * drafts are prepared before the single append so an ambiguous Program fails
+   * the whole Workspace restart closed without partially retiring authority.
+   */
+  recoverWorkspaceRestart(): Promise<ProgramAdaptiveWorkspaceRestartRecoveryResultV3> {
+    return this.options.workspaceCoordinator.runExclusive(async () =>
+      this.options.admission.enqueue(async () => {
+        const events = await replayAll(this.options.store);
+        const prepared: Array<{
+          draft: ReturnType<typeof adaptiveTransitionEventV2>;
+          item: ProgramAdaptiveWorkspaceRestartRecoveryItemV3;
+        }> = [];
+
+        for (const programStateId of programStateIds(events)) {
+          const current = recoverAdaptiveProgramCurrentSnapshotV2(events, programStateId);
+          if (current === undefined) continue;
+          const raw = requireAdaptiveRawProgramStateV2(events, programStateId);
+          const sessionId = requireAdaptiveWorkspaceRestartAttemptOwnerV3(
+            programStateId,
+            current,
+            raw.activeAttempt,
+          );
+          if (sessionId === null) continue;
+
+          const recovered = materializeAdaptiveAgentReplacementRecoveryV2(raw, current, sessionId);
+          prepared.push({
+            draft: adaptiveTransitionEventV2(
+              this.options.store,
+              sessionId as EventSessionId,
+              recovered.recovered,
+              "attempt.interrupt:agent_replaced",
+              recovered.programAttemptId,
+              "program-adaptive-recovery-v2",
+            ),
+            item: {
+              programStateId,
+              programAttemptId: recovered.programAttemptId,
+              sessionId,
+            },
+          });
+        }
+
+        if (prepared.length === 0) return { recovered: [] };
+        const persisted = await this.options.store.append(prepared.map(({ draft }) => draft));
+        if (persisted.length !== prepared.length) {
+          throw new ProgramAdaptiveAdmissionControlErrorV2(
+            "Adaptive Workspace restart recovery admission was not atomic",
+          );
+        }
+        return { recovered: prepared.map(({ item }) => item) };
       }));
   }
 }

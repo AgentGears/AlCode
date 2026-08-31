@@ -34,13 +34,13 @@ describe("A1 CLI adaptive production wiring", () => {
     expect(replacementAttach).toBeGreaterThan(recovery);
   });
 
-  it("retires persisted adaptive Attempt authority after Host reopen before the first Agent attachment", () => {
+  it("runs canonical Host startup before opening a fresh Session or attaching the first Agent", () => {
+    const startup = cli.indexOf("await runtime.host.startup();");
     const sessionOpen = cli.indexOf("const session = await runtime.host.sessions.openOrResume();");
-    const reopenRecovery = cli.indexOf("if (session.resumed) {\n      await adaptiveProduct.admission.recoverAgentReplacement(String(session.sessionId));\n    }");
     const firstAttach = cli.indexOf("await attachConnection(connection);");
-    expect(sessionOpen).toBeGreaterThan(-1);
-    expect(reopenRecovery).toBeGreaterThan(sessionOpen);
-    expect(firstAttach).toBeGreaterThan(reopenRecovery);
+    expect(startup).toBeGreaterThan(-1);
+    expect(sessionOpen).toBeGreaterThan(startup);
+    expect(firstAttach).toBeGreaterThan(sessionOpen);
   });
 
   it("uses the raw operational CAS revision and retries stale adaptive cancellation races", () => {
