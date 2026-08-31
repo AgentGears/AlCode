@@ -9,19 +9,47 @@ import {
   createProgramState,
 } from "@alcode/program-state";
 import {
+  selectAdaptiveAgentReplacementCandidateV3,
+  type ProgramAdaptiveReplacementCandidateV3,
+} from "./program-adaptive-agent-replacement-v3.ts";
+import {
   ProgramAdaptiveApplicationCommandPortV1,
   type ProgramAdaptiveApplicationCommandAuthorityV1,
 } from "./program-adaptive-application-command-v1.ts";
 import { validatePostSemanticProgramStateSequenceV2 } from "./program-adaptive-operational-v2.ts";
 import type { ProgramApplicationPortV1 } from "./program-application.ts";
+import type { ProgramSemanticCurrentSnapshotV1 } from "./program-revision.ts";
 import type { ProgramSemanticRecoveryRegistryV1 } from "./program-semantic-recovery-v1.ts";
 
 const baseSource = readFileSync(new URL("./program-adaptive-production-v1.ts", import.meta.url), "utf8");
 const entrySource = readFileSync(new URL("./program-adaptive-production-entry-v1.ts", import.meta.url), "utf8");
 const commandSource = readFileSync(new URL("./program-adaptive-application-command-v1.ts", import.meta.url), "utf8");
+const currentProjectionSource = readFileSync(new URL("./program-adaptive-application-current-v2.ts", import.meta.url), "utf8");
+const replacementSource = readFileSync(new URL("./program-adaptive-agent-replacement-v3.ts", import.meta.url), "utf8");
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
   exports: Record<string, { import: string; types: string }>;
 };
+
+function replacementCandidate(
+  programStateId: string,
+  lifecycle: "active" | "completed" | "cancelled",
+  retainedAttempt: boolean,
+): ProgramAdaptiveReplacementCandidateV3 {
+  return {
+    programStateId,
+    current: {
+      lifecycle,
+      attachedSessionIds: ["session-1"],
+      activeAttempt: retainedAttempt ? {
+        programAttemptId: `attempt-${programStateId}`,
+        workItemId: `work-${programStateId}`,
+        workItemGeneration: 1,
+        directDependencies: [],
+        workAuthorityEnvelope: {},
+      } : null,
+    } as unknown as ProgramSemanticCurrentSnapshotV1,
+  };
+}
 
 describe("A1 production adaptive Application composition", () => {
   it("instantiates the real Host baseline and revision acceptance authorities", () => {
@@ -34,7 +62,7 @@ describe("A1 production adaptive Application composition", () => {
     expect(baseSource).toContain("new ProgramAdaptiveSemanticApplicationControlV1({");
   });
 
-  it("keeps the frozen base production composition while routing the supported package entry through adaptive command authority", () => {
+  it("keeps the frozen base production composition while routing the supported package entry through adaptive authority", () => {
     expect(baseSource).toContain("new ProgramAdaptiveApplicationPortV1(program, semanticRecovery)");
     expect(baseSource).toContain("new ProgramAdaptiveApplicationServiceV1({");
     expect(packageJson.exports["./adaptive-production-v1"]?.import)
@@ -44,8 +72,39 @@ describe("A1 production adaptive Application composition", () => {
     expect(entrySource).toContain("createBaseProgramAdaptiveProductionRuntimeV1(options)");
     expect(entrySource).toContain("new HostProgramAdaptiveApplicationCommandAuthorityV1({");
     expect(entrySource).toContain("new ProgramAdaptiveApplicationCommandPortV1(");
-    expect(entrySource).toContain("new ProgramAdaptiveApplicationPortV1(program, runtime.semanticRecovery)");
+    expect(entrySource).toContain("new ProgramAdaptiveApplicationCurrentPortV2({");
+    expect(entrySource).toContain("withAdaptiveAgentReplacementAuthorityV3(");
     expect(entrySource).toContain("createApplication(agent, fixed.productApplication, maxReplayEvents)");
+  });
+
+  it("projects adaptive Application state from one captured semantic/operational event cut", () => {
+    expect(currentProjectionSource).toContain("const events = await replayAll(this.options.store)");
+    expect(currentProjectionSource).toContain("recoverAdaptiveProgramCurrentSnapshotV2");
+    expect(currentProjectionSource).toContain("recoverProgramSemanticStateV1");
+    expect(currentProjectionSource).toContain("materializeAdaptiveMutationSettlementProgramStateV2(raw, current)");
+    expect(currentProjectionSource).toContain("overlayLatestProgramStates(events, replacements)");
+    expect(currentProjectionSource).toContain("const viewStore = capturedStore(this.options.store, viewEvents)");
+    expect(currentProjectionSource).toContain("new HostProgramApplicationControlV1({");
+    expect(currentProjectionSource).toContain("new ProgramAdaptiveApplicationPortV1(base, capturedRecovery)");
+    expect(currentProjectionSource).not.toContain("this.options.base.getSnapshot");
+  });
+
+  it("selects replacement ownership by retained active Attempt rather than attached terminal Programs", () => {
+    const terminal = replacementCandidate("terminal-program", "completed", false);
+    const activeOwner = replacementCandidate("active-program", "active", true);
+    const activeWithoutAttempt = replacementCandidate("idle-program", "active", false);
+
+    expect(selectAdaptiveAgentReplacementCandidateV3([terminal, activeOwner], "session-1"))
+      .toEqual({ status: "selected", candidate: activeOwner });
+    expect(selectAdaptiveAgentReplacementCandidateV3([terminal, activeWithoutAttempt], "session-1"))
+      .toEqual({ status: "no_active_attempt" });
+    expect(selectAdaptiveAgentReplacementCandidateV3([terminal], "session-1"))
+      .toEqual({ status: "not_active" });
+    expect(replacementSource).toContain("const owners = active.filter((candidate) => candidate.current.activeAttempt !== null)");
+    expect(() => selectAdaptiveAgentReplacementCandidateV3([
+      activeOwner,
+      replacementCandidate("other-active-program", "active", true),
+    ], "session-1")).toThrow("Multiple active adaptive Attempts claim attached Session session-1");
   });
 
   it("uses semantic-aware Host adapters for every legacy mutating Application command after adoption", () => {
