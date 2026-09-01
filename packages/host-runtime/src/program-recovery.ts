@@ -35,6 +35,7 @@ import type {
   ProgramExecutionObservationSourceV1,
   ProgramRecoveryAuthorityV1,
 } from "./program-dispatch.ts";
+import { reduceProgramSemanticBaselineControlsV1 } from "./program-semantic-baseline-replay.ts";
 
 export type WorkspaceMutationAdmissionStatusV1 =
   | { status: "clear" }
@@ -198,14 +199,27 @@ function nonterminalMayWriteOperations(events: readonly PersistedDomainEvent<str
     .sort((a, b) => a.localeCompare(b, "en"));
 }
 
+function semanticallyAdoptedProgramIds(
+  events: readonly PersistedDomainEvent<string, unknown>[],
+): Set<string> {
+  const adopted = new Set<string>();
+  for (const control of reduceProgramSemanticBaselineControlsV1(events).values()) {
+    if (control.status === "accepted") adopted.add(control.draft.programStateId);
+  }
+  return adopted;
+}
+
 function latestProgramStates(events: readonly PersistedDomainEvent<string, unknown>[]): Map<string, ProgramState> {
   const states = new Map<string, ProgramState>();
+  const semanticProgramIds = semanticallyAdoptedProgramIds(events);
   for (const event of events) {
     if ((event.type !== "program.created" && event.type !== "program.transitioned" &&
          event.type !== "program.completed" && event.type !== "program.cancelled") ||
         event.programStateId === undefined) continue;
+    const programStateId = String(event.programStateId);
+    if (semanticProgramIds.has(programStateId)) continue;
     const state = record(event.payload).state as ProgramState | undefined;
-    if (state !== undefined) states.set(String(event.programStateId), state);
+    if (state !== undefined) states.set(programStateId, state);
   }
   return states;
 }

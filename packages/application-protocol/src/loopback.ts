@@ -6,8 +6,12 @@ import type {
   ApplicationServicePort,
   ApplicationSnapshot,
   CommandDecision,
+  ProgramAdaptiveSemanticCommand,
 } from "./types.ts";
-import { parseApplicationCommand } from "./validation.ts";
+import {
+  parseApplicationCommand,
+  parseProgramAdaptiveSemanticCommand,
+} from "./validation.ts";
 
 /**
  * Local transport adapter used by an in-process/desktop Experience Plane.
@@ -23,6 +27,13 @@ export function createLoopbackApplicationTransport(service: ApplicationServicePo
       const input = parseApplicationCommand(structuredClone(command));
       return structuredClone(await service.execute(input));
     },
+
+    ...(service.executeAdaptiveProgram !== undefined ? {
+      async executeAdaptiveProgram(command: ProgramAdaptiveSemanticCommand): Promise<CommandDecision> {
+        const input = parseProgramAdaptiveSemanticCommand(structuredClone(command));
+        return structuredClone(await service.executeAdaptiveProgram!(input));
+      },
+    } : {}),
 
     async getSnapshot(sessionId: string): Promise<ApplicationSnapshot> {
       return structuredClone(await service.getSnapshot(sessionId));

@@ -2,7 +2,6 @@ export * from "./program-adaptive-operational-guarded-v2.ts";
 
 import type { EventDraft, PersistedDomainEvent } from "@alcode/events";
 import {
-  ProgramRevisionConflictError,
   assertValidProgramState,
   type ProgramState,
 } from "@alcode/program-state";
@@ -135,15 +134,20 @@ function overlayAdaptiveTerminalStoreV2(
     }
   };
 
-  return new Proxy(store, {
-    get(target, property, receiver) {
+  // Never proxy the concrete WorkspaceEventStore target: production stores may
+  // expose replay/append as non-configurable own properties. Proxy invariants
+  // would then forbid an adaptive view from overriding those methods. The empty
+  // target carries no descriptor authority; every non-overridden member is
+  // explicitly delegated to the canonical store with its original receiver.
+  return new Proxy({} as WorkspaceEventStore, {
+    get(_target, property) {
       if (property === "replay") return () => replay();
       if (property === "append") {
         return (drafts: readonly EventDraft<string, unknown>[]) =>
-          target.append(rewriteAdaptiveTerminalProducerV2(drafts));
+          store.append(rewriteAdaptiveTerminalProducerV2(drafts));
       }
-      const value = Reflect.get(target, property, receiver) as unknown;
-      return typeof value === "function" ? value.bind(target) : value;
+      const value = Reflect.get(store, property, store) as unknown;
+      return typeof value === "function" ? value.bind(store) : value;
     },
   }) as WorkspaceEventStore;
 }
@@ -167,7 +171,9 @@ export class ProgramAdaptiveTerminalServiceV2 extends ProgramTerminalServiceV1 {
     const raw = latestProgramStateEventV2(events, programStateId);
     if (raw.state.lifecycle === "completed" || raw.state.lifecycle === "cancelled") return null;
     if (raw.state.revision !== expectedProgramRevision) {
-      throw new ProgramRevisionConflictError(expectedProgramRevision, raw.state.revision);
+      throw new ProgramTerminalStaleError(
+        `Program operational revision changed before adaptive terminal preparation: expected ${expectedProgramRevision}, current ${raw.state.revision}`,
+      );
     }
     const current = await this.adaptiveOptions.currentState.current(programStateId);
     const materialized = materializeAdaptiveTerminalProgramStateV2(raw.state, current);
