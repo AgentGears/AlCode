@@ -1,4 +1,6 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ProgramCommand } from "@alcode/application-protocol";
 import type { PersistedDomainEvent } from "@alcode/events";
@@ -8,6 +10,7 @@ import {
   asSessionId,
   createProgramState,
 } from "@alcode/program-state";
+import { AgentSupervisor, type AgentConnection } from "./agent-supervisor.ts";
 import {
   requireAdaptiveWorkspaceRestartAttemptOwnerV3,
   selectAdaptiveAgentReplacementCandidateV3,
@@ -275,4 +278,43 @@ describe("A1 production adaptive Application composition", () => {
     expect(baseSource).toContain("createApplication(agent, fixed.application, maxReplayEvents)");
     expect(baseSource).not.toContain("baselineService.accept(");
   });
+
+  it("reaps a stubborn supervised Agent before production shutdown returns", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "alcode-agent-supervisor-"));
+    const entrypoint = join(directory, "stubborn-agent.cjs");
+    writeFileSync(entrypoint, `
+const generationId = process.env.ALCODE_AGENT_GENERATION_ID;
+if (!generationId || !process.send) process.exit(2);
+process.on("SIGTERM", () => {});
+process.on("message", () => {});
+process.send({ type: "agent.hello", protocolVersion: 1, generationId, capabilities: [] });
+setInterval(() => {}, 1000);
+`);
+
+    const supervisor = new AgentSupervisor({
+      entrypoint,
+      helloTimeoutMs: 1000,
+      shutdownSendTimeoutMs: 100,
+      terminateTimeoutMs: 50,
+      killTimeoutMs: 1000,
+    });
+    let connection: AgentConnection | undefined;
+    try {
+      connection = await supervisor.start();
+      const startedAt = Date.now();
+      await supervisor.shutdown("completed");
+      expect(Date.now() - startedAt).toBeLessThan(3000);
+      expect(supervisor.getCurrent()).toBeNull();
+      expect(await connection.waitForExit()).toEqual({ code: null, signal: "SIGKILL" });
+    } finally {
+      if (connection) {
+        connection.terminate("SIGKILL");
+        await Promise.race([
+          connection.waitForExit(),
+          new Promise<void>((resolve) => setTimeout(resolve, 1000)),
+        ]);
+      }
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }, 5000);
 });

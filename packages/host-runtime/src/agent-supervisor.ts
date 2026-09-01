@@ -23,6 +23,25 @@ export interface AgentSupervisorOptions {
   env?: NodeJS.ProcessEnv;
   execArgv?: string[];
   helloTimeoutMs?: number;
+  shutdownSendTimeoutMs?: number;
+  terminateTimeoutMs?: number;
+  killTimeoutMs?: number;
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 export class AgentSupervisor {
@@ -71,13 +90,13 @@ export class AgentSupervisor {
   async replace(): Promise<AgentConnection> {
     const previous = this.current?.connection ?? null;
     if (previous) {
+      await this.sendShutdown(previous, "replaced");
       try {
-        await previous.transport.send({ type: "shutdown", requestId: uuidv7(), reason: "replaced" });
-      } catch {
-        // The old Agent may already be dead; replacement still proceeds.
+        await this.reap(previous);
+      } finally {
+        await previous.transport.close().catch(() => undefined);
+        if (this.current?.connection === previous) this.current = null;
       }
-      previous.terminate();
-      this.current = null;
     }
     return this.start();
   }
@@ -85,12 +104,56 @@ export class AgentSupervisor {
   async shutdown(reason: "completed" | "cancelled" | "host_shutdown" = "host_shutdown"): Promise<void> {
     const current = this.current?.connection;
     if (!current) return;
+    await this.sendShutdown(current, reason);
     try {
-      await current.transport.send({ type: "shutdown", requestId: uuidv7(), reason });
+      await this.reap(current);
     } finally {
-      current.terminate();
       await current.transport.close().catch(() => undefined);
-      this.current = null;
+      if (this.current?.connection === current) this.current = null;
+    }
+  }
+
+  private async sendShutdown(
+    connection: AgentConnection,
+    reason: "completed" | "cancelled" | "host_shutdown" | "replaced",
+  ): Promise<void> {
+    const timeoutMs = this.options.shutdownSendTimeoutMs ?? 250;
+    try {
+      await withTimeout(
+        connection.transport.send({ type: "shutdown", requestId: uuidv7(), reason }),
+        timeoutMs,
+        `Agent shutdown delivery timeout after ${timeoutMs}ms`,
+      );
+    } catch {
+      // Shutdown delivery is best-effort; process authority is retired by observed exit below.
+    }
+  }
+
+  private async reap(connection: AgentConnection): Promise<void> {
+    const terminateTimeoutMs = this.options.terminateTimeoutMs ?? 1000;
+    const killTimeoutMs = this.options.killTimeoutMs ?? 1000;
+
+    connection.terminate("SIGTERM");
+    if (await this.waitForExit(connection, terminateTimeoutMs)) return;
+
+    connection.terminate("SIGKILL");
+    if (await this.waitForExit(connection, killTimeoutMs)) return;
+
+    throw new Error(
+      `Agent ${connection.generationId} did not exit within ${terminateTimeoutMs + killTimeoutMs}ms after termination`,
+    );
+  }
+
+  private async waitForExit(connection: AgentConnection, timeoutMs: number): Promise<boolean> {
+    try {
+      await withTimeout(
+        connection.waitForExit(),
+        timeoutMs,
+        `Agent ${connection.generationId} exit timeout after ${timeoutMs}ms`,
+      );
+      return true;
+    } catch {
+      return false;
     }
   }
 
