@@ -44,6 +44,37 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
   });
 }
 
+function errnoCode(error: unknown): string | undefined {
+  return typeof error === "object" && error !== null && "code" in error
+    ? String((error as NodeJS.ErrnoException).code)
+    : undefined;
+}
+
+function signalOwnedProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (process.platform !== "win32" && child.pid !== undefined) {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch (error: unknown) {
+      if (errnoCode(error) !== "ESRCH") throw error;
+    }
+  }
+  if (child.exitCode === null && child.signalCode === null) child.kill(signal);
+}
+
+function isOwnedProcessTreeAlive(child: ChildProcess): boolean {
+  if (process.platform !== "win32" && child.pid !== undefined) {
+    try {
+      process.kill(-child.pid, 0);
+      return true;
+    } catch (error: unknown) {
+      if (errnoCode(error) === "ESRCH") return false;
+      throw error;
+    }
+  }
+  return child.exitCode === null && child.signalCode === null;
+}
+
 export class AgentSupervisor {
   private current: { child: ChildProcess; connection: AgentConnection } | null = null;
 
@@ -64,6 +95,7 @@ export class AgentSupervisor {
         ALCODE_AGENT_GENERATION_ID: generationId,
       },
       ...(this.options.execArgv ? { execArgv: this.options.execArgv } : {}),
+      ...(process.platform === "win32" ? {} : { detached: true }),
       stdio: ["inherit", "inherit", "inherit", "ipc"],
     });
     const transport = createChildProcessHostTransport(child);
@@ -76,41 +108,49 @@ export class AgentSupervisor {
       capabilities,
       transport,
       waitForExit: () => exit,
-      terminate: (signal = "SIGTERM") => { if (child.exitCode === null && child.signalCode === null) child.kill(signal); },
+      terminate: (signal = "SIGTERM") => signalOwnedProcessTree(child, signal),
     };
 
     await this.awaitHello(connection, capabilities);
     this.current = { child, connection };
-    void exit.then(() => {
-      if (this.current?.connection === connection) this.current = null;
+    void exit.then(async () => {
+      if (process.platform !== "win32" && isOwnedProcessTreeAlive(child)) {
+        try {
+          signalOwnedProcessTree(child, "SIGKILL");
+          await this.waitForExit(connection, child, this.options.killTimeoutMs ?? 1000);
+        } catch {
+          // Keep the generation supervised when descendant retirement cannot be proven.
+        }
+      }
+      if (this.current?.connection === connection && !isOwnedProcessTreeAlive(child)) this.current = null;
     });
     return connection;
   }
 
   async replace(): Promise<AgentConnection> {
-    const previous = this.current?.connection ?? null;
+    const previous = this.current;
     if (previous) {
-      await this.sendShutdown(previous, "replaced");
+      await this.sendShutdown(previous.connection, "replaced");
       try {
-        await this.reap(previous);
+        await this.reap(previous.connection, previous.child);
       } finally {
-        await previous.transport.close().catch(() => undefined);
+        await previous.connection.transport.close().catch(() => undefined);
       }
-      if (this.current?.connection === previous) this.current = null;
+      if (this.current?.connection === previous.connection) this.current = null;
     }
     return this.start();
   }
 
   async shutdown(reason: "completed" | "cancelled" | "host_shutdown" = "host_shutdown"): Promise<void> {
-    const current = this.current?.connection;
+    const current = this.current;
     if (!current) return;
-    await this.sendShutdown(current, reason);
+    await this.sendShutdown(current.connection, reason);
     try {
-      await this.reap(current);
+      await this.reap(current.connection, current.child);
     } finally {
-      await current.transport.close().catch(() => undefined);
+      await current.connection.transport.close().catch(() => undefined);
     }
-    if (this.current?.connection === current) this.current = null;
+    if (this.current?.connection === current.connection) this.current = null;
   }
 
   private async sendShutdown(
@@ -129,26 +169,33 @@ export class AgentSupervisor {
     }
   }
 
-  private async reap(connection: AgentConnection): Promise<void> {
+  private async reap(connection: AgentConnection, child: ChildProcess): Promise<void> {
     const terminateTimeoutMs = this.options.terminateTimeoutMs ?? 1000;
     const killTimeoutMs = this.options.killTimeoutMs ?? 1000;
 
     connection.terminate("SIGTERM");
-    if (await this.waitForExit(connection, terminateTimeoutMs)) return;
+    if (await this.waitForExit(connection, child, terminateTimeoutMs)) return;
 
     connection.terminate("SIGKILL");
-    if (await this.waitForExit(connection, killTimeoutMs)) return;
+    if (await this.waitForExit(connection, child, killTimeoutMs)) return;
 
     throw new Error(
       `Agent ${connection.generationId} did not exit within ${terminateTimeoutMs + killTimeoutMs}ms after termination`,
     );
   }
 
-  private async waitForExit(connection: AgentConnection, timeoutMs: number): Promise<boolean> {
+  private async waitForExit(connection: AgentConnection, child: ChildProcess, timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (isOwnedProcessTreeAlive(child)) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return false;
+      await new Promise<void>((resolve) => setTimeout(resolve, Math.min(10, remaining)));
+    }
+    const remaining = Math.max(1, deadline - Date.now());
     try {
       await withTimeout(
         connection.waitForExit(),
-        timeoutMs,
+        remaining,
         `Agent ${connection.generationId} exit timeout after ${timeoutMs}ms`,
       );
       return true;
