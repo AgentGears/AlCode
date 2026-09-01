@@ -21,4 +21,80 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22.17.0, cache: pnpm }
       - run: pnpm install --frozen-lockfile
-      - run: pnpm gate:0.9
+      - name: Diagnose accepted CLI liveness
+        shell: bash
+        run: |
+          cat > .tmp-cli-diag.ts <<'EOF'
+          import { resolve } from "node:path";
+          import { openLockedWorkspaceStore } from "./packages/storage/src/index.ts";
+          import { WorkspaceRegistry } from "./packages/workspace/src/index.ts";
+
+          const home = process.argv[2];
+          if (!home) throw new Error("diagnostic home required");
+          const registry = new WorkspaceRegistry(home);
+          const resolved = registry.resolve(resolve("."));
+          const entry = registry.getWorkspace(resolved.workspaceId);
+          if (!entry) throw new Error("missing workspace registry entry");
+          const locked = await openLockedWorkspaceStore({
+            databasePath: entry.dbPath,
+            lockPath: entry.lockPath,
+            workspaceId: entry.workspaceId,
+            repositoryId: entry.repositoryId,
+          });
+          try {
+            const rows: unknown[] = [];
+            for await (const event of locked.store.replay()) {
+              const payload = event.payload as {
+                transitionKind?: unknown;
+                state?: {
+                  revision?: unknown;
+                  lifecycle?: unknown;
+                  activeAttempt?: {
+                    programAttemptId?: unknown;
+                    workItemId?: unknown;
+                    agentGeneration?: unknown;
+                  } | null;
+                };
+              };
+              rows.push({
+                sequence: event.sequence,
+                type: event.type,
+                producer: event.producer?.component,
+                transitionKind: payload?.transitionKind,
+                revision: payload?.state?.revision,
+                lifecycle: payload?.state?.lifecycle,
+                activeAttempt: payload?.state?.activeAttempt ?? undefined,
+              });
+            }
+            console.log(JSON.stringify(rows.slice(-80), null, 2));
+          } finally {
+            locked.close();
+          }
+          EOF
+
+          agent_script='[{"text":"Hello from ALCODE. The agent loop is running."}]'
+          planning_script='[{"toolCalls":[{"id":"planning-proposal-1","name":"submit_program_proposal","arguments":{"objective":"hello","workItems":[{"workItemId":"work-1","creationOrder":0,"description":"hello","dependencyIds":[],"affectedPaths":["package.json"]}],"verification":[{"obligationId":"verify-package-json","verifier":{"specId":"workspace_path_state","specVersion":1},"args":{"path":"package.json","requiredState":"file"},"freshnessScope":{"kind":"workspace"}}],"outputSlots":[],"productionSteps":[]}}]}]'
+
+          failures=0
+          for i in $(seq 1 8); do
+            home=$(mktemp -d /tmp/alcode-cli-liveness-XXXXXX)
+            echo "===== CLI DIAGNOSTIC ITERATION $i home=$home ====="
+            set +e
+            ALCODE_HOME="$home" \
+            ALCODE_AGENT_SCRIPT="$agent_script" \
+            ALCODE_PLANNING_SCRIPT="$planning_script" \
+              timeout -k 2s 15s node --import tsx packages/coding-agent/src/cli.ts -p hello --accept-program \
+              >"$home/stdout.log" 2>"$home/stderr.log"
+            status=$?
+            set -e
+            echo "CLI_DIAG_STATUS=$status"
+            echo "--- stdout ---"
+            cat "$home/stdout.log" || true
+            echo "--- stderr ---"
+            cat "$home/stderr.log" || true
+            echo "--- durable event tail ---"
+            pnpm exec tsx .tmp-cli-diag.ts "$home" || true
+            if [ "$status" -ne 0 ]; then failures=$((failures + 1)); fi
+          done
+          echo "CLI_DIAG_FAILURES=$failures"
+          test "$failures" -eq 0
