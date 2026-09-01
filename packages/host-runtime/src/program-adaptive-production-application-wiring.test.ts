@@ -279,15 +279,26 @@ describe("A1 production adaptive Application composition", () => {
     expect(baseSource).not.toContain("baselineService.accept(");
   });
 
-  it("reaps a stubborn supervised Agent before production shutdown returns", async () => {
+  it("reaps a stubborn supervised Agent process group before production shutdown returns", async () => {
     const directory = mkdtempSync(join(tmpdir(), "alcode-agent-supervisor-"));
     const entrypoint = join(directory, "stubborn-agent.cjs");
     writeFileSync(entrypoint, `
+const { spawn } = require("node:child_process");
 const generationId = process.env.ALCODE_AGENT_GENERATION_ID;
 if (!generationId || !process.send) process.exit(2);
+const descendant = process.platform === "win32" ? null : spawn(
+  process.execPath,
+  ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);"],
+  { stdio: ["ignore", "ignore", "inherit"] },
+);
 process.on("SIGTERM", () => {});
 process.on("message", () => {});
-process.send({ type: "agent.hello", protocolVersion: 1, generationId, capabilities: [] });
+process.send({
+  type: "agent.hello",
+  protocolVersion: 1,
+  generationId,
+  capabilities: descendant?.pid ? [\`descendant:\${descendant.pid}\`] : [],
+});
 setInterval(() => {}, 1000);
 `);
 
@@ -299,13 +310,28 @@ setInterval(() => {}, 1000);
       killTimeoutMs: 1000,
     });
     let connection: AgentConnection | undefined;
+    let descendantPid: number | undefined;
     try {
       connection = await supervisor.start();
+      const descendantCapability = connection.capabilities?.find((capability) => capability.startsWith("descendant:"));
+      if (descendantCapability) descendantPid = Number(descendantCapability.slice("descendant:".length));
+      if (process.platform !== "win32") expect(descendantPid).toBeGreaterThan(0);
+
       const startedAt = Date.now();
       await supervisor.shutdown("completed");
       expect(Date.now() - startedAt).toBeLessThan(3000);
       expect(supervisor.getCurrent()).toBeNull();
       expect(await connection.waitForExit()).toEqual({ code: null, signal: "SIGKILL" });
+      if (descendantPid !== undefined) {
+        let descendantAlive = true;
+        try {
+          process.kill(descendantPid, 0);
+        } catch (error: unknown) {
+          if ((error as NodeJS.ErrnoException).code === "ESRCH") descendantAlive = false;
+          else throw error;
+        }
+        expect(descendantAlive).toBe(false);
+      }
     } finally {
       if (connection) {
         connection.terminate("SIGKILL");
