@@ -52,6 +52,10 @@ function replacementCandidate(
   };
 }
 
+type WorkspaceRestartRawAttemptV3 = NonNullable<
+  Parameters<typeof requireAdaptiveWorkspaceRestartAttemptOwnerV3>[2]
+>;
+
 describe("A1 production adaptive Application composition", () => {
   it("instantiates the real Host baseline and revision acceptance authorities", () => {
     expect(baseSource).toContain("new ProgramSemanticBaselineServiceV1({");
@@ -114,7 +118,7 @@ describe("A1 production adaptive Application composition", () => {
       programAttemptId: "attempt-active-program",
       workItemId: "work-active-program",
       sessionId: "session-1",
-    } as never;
+    } as unknown as WorkspaceRestartRawAttemptV3;
     expect(requireAdaptiveWorkspaceRestartAttemptOwnerV3(
       activeOwner.programStateId,
       activeOwner.current,
@@ -123,7 +127,7 @@ describe("A1 production adaptive Application composition", () => {
     expect(() => requireAdaptiveWorkspaceRestartAttemptOwnerV3(
       activeOwner.programStateId,
       activeOwner.current,
-      { ...rawAttempt, programAttemptId: "stale-attempt" } as never,
+      { ...rawAttempt, programAttemptId: "stale-attempt" } as WorkspaceRestartRawAttemptV3,
     )).toThrow("stale Attempt ownership");
     expect(() => requireAdaptiveWorkspaceRestartAttemptOwnerV3(
       activeOwner.programStateId,
