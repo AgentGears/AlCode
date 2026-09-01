@@ -95,8 +95,8 @@ export class AgentSupervisor {
         await this.reap(previous);
       } finally {
         await previous.transport.close().catch(() => undefined);
-        if (this.current?.connection === previous) this.current = null;
       }
+      if (this.current?.connection === previous) this.current = null;
     }
     return this.start();
   }
@@ -109,8 +109,8 @@ export class AgentSupervisor {
       await this.reap(current);
     } finally {
       await current.transport.close().catch(() => undefined);
-      if (this.current?.connection === current) this.current = null;
     }
+    if (this.current?.connection === current) this.current = null;
   }
 
   private async sendShutdown(
