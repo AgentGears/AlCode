@@ -78,11 +78,45 @@ async function replayTypes(home: string): Promise<string[]> {
   }
 }
 
+async function dumpTimeoutCut(home: string): Promise<void> {
+  const registry = new WorkspaceRegistry(home);
+  const resolved = registry.resolve(repoRoot);
+  const entry = registry.getWorkspace(resolved.workspaceId);
+  if (!entry) {
+    console.error("ALCODE_CLI_TIMEOUT_DIAGNOSTIC missing workspace registry entry");
+    return;
+  }
+  const locked = await openLockedWorkspaceStore({
+    databasePath: entry.dbPath,
+    lockPath: entry.lockPath,
+    workspaceId: entry.workspaceId,
+    repositoryId: entry.repositoryId,
+  });
+  try {
+    const tail: unknown[] = [];
+    for await (const event of locked.store.replay()) {
+      tail.push({
+        sequence: event.sequence,
+        type: event.type,
+        sessionId: event.sessionId,
+        programStateId: event.programStateId,
+        producer: event.producer,
+        payload: event.type === "program.transitioned" ? event.payload : undefined,
+      });
+      if (tail.length > 40) tail.shift();
+    }
+    console.error("ALCODE_CLI_TIMEOUT_DIAGNOSTIC " + JSON.stringify(tail, null, 2));
+  } finally {
+    locked.close();
+  }
+}
+
 describe("alcode -p Program-backed product route", () => {
   it("does not directly invoke runAgentLoop and completes through explicit CLI Application acceptance", async () => {
     expect(readFileSync(cliPath, "utf8")).not.toContain("runAgentLoop");
     const home = mkdtempSync(`${tmpdir()}/alcode-cli-program-`); homes.push(home);
     const result = runCli(home, ["-p", "hello", "--accept-program"]);
+    if (result.error !== undefined) await dumpTimeoutCut(home);
     expect(result.error).toBeUndefined();
     expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
     expect(result.stdout).toContain("Hello from ALCODE. The agent loop is running.");
