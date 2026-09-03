@@ -64,6 +64,19 @@ describe("A1 adaptive Program runtime V2 authority composition", () => {
     expect(scheduling).toBeGreaterThan(currentness);
   });
 
+  it("redrives Host Completion when explicit scheduling proves no adaptive work remains", () => {
+    const method = source.indexOf("async requestCurrentAttemptExecution(");
+    const scheduling = source.indexOf("const scheduled = await this.control.ensureCurrentAttempt(sessionId);", method);
+    const noReady = source.indexOf('if (scheduled.status !== "no_ready_work") return undefined;', scheduling);
+    const completion = source.indexOf("const decision = await this.control.handleAgentIdle(sessionId);", noReady);
+    const terminal = source.indexOf("await this.finalizeAdaptiveTerminal(connection, session, decision.terminal);", completion);
+    expect(method).toBeGreaterThan(-1);
+    expect(scheduling).toBeGreaterThan(method);
+    expect(noReady).toBeGreaterThan(scheduling);
+    expect(completion).toBeGreaterThan(noReady);
+    expect(terminal).toBeGreaterThan(completion);
+  });
+
   it("withholds ordinary Host capability and idle routing only after adaptive ownership is established", () => {
     expect(source).toContain("Adaptive Program capability requests require ProgramAttemptAuthorityV2");
     expect(source).toContain("A displaced generation may still drain a buffered idle");
@@ -101,7 +114,7 @@ describe("A1 adaptive Program runtime V2 authority composition", () => {
     expect(source).toContain("const decision = await this.control.handleAgentIdle(sessionId);");
     expect(source).toContain('decision.reason === "successor_dispatched"');
     expect(source).toContain("await this.agent.requestCurrentAttemptExecution(sessionId, connection.generationId);");
-    expect(source).toContain("await this.host.sessions.stop(session.sessionId, decision.terminal);");
+    expect(source).toContain("await this.host.sessions.stop(session.sessionId, terminal);");
     expect(source).not.toContain("adaptive Completion is intentionally not implemented");
   });
 
@@ -114,7 +127,10 @@ describe("A1 adaptive Program runtime V2 authority composition", () => {
 
   it("terminates the disposable Agent even when terminal shutdown notification fails", () => {
     expect(source).toContain("Terminal Program/session truth is already durable.");
-    expect(source).toContain("finally {\n              connection.terminate();\n            }");
+    const helper = source.indexOf("private async finalizeAdaptiveTerminal(");
+    const finalizer = source.indexOf("finally {\n      connection.terminate();\n    }", helper);
+    expect(helper).toBeGreaterThan(-1);
+    expect(finalizer).toBeGreaterThan(helper);
   });
 
   it("cleans adaptive generation state on displacement, explicit detach, and process exit", () => {

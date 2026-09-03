@@ -154,6 +154,30 @@ export class ProgramExecutionRuntimeV2 {
     return connection.transport as unknown as ProtocolTransport<HostToAgentMessageV2Aware, AgentToHostMessageV2Aware>;
   }
 
+  private async finalizeAdaptiveTerminal(
+    connection: AgentConnection,
+    session: HostSessionHandle,
+    terminal: "completed" | "cancelled",
+  ): Promise<void> {
+    const sessionState = await this.host.sessions.getState(session.sessionId);
+    if (sessionState.started && !sessionState.stopped) {
+      await this.host.sessions.stop(session.sessionId, terminal);
+    }
+    try {
+      await this.v2Transport(connection).send({
+        type: "shutdown",
+        requestId: uuidv7(),
+        sessionId: String(session.sessionId),
+        reason: terminal,
+      });
+    } catch {
+      // Terminal Program/session truth is already durable. Ensure a failed
+      // notification cannot leave the disposable Agent process orphaned.
+    } finally {
+      connection.terminate();
+    }
+  }
+
   /** Keep authority-bearing adaptive messages out of the legacy V1 Host handler. */
   private hostConnectionWithoutAdaptiveAuthorityMessages(connection: AgentConnection): AgentConnection {
     const transport = connection.transport;
@@ -324,23 +348,7 @@ export class ProgramExecutionRuntimeV2 {
               return;
             }
 
-            const sessionState = await this.host.sessions.getState(session.sessionId);
-            if (sessionState.started && !sessionState.stopped) {
-              await this.host.sessions.stop(session.sessionId, decision.terminal);
-            }
-            try {
-              await adaptiveTransport.send({
-                type: "shutdown",
-                requestId: uuidv7(),
-                sessionId,
-                reason: decision.terminal,
-              });
-            } catch {
-              // Terminal Program/session truth is already durable. Ensure a failed
-              // notification cannot leave the disposable Agent process orphaned.
-            } finally {
-              connection.terminate();
-            }
+            await this.finalizeAdaptiveTerminal(connection, session, decision.terminal);
             return;
           }
         } catch {
@@ -419,8 +427,25 @@ export class ProgramExecutionRuntimeV2 {
         throw new ProgramAgentV2ControlError("Adaptive Program execution connection is not current");
       }
       const scheduled = await this.control.ensureCurrentAttempt(sessionId);
-      if (scheduled.status !== "issued" && scheduled.status !== "already_started") return undefined;
-      return this.agent.requestCurrentAttemptExecution(sessionId, connection.generationId);
+      if (scheduled.status === "issued" || scheduled.status === "already_started") {
+        return this.agent.requestCurrentAttemptExecution(sessionId, connection.generationId);
+      }
+      if (scheduled.status !== "no_ready_work") return undefined;
+
+      // The Host redrive loop can be the actor that advances verification to a
+      // terminal-ready state before the one-shot Agent idle callback runs. Do
+      // not strand that canonical state on callback timing: re-enter the same
+      // Host Completion control whenever scheduling proves there is no work.
+      const decision = await this.control.handleAgentIdle(sessionId);
+      if (decision.status === "not_program") return undefined;
+      if (decision.terminal !== "none") {
+        await this.finalizeAdaptiveTerminal(connection, session, decision.terminal);
+        return undefined;
+      }
+      if (decision.reason === "successor_dispatched" || decision.reason === "active_attempt") {
+        return this.agent.requestCurrentAttemptExecution(sessionId, connection.generationId);
+      }
+      return undefined;
     });
   }
 }
