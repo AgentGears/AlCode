@@ -360,8 +360,18 @@ export interface ProgramAdaptiveExecutionControlOptionsV2 {
 export class ProgramAdaptiveExecutionControlV2 {
   constructor(private readonly options: ProgramAdaptiveExecutionControlOptionsV2) {}
 
-  ensureCurrentAttempt(sessionId: string): Promise<ProgramAdaptiveScheduleResultV2> {
-    return this.options.scheduler.dispatchNext(sessionId);
+  async ensureCurrentAttempt(sessionId: string): Promise<ProgramAdaptiveScheduleResultV2> {
+    const scheduled = await this.options.scheduler.dispatchNext(sessionId);
+    if (scheduled.status !== "no_ready_work") return scheduled;
+
+    // Explicit product redrive must not depend on a second Agent idle edge after
+    // final progress retires the active Attempt. Re-evaluate Host Completion
+    // whenever the semantic scheduler proves there is no successor to dispatch.
+    const terminal = await this.options.completion.complete(sessionId);
+    if (terminal.status === "not_program") return { status: "not_program" };
+    if (terminal.status === "completed") return { status: "program_not_active", lifecycle: "completed" };
+    if (terminal.status === "cancelled") return { status: "program_not_active", lifecycle: "cancelled" };
+    return scheduled;
   }
 
   async handleAgentIdle(sessionId: string): Promise<ProgramAdaptiveIdleResultV2> {
