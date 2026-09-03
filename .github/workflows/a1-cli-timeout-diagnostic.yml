@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/a1-cli-timeout-diagnostic.yml'
       - 'packages/coding-agent/src/cli-program.integration.test.ts'
+      - 'packages/coding-agent/src/cli-terminal-trace-hook.ts'
       - 'packages/coding-agent/src/cli.ts'
       - 'packages/coding-agent/src/agent-worker.ts'
       - 'packages/host-runtime/src/agent-supervisor.ts'
@@ -27,4 +28,6 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Reproduce and classify accepted CLI timeout
+        env:
+          NODE_OPTIONS: --import tsx --import ./packages/coding-agent/src/cli-terminal-trace-hook.ts
         run: pnpm exec vitest run packages/coding-agent/src/cli-program.integration.test.ts
