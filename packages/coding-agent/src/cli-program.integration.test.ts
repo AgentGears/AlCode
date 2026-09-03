@@ -14,6 +14,7 @@ afterEach(() => {
 
 const cliPath = fileURLToPath(new URL("./cli.ts", import.meta.url));
 const repoRoot = resolve(fileURLToPath(new URL("../../../", import.meta.url)));
+const acceptedCliDiagnosticRepetitions = 8;
 const deterministicAgentScript = JSON.stringify([
   { text: "Hello from ALCODE. The agent loop is running." },
 ]);
@@ -78,20 +79,44 @@ async function replayTypes(home: string): Promise<string[]> {
   }
 }
 
+async function timeoutDiagnosis(home: string): Promise<string> {
+  try {
+    const types = await replayTypes(home);
+    const tail = types.slice(-48).join(" -> ");
+    return [
+      `durable program.completed=${types.includes("program.completed")}`,
+      `durable event-count=${types.length}`,
+      `durable event-tail=${tail || "<empty>"}`,
+    ].join("\n");
+  } catch (error) {
+    return `durable replay failed: ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
 describe("alcode -p Program-backed product route", () => {
   it("does not directly invoke runAgentLoop and completes through explicit CLI Application acceptance", async () => {
     expect(readFileSync(cliPath, "utf8")).not.toContain("runAgentLoop");
-    const home = mkdtempSync(`${tmpdir()}/alcode-cli-program-`); homes.push(home);
-    const result = runCli(home, ["-p", "hello", "--accept-program"]);
-    expect(result.error).toBeUndefined();
-    expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
-    expect(result.stdout).toContain("Hello from ALCODE. The agent loop is running.");
-    const types = await replayTypes(home);
-    expect(types).toContain("program.creation.draft.sealed");
-    expect(types).toContain("program.creation.draft.accepted");
-    expect(types).toContain("program.created");
-    expect(types).toContain("program.completed");
-  }, 70_000);
+    for (let repetition = 1; repetition <= acceptedCliDiagnosticRepetitions; repetition++) {
+      const home = mkdtempSync(`${tmpdir()}/alcode-cli-program-`); homes.push(home);
+      const result = runCli(home, ["-p", "hello", "--accept-program"]);
+      if (result.error !== undefined) {
+        const diagnosis = await timeoutDiagnosis(home);
+        throw new Error([
+          `accepted CLI repetition ${repetition}/${acceptedCliDiagnosticRepetitions} failed: ${result.error.message}`,
+          diagnosis,
+          `stdout=${result.stdout || "<empty>"}`,
+          `stderr=${result.stderr || "<empty>"}`,
+        ].join("\n"));
+      }
+      expect(result.status, `repetition ${repetition}\n${result.stderr}\n${result.stdout}`).toBe(0);
+      expect(result.stdout).toContain("Hello from ALCODE. The agent loop is running.");
+      const types = await replayTypes(home);
+      expect(types).toContain("program.creation.draft.sealed");
+      expect(types).toContain("program.creation.draft.accepted");
+      expect(types).toContain("program.created");
+      expect(types).toContain("program.completed");
+    }
+  }, 180_000);
 
   it("does not silently self-approve a Program when non-interactive acceptance is absent", async () => {
     const home = mkdtempSync(`${tmpdir()}/alcode-cli-program-no-accept-`); homes.push(home);
