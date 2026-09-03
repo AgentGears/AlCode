@@ -11,6 +11,14 @@ if (process.env.ALCODE_HOME) {
     const id = ++sequence;
     const startedAt = Date.now();
     process.stderr.write(`[a1-git-trace] ${id} start ${JSON.stringify(args ?? [])}\n`);
+    if (Array.isArray(args) && args.includes("rev-parse")) {
+      const caller = (new Error().stack ?? "<no stack>")
+        .split("\n")
+        .slice(2, 9)
+        .map((line) => line.trim())
+        .join(" <- ");
+      process.stderr.write(`[a1-git-trace] ${id} caller ${caller}\n`);
+    }
     try {
       const result = originalExecFileSync.call(childProcess, file, args, options);
       process.stderr.write(`[a1-git-trace] ${id} end ${Date.now() - startedAt}ms\n`);
