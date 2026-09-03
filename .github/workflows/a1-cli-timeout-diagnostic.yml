@@ -3,6 +3,7 @@ name: A1 CLI Timeout Diagnostic
 on:
   pull_request:
     paths:
+      - '.github/diagnostics/a1-cli-observation-trace.mjs'
       - '.github/workflows/a1-cli-timeout-diagnostic.yml'
       - 'packages/coding-agent/src/cli-program.integration.test.ts'
       - 'packages/coding-agent/src/cli.ts'
@@ -27,4 +28,6 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Reproduce and classify accepted CLI timeout
+        env:
+          NODE_OPTIONS: --import=${{ github.workspace }}/.github/diagnostics/a1-cli-observation-trace.mjs
         run: pnpm exec vitest run packages/coding-agent/src/cli-program.integration.test.ts
