@@ -1,0 +1,24 @@
+name: A1 CLI Child Process Diagnostic
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  diagnostic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.17.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Reproduce with Node child-process diagnostics
+        env:
+          NODE_DEBUG: child_process
+        run: pnpm exec vitest run packages/coding-agent/src/cli-program.integration.test.ts
