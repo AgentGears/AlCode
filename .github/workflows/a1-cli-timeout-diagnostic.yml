@@ -26,5 +26,21 @@ jobs:
           node-version: 22.17.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Ensure strace is available
+        run: command -v strace >/dev/null || (sudo apt-get update && sudo apt-get install -y strace)
       - name: Reproduce and classify accepted CLI timeout
-        run: pnpm exec vitest run packages/coding-agent/src/cli-program.integration.test.ts
+        shell: bash
+        run: |
+          set +e
+          strace -f -tt -T -s 200 \
+            -e trace=process,signal,desc,file \
+            -o /tmp/alcode-cli-timeout.strace \
+            pnpm exec vitest run packages/coding-agent/src/cli-program.integration.test.ts
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            echo '--- strace tail ---'
+            tail -n 1600 /tmp/alcode-cli-timeout.strace || true
+            echo '--- end strace tail ---'
+          fi
+          exit "$status"
