@@ -59,7 +59,13 @@ function runCli(home: string, args: string[]) {
   });
 }
 
-async function replayTypes(home: string): Promise<string[]> {
+function boundedPayload(payload: unknown): string {
+  const serialized = JSON.stringify(payload);
+  if (serialized === undefined) return String(payload);
+  return serialized.length <= 1_200 ? serialized : `${serialized.slice(0, 1_200)}…`;
+}
+
+async function replaySnapshot(home: string): Promise<{ types: string[]; events: string[] }> {
   const registry = new WorkspaceRegistry(home);
   const resolved = registry.resolve(repoRoot);
   const entry = registry.getWorkspace(resolved.workspaceId);
@@ -72,21 +78,39 @@ async function replayTypes(home: string): Promise<string[]> {
   });
   try {
     const types: string[] = [];
-    for await (const event of locked.store.replay()) types.push(event.type);
-    return types;
+    const events: string[] = [];
+    for await (const event of locked.store.replay()) {
+      types.push(event.type);
+      events.push([
+        `#${event.sequence}`,
+        event.type,
+        `session=${event.sessionId}`,
+        `program=${event.programStateId ?? "-"}`,
+        `operation=${event.operationId ?? "-"}`,
+        `payload=${boundedPayload(event.payload)}`,
+      ].join(" "));
+    }
+    return { types, events };
   } finally {
     locked.close();
   }
 }
 
+async function replayTypes(home: string): Promise<string[]> {
+  return (await replaySnapshot(home)).types;
+}
+
 async function timeoutDiagnosis(home: string): Promise<string> {
   try {
-    const types = await replayTypes(home);
-    const tail = types.slice(-48).join(" -> ");
+    const snapshot = await replaySnapshot(home);
+    const typeTail = snapshot.types.slice(-48).join(" -> ");
+    const eventTail = snapshot.events.slice(-24).join("\n");
     return [
-      `durable program.completed=${types.includes("program.completed")}`,
-      `durable event-count=${types.length}`,
-      `durable event-tail=${tail || "<empty>"}`,
+      `durable program.completed=${snapshot.types.includes("program.completed")}`,
+      `durable event-count=${snapshot.types.length}`,
+      `durable event-tail=${typeTail || "<empty>"}`,
+      "durable event-detail:",
+      eventTail || "<empty>",
     ].join("\n");
   } catch (error) {
     return `durable replay failed: ${error instanceof Error ? error.message : String(error)}`;
