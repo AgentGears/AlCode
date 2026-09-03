@@ -1,0 +1,30 @@
+name: A1 CLI Timeout Diagnostic
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/a1-cli-timeout-diagnostic.yml'
+      - 'packages/coding-agent/src/cli-program.integration.test.ts'
+      - 'packages/coding-agent/src/cli.ts'
+      - 'packages/coding-agent/src/agent-worker.ts'
+      - 'packages/host-runtime/src/agent-supervisor.ts'
+      - 'packages/host-runtime/src/node-ipc-transport.ts'
+
+jobs:
+  diagnostic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.17.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Reproduce and classify accepted CLI timeout
+        run: pnpm exec vitest run packages/coding-agent/src/cli-program.integration.test.ts
