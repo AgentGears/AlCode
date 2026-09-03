@@ -59,7 +59,13 @@ function runCli(home: string, args: string[]) {
   });
 }
 
-async function replayTypes(home: string): Promise<string[]> {
+interface DiagnosticEvent {
+  sequence: number;
+  type: string;
+  payload: unknown;
+}
+
+async function replayEvents(home: string): Promise<DiagnosticEvent[]> {
   const registry = new WorkspaceRegistry(home);
   const resolved = registry.resolve(repoRoot);
   const entry = registry.getWorkspace(resolved.workspaceId);
@@ -71,22 +77,99 @@ async function replayTypes(home: string): Promise<string[]> {
     repositoryId: entry.repositoryId,
   });
   try {
-    const types: string[] = [];
-    for await (const event of locked.store.replay()) types.push(event.type);
-    return types;
+    const events: DiagnosticEvent[] = [];
+    for await (const event of locked.store.replay()) {
+      events.push({ sequence: event.sequence, type: event.type, payload: event.payload });
+    }
+    return events;
   } finally {
     locked.close();
   }
 }
 
+async function replayTypes(home: string): Promise<string[]> {
+  return (await replayEvents(home)).map((event) => event.type);
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" ? value as Record<string, unknown> : undefined;
+}
+
+function compactAttempt(value: unknown): unknown {
+  if (value === null) return null;
+  const attempt = record(value);
+  if (attempt === undefined) return value;
+  return {
+    programAttemptId: attempt.programAttemptId,
+    workItemId: attempt.workItemId,
+    sessionId: attempt.sessionId,
+    agentGeneration: attempt.agentGeneration,
+  };
+}
+
+function compactWorkItems(value: unknown): unknown {
+  if (!Array.isArray(value)) return value;
+  return value.map((item) => {
+    const work = record(item);
+    if (work === undefined) return item;
+    return {
+      workItemId: work.workItemId,
+      lifecycle: work.lifecycle,
+      satisfactionState: work.satisfactionState,
+      requirementState: work.requirementState,
+      topologyState: work.topologyState,
+      workItemGeneration: work.workItemGeneration,
+    };
+  });
+}
+
+function compactVerification(value: unknown): unknown {
+  if (!Array.isArray(value)) return value;
+  return value.map((item) => {
+    const verification = record(item);
+    if (verification === undefined) return item;
+    return {
+      obligationId: verification.obligationId,
+      subjectGeneration: verification.subjectGeneration,
+      satisfied: verification.satisfaction !== null && verification.satisfaction !== undefined,
+      waived: verification.waiver !== null && verification.waiver !== undefined,
+    };
+  });
+}
+
+function compactProgramState(payload: unknown): string {
+  const payloadRecord = record(payload);
+  const state = record(payloadRecord?.state);
+  if (state === undefined) return "<no payload.state>";
+  return JSON.stringify({
+    revision: state.revision,
+    lifecycle: state.lifecycle,
+    activeAttempt: compactAttempt(state.activeAttempt),
+    workItems: compactWorkItems(state.workItems),
+    verification: compactVerification(state.verification),
+    acceptedExecutionBase: state.acceptedExecutionBase === null ? null : "present",
+    executionBaseMismatch: state.executionBaseMismatch === null ? null : "present",
+    executionBaseUnavailable: state.executionBaseUnavailable,
+  });
+}
+
 async function timeoutDiagnosis(home: string): Promise<string> {
   try {
-    const types = await replayTypes(home);
+    const events = await replayEvents(home);
+    const types = events.map((event) => event.type);
     const tail = types.slice(-48).join(" -> ");
+    const programStates = events
+      .filter((event) => event.type === "program.created"
+        || event.type === "program.transitioned"
+        || event.type === "program.completed"
+        || event.type === "program.cancelled")
+      .map((event) => `${event.sequence}:${event.type}:${compactProgramState(event.payload)}`)
+      .join("\n");
     return [
       `durable program.completed=${types.includes("program.completed")}`,
       `durable event-count=${types.length}`,
       `durable event-tail=${tail || "<empty>"}`,
+      `durable program-state-history=\n${programStates || "<none>"}`,
     ].join("\n");
   } catch (error) {
     return `durable replay failed: ${error instanceof Error ? error.message : String(error)}`;
