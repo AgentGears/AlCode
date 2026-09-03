@@ -366,4 +366,42 @@ describe("A1 adaptive semantic eligibility and Completion", () => {
     });
     expect(completionCalls).toBe(0);
   });
+
+  it("redrives Completion after final progress retires the Attempt behind an earlier idle", async () => {
+    let attemptActive = true;
+    let completionCalls = 0;
+    const control = new ProgramAdaptiveExecutionControlV2({
+      scheduler: {
+        dispatchNext: async () => attemptActive
+          ? ({ status: "already_started", programAttemptId: "attempt-final" } as const)
+          : ({
+              status: "no_ready_work",
+              programStateRevision: 8,
+              programRevisionId: "revision-final",
+            } as const),
+      },
+      completion: {
+        complete: async () => {
+          completionCalls += 1;
+          return { status: "completed", duplicate: false } as const;
+        },
+      },
+    });
+
+    await expect(control.handleAgentIdle(sessionId)).resolves.toEqual({
+      status: "handled",
+      terminal: "none",
+      reason: "active_attempt",
+    });
+    expect(completionCalls).toBe(0);
+
+    // Final progress wins after the fire-and-forget idle callback has already
+    // observed the Attempt. Product redrive must now close without another idle.
+    attemptActive = false;
+    await expect(control.ensureCurrentAttempt(sessionId)).resolves.toEqual({
+      status: "program_not_active",
+      lifecycle: "completed",
+    });
+    expect(completionCalls).toBe(1);
+  });
 });
