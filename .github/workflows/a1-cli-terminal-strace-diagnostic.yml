@@ -1,0 +1,36 @@
+name: A1 CLI Terminal Strace Diagnostic
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  diagnostic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.17.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Reproduce accepted CLI timeout under process tracing
+        shell: bash
+        run: |
+          set +e
+          strace -ff -tt -s 256 -e trace=process -o /tmp/alcode-cli-strace \
+            pnpm exec vitest run packages/coding-agent/src/cli-program.integration.test.ts
+          status=$?
+          echo "vitest status=$status"
+          if [ "$status" -ne 0 ]; then
+            echo "--- process trace tails ---"
+            for trace in /tmp/alcode-cli-strace*; do
+              echo "=== $trace ==="
+              tail -n 120 "$trace"
+            done
+          fi
+          exit "$status"
