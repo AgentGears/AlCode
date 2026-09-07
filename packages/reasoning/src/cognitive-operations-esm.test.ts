@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { canonicalInputDigest } from "./cognitive-operations.ts";
+import { canonicalDigestOf } from "./verification.ts";
 
-describe("canonicalInputDigest ESM execution", () => {
-  it("computes the canonical digest without CommonJS require", () => {
+describe("reasoning digest helpers under ESM", () => {
+  it("computes the canonical input digest without CommonJS require", () => {
     expect(canonicalInputDigest({
       path: "a",
       oldString: "x",
@@ -15,5 +16,10 @@ describe("canonicalInputDigest ESM execution", () => {
       .toBe("1eab1ef18bb109ae");
     expect(canonicalInputDigest({ command: "echo hi", timeoutMs: 5000 }))
       .toBe("1eab1ef18bb109ae");
+  });
+
+  it("computes verification digests without CommonJS require", () => {
+    expect(canonicalDigestOf("fixture")).toBe("f16d05ec6b29248d");
+    expect(canonicalDigestOf({ b: 2, a: 1 })).toBe("43258cff783fe703");
   });
 });
