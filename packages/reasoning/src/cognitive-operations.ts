@@ -9,6 +9,7 @@
 // For open_investigation, which atomically emits objective + hypothesis,
 // the batch intent uses a symbolic reference for the intra-batch objective ID.
 
+import { createHash } from "node:crypto";
 import {
   type ReasoningGraph,
   getNode,
@@ -425,7 +426,6 @@ function canonicalize(value: unknown): unknown {
  * For Bash commands, only the 'command' field is hashed.
  */
 export function canonicalInputDigest(toolInput: Record<string, unknown>): string {
-  const { createHash } = require("node:crypto");
   let normalized: Record<string, unknown>;
   if (typeof toolInput === "object" && toolInput !== null && "command" in toolInput) {
     normalized = { command: toolInput.command };
