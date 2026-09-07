@@ -20,6 +20,10 @@ const MAX_VERIFIERS = 64;
 const MAX_CATALOG_BYTES = 64 * 1024;
 const encoder = new TextEncoder();
 
+export interface HostVerifierArgsCanonicalizerV1 {
+  canonicalize(specId: string, specVersion: number, advertisedArgs: Json): Json;
+}
+
 export class ProgramVerifierCatalogError extends ProgramVerificationControlError {
   constructor(message: string) {
     super(message);
@@ -102,6 +106,7 @@ export class HostProgramVerifierCatalogV1 {
   constructor(
     descriptors: readonly ProgramVerifierDescriptorV1[],
     operationSpecs: HostVerificationOperationRegistryV1,
+    private readonly argsCanonicalizer?: HostVerifierArgsCanonicalizerV1,
   ) {
     if (descriptors.length > MAX_VERIFIERS) {
       throw new ProgramVerifierCatalogError(`Verifier catalog exceeds ${MAX_VERIFIERS} entries`);
@@ -167,7 +172,21 @@ export class HostProgramVerifierCatalogV1 {
       const freshness = freshnessScope(item.freshnessScope);
 
       if (descriptor.predicateKind === "operation_result") {
-        const canonicalArgs = asJson(args, `verification[${index}].args`);
+        const advertisedArgs = asJson(args, `verification[${index}].args`);
+        let canonicalArgs = advertisedArgs;
+        if (this.argsCanonicalizer !== undefined) {
+          try {
+            canonicalArgs = asJson(
+              this.argsCanonicalizer.canonicalize(specId, specVersion, advertisedArgs),
+              `verification[${index}].HostCanonicalArgs`,
+            );
+          } catch (error) {
+            if (error instanceof ProgramVerifierCatalogError) throw error;
+            throw new ProgramVerifierCatalogError(
+              `Verifier ${specId}@${specVersion} Host argument canonicalization failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+        }
         return {
           obligationId,
           predicate: {
