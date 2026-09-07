@@ -650,13 +650,35 @@ export class ProgramAdaptiveVerificationControlV2 {
 }
 
 export class ProgramAdaptiveVerificationSchedulerV2 implements ProgramAdaptiveScheduleControlPortV2 {
+  private readonly verificationDriveBySession = new Map<
+    string,
+    Promise<ProgramAdaptiveVerificationDriveResultV2>
+  >();
+
   constructor(
     private readonly verification: ProgramAdaptiveVerificationControlV2,
     private readonly delegate: ProgramAdaptiveScheduleControlPortV2,
   ) {}
 
+  private async driveVerification(
+    sessionId: string,
+  ): Promise<ProgramAdaptiveVerificationDriveResultV2> {
+    const existing = this.verificationDriveBySession.get(sessionId);
+    if (existing !== undefined) return existing;
+
+    const pending = this.verification.drive(sessionId);
+    this.verificationDriveBySession.set(sessionId, pending);
+    try {
+      return await pending;
+    } finally {
+      if (this.verificationDriveBySession.get(sessionId) === pending) {
+        this.verificationDriveBySession.delete(sessionId);
+      }
+    }
+  }
+
   async dispatchNext(sessionId: string): Promise<ProgramAdaptiveScheduleResultV2> {
-    await this.verification.drive(sessionId);
+    await this.driveVerification(sessionId);
     return this.delegate.dispatchNext(sessionId);
   }
 }
