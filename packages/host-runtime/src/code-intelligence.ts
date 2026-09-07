@@ -58,12 +58,19 @@ export function createOwnedTypeScriptLanguageServerProvider(input: {
   });
 }
 
+type LocalSemanticPlanningQuery = Exclude<CodeQuery, { type: "definition" }>;
+
 /**
  * Host-owned local semantic observation composition. Tracker baselining and
  * language-server resolution/startup are both lazy on the first semantic
  * query, so merely enabling the planning catalog cannot become a new CLI
  * startup prerequisite. Provider execution remains owned by the supplied Host
  * ExternalProcessSupervisor.
+ *
+ * The product planning view intentionally exposes only symbol search,
+ * references, and diagnostics. Definition remains available through the wider
+ * Phase 0.9 CodeIntelligence capability but is not promoted into this successor
+ * planning slice.
  */
 export class OwnedLocalCodeIntelligenceService {
   private readonly input: {
@@ -85,7 +92,7 @@ export class OwnedLocalCodeIntelligenceService {
     this.input = input;
   }
 
-  async query<Q extends CodeQuery>(request: Q, options: { signal?: AbortSignal } = {}) {
+  async query<Q extends LocalSemanticPlanningQuery>(request: Q, options: { signal?: AbortSignal } = {}) {
     await this.ensureStarted();
     return this.service!.query(request, options);
   }
