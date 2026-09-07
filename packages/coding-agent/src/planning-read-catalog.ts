@@ -6,6 +6,10 @@ import {
 } from "@alcode/host-runtime";
 import type { ProgramPlanningReadDescriptorV1 } from "@alcode/agent-protocol";
 import type { Workspace } from "./capabilities/types.ts";
+import {
+  createSemanticPlanningReadExtension,
+  type SemanticPlanningCodeIntelligence,
+} from "./semantic-planning-read.ts";
 
 export const LOCAL_PLANNING_COVERAGE_PROFILE_ID = "local-planning-read-profile" as const;
 export const LOCAL_PLANNING_COVERAGE_PROFILE_VERSION = 1 as const;
@@ -313,8 +317,24 @@ function searchTextContract(workspace: Workspace): PlanningReadContractV1 {
   };
 }
 
-export function createLocalPlanningReadRegistry(workspace: Workspace): PlanningReadRegistry {
-  const contracts = [treeContract(workspace), readTextContract(workspace), searchTextContract(workspace)];
+export function createLocalPlanningReadRegistry(
+  workspace: Workspace,
+  codeIntelligence?: SemanticPlanningCodeIntelligence,
+): PlanningReadRegistry {
+  const semantic = codeIntelligence === undefined
+    ? { contracts: [] as PlanningReadContractV1[], catalog: [] as ProgramPlanningReadDescriptorV1[] }
+    : createSemanticPlanningReadExtension({
+        root: workspace.identity.root,
+        workspaceId: workspace.identity.workspaceId,
+        repositoryId: workspace.identity.repositoryId,
+        service: codeIntelligence,
+      });
+  const contracts = [
+    treeContract(workspace),
+    readTextContract(workspace),
+    searchTextContract(workspace),
+    ...semantic.contracts,
+  ];
   const catalog: ProgramPlanningReadDescriptorV1[] = [
     descriptor(
       "list_workspace_tree",
@@ -350,6 +370,7 @@ export function createLocalPlanningReadRegistry(workspace: Workspace): PlanningR
       ["pattern"],
       "workspace.search_text",
     ),
+    ...semantic.catalog,
   ];
   return new PlanningReadRegistry(
     LOCAL_PLANNING_COVERAGE_PROFILE_ID,
