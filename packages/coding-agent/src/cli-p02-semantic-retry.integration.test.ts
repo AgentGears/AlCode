@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import type { PersistedDomainEvent } from "@alcode/events";
 import { openLockedWorkspaceStore } from "@alcode/storage";
@@ -22,7 +22,7 @@ afterEach(() => {
 
 const cliPath = fileURLToPath(new URL("./cli.ts", import.meta.url));
 const require = createRequire(import.meta.url);
-const tsxImport = require.resolve("tsx");
+const tsxImport = pathToFileURL(require.resolve("tsx")).href;
 const objective = "Set exported value to 2";
 const valuePath = "packages/app/src/value.ts";
 const initialValue = "export const value: number = 1;\n";
@@ -192,7 +192,7 @@ describe("P-02 semantic planning + typed verification product vertical", () => {
       specVersion: 1,
       canonicalArgs: { command: verifierCommand },
     });
-    expect(JSON.stringify(predicate)).not.toContain('"package"');
+    expect(JSON.stringify(predicate)).not.toContain('\"package\"');
 
     expect(events.some((event) => event.type === "program.creation.draft.accepted")).toBe(true);
     const failure = events.find((event) => event.type === "program.verification.failed");
