@@ -269,6 +269,11 @@ function currentAttemptContext(state: ProgramState, sessionId: EventSessionId): 
 export class ProgramVerificationServiceV1 {
   constructor(private readonly options: ProgramVerificationServiceOptionsV1) {}
 
+  /** Reuse the exact Host verifier graph against a semantic-currentness event-store view. */
+  withStore(store: WorkspaceEventStore): ProgramVerificationServiceV1 {
+    return new ProgramVerificationServiceV1({ ...this.options, store });
+  }
+
   async satisfyOperationResult(command: ProgramVerificationCommandV1): Promise<ProgramVerificationResultV1> {
     const prepared = await this.options.admission.enqueue(async () => {
       const events = await replayAll(this.options.store);

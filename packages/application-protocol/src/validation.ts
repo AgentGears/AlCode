@@ -2,6 +2,7 @@ import {
   APPLICATION_PROTOCOL_VERSION,
   type ApplicationCommand,
   type PermissionDecision,
+  type ProgramAdaptiveSemanticCommand,
   type RequestedDisposition,
 } from "./types.ts";
 
@@ -38,6 +39,13 @@ function positiveRevision(value: unknown): number {
   return value;
 }
 
+function positiveStateRevision(value: unknown): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
+    throw new ApplicationProtocolValidationError("expectedProgramStateRevision must be a positive safe integer");
+  }
+  return value;
+}
+
 function optionalBoundedReason(value: unknown): string | undefined {
   if (value === undefined) return undefined;
   const reason = requiredString(value, "reason");
@@ -50,18 +58,22 @@ function permissionDecision(value: unknown): PermissionDecision {
   throw new ApplicationProtocolValidationError("permission decision is invalid");
 }
 
-export function parseApplicationCommand(value: unknown): ApplicationCommand {
-  const input = object(value);
+function commonCommand(input: Record<string, unknown>) {
   if (input.protocolVersion !== APPLICATION_PROTOCOL_VERSION) {
     throw new ApplicationProtocolValidationError(`unsupported protocolVersion: ${String(input.protocolVersion)}`);
   }
-  const common = {
+  return {
     protocolVersion: APPLICATION_PROTOCOL_VERSION,
     commandId: requiredString(input.commandId, "commandId"),
     clientId: requiredString(input.clientId, "clientId"),
     sessionId: requiredString(input.sessionId, "sessionId"),
     issuedAt: requiredString(input.issuedAt, "issuedAt"),
   } as const;
+}
+
+export function parseApplicationCommand(value: unknown): ApplicationCommand {
+  const input = object(value);
+  const common = commonCommand(input);
 
   switch (input.type) {
     case "input.submit":
@@ -131,5 +143,38 @@ export function parseApplicationCommand(value: unknown): ApplicationCommand {
       };
     default:
       throw new ApplicationProtocolValidationError(`unknown application command type: ${String(input.type)}`);
+  }
+}
+
+/** Parse the additive A1 semantic Application authority surface without changing legacy ApplicationCommand wire semantics. */
+export function parseProgramAdaptiveSemanticCommand(value: unknown): ProgramAdaptiveSemanticCommand {
+  const input = object(value);
+  const common = commonCommand(input);
+  switch (input.type) {
+    case "program.semantic_baseline.seal":
+      return {
+        ...common,
+        type: "program.semantic_baseline.seal",
+        programStateId: requiredString(input.programStateId, "programStateId"),
+        expectedProgramStateRevision: positiveStateRevision(input.expectedProgramStateRevision),
+      };
+    case "program.semantic_baseline.accept":
+      return {
+        ...common,
+        type: "program.semantic_baseline.accept",
+        programStateId: requiredString(input.programStateId, "programStateId"),
+        draftId: requiredString(input.draftId, "draftId"),
+        draftDigest: requiredString(input.draftDigest, "draftDigest"),
+      };
+    case "program.semantic_revision.accept":
+      return {
+        ...common,
+        type: "program.semantic_revision.accept",
+        programStateId: requiredString(input.programStateId, "programStateId"),
+        draftId: requiredString(input.draftId, "draftId"),
+        draftDigest: requiredString(input.draftDigest, "draftDigest"),
+      };
+    default:
+      throw new ApplicationProtocolValidationError(`unknown adaptive Program command type: ${String(input.type)}`);
   }
 }

@@ -45,6 +45,60 @@ export {
   type ProgramSemanticExecutionSchedulerOptionsV2,
 } from "./program-adaptive-control-v2.ts";
 export {
+  ProgramAdaptiveOperationalCurrentStateSourceV2,
+  ProgramAdaptiveOperationalOverlayErrorV2,
+  ProgramAdaptiveTerminalServiceV2,
+  adaptiveAttemptInvalidatedAfterIssueV2,
+  assertAdaptiveOperationalVerificationGenerationV2,
+  deriveAttemptSemanticAssumptionsV2,
+  recoverAdaptiveProgramCurrentSnapshotV2,
+  validateAdaptiveOperationalProgramStateSequenceV2,
+  validatePostSemanticProgramStateSequenceV2,
+  type ProgramAdaptiveTerminalServiceOptionsV2,
+} from "./program-adaptive-operational-v2.ts";
+export {
+  ProgramAdaptiveAdmissionControlErrorV2,
+  ProgramAdaptiveAdmissionServiceV2,
+  adaptiveTransitionEventV2,
+  durableAdaptiveWorkspaceEffectGenerationV2,
+  materializeAdaptiveMutationSettlementProgramStateV2,
+  materializeAdaptiveOperationalProgramStateV2,
+  materializeAdaptiveRetainedAttemptProgramStateV2,
+  requireAdaptiveRawProgramStateV2,
+  type ProgramAdaptiveAdmissionServiceOptionsV2,
+} from "./program-adaptive-admission-v2.ts";
+export {
+  ProgramAdaptiveProgressControlErrorV2,
+  ProgramAdaptiveProgressServiceV2,
+  ProgramAdaptiveProgressStaleErrorV2,
+  type ProgramAdaptiveProgressServiceOptionsV2,
+} from "./program-adaptive-progress-v2.ts";
+export {
+  ProgramAdaptiveRootOperationAuthorityV2,
+  ProgramAdaptiveSettlementControlErrorV2,
+  type ProgramAdaptiveRootOperationAuthorityOptionsV2,
+} from "./program-adaptive-operation-v2.ts";
+export {
+  ProgramAdaptiveSessionClassificationErrorV1,
+  ProgramAdaptiveSessionClassifierV1,
+  type ProgramAdaptiveAdoptionRegistryV1,
+  type ProgramAdaptiveCurrentStateRevisionSourceV1,
+  type ProgramAdaptiveSessionClassificationV1,
+  type ProgramAdaptiveSessionClassifierOptionsV1,
+  type ProgramAdaptiveSessionModeV1,
+  type ProgramAdaptiveSessionRoutingAuthorityV1,
+} from "./program-adaptive-session-classifier-v1.ts";
+export {
+  ProgramAdaptiveApplicationServiceV1,
+  ProgramAdaptiveSemanticApplicationControlV1,
+  type ProgramAdaptiveApplicationCommandResultV1,
+  type ProgramAdaptiveApplicationServiceOptionsV1,
+  type ProgramAdaptiveBaselineApplicationAuthorityV1,
+  type ProgramAdaptiveRevisionApplicationAuthorityV1,
+  type ProgramAdaptiveSemanticApplicationControlOptionsV1,
+  type ProgramAdaptiveSemanticApplicationPortV1,
+} from "./program-adaptive-application-control-v1.ts";
+export {
   PROGRAM_SEMANTIC_BASELINE_DRAFT_PROFILE,
   ProgramSemanticBaselineBlockedError,
   ProgramSemanticBaselineControlError,
