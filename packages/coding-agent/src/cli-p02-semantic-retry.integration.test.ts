@@ -144,6 +144,25 @@ function record(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function diagnosticTrace(events: PersistedDomainEvent<string, unknown>[]): Array<Record<string, unknown>> {
+  const relevantTypes = new Set([
+    "program.transitioned",
+    "operation.requested",
+    "operation.completed",
+    "program.verification.failed",
+    "program.cancelled",
+    "program.completed",
+  ]);
+  return events
+    .filter((event) => relevantTypes.has(event.type))
+    .slice(-80)
+    .map((event) => ({
+      sequence: event.sequence,
+      type: event.type,
+      payload: event.payload,
+    }));
+}
+
 describe("P-02 semantic planning + typed verification product vertical", () => {
   it("plans semantically, fails typed Host verification, retries on a fresh Attempt, corrects, and completes", async () => {
     const root = createFixtureWorkspace();
@@ -170,12 +189,15 @@ describe("P-02 semantic planning + typed verification product vertical", () => {
       timeout: 120_000,
     });
 
+    const events = await replay(home, root);
     expect(result.error).toBeUndefined();
-    expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
+    expect(
+      result.status,
+      `${result.stderr}\n${result.stdout}\nDurable trace:\n${JSON.stringify(diagnosticTrace(events), null, 2)}`,
+    ).toBe(0);
     expect(readFileSync(join(root, valuePath), "utf8")).toBe(correctedValue);
     expect(result.stdout).toContain("Corrected the value after the Host typecheck failure.");
 
-    const events = await replay(home, root);
     const sealed = events.find((event) => event.type === "program.creation.draft.sealed");
     expect(sealed).toBeDefined();
     const draft = record(record(sealed!.payload).draft);
