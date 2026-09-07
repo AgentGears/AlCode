@@ -93,10 +93,6 @@ const planningScript = JSON.stringify([
 ]);
 
 const agentScript = JSON.stringify([
-  // The CLI admits the initial user input before Program creation, so one
-  // ordinary Agent run consumes the shared script first. Reserve one turn for
-  // that bootstrap run so the following pairs map to Attempt 1 and its retry.
-  { text: "Initial admitted input acknowledged before ProgramAttempt execution." },
   {
     toolCalls: [{
       id: "p02-first-wrong-edit",
