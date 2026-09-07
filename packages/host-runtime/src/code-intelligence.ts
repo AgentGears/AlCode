@@ -59,15 +59,22 @@ export function createOwnedTypeScriptLanguageServerProvider(input: {
 }
 
 /**
- * Host-owned local semantic observation composition. The tracker starts lazily
- * on the first semantic planning query, so repositories that never need a
- * semantic read pay no LSP or baseline startup cost. Provider execution remains
- * under the supplied Host ExternalProcessSupervisor.
+ * Host-owned local semantic observation composition. Tracker baselining and
+ * language-server resolution/startup are both lazy on the first semantic
+ * query, so merely enabling the planning catalog cannot become a new CLI
+ * startup prerequisite. Provider execution remains owned by the supplied Host
+ * ExternalProcessSupervisor.
  */
 export class OwnedLocalCodeIntelligenceService {
-  private readonly tracker: WorkspaceRevisionTracker;
-  private readonly service: CodeIntelligenceService;
-  private startPromise: Promise<unknown> | undefined;
+  private readonly input: {
+    root: string;
+    workspaceId: string;
+    repositoryId: string;
+    processSupervisor: ExternalProcessSupervisor;
+  };
+  private tracker: WorkspaceRevisionTracker | undefined;
+  private service: CodeIntelligenceService | undefined;
+  private startPromise: Promise<void> | undefined;
 
   constructor(input: {
     root: string;
@@ -75,31 +82,45 @@ export class OwnedLocalCodeIntelligenceService {
     repositoryId: string;
     processSupervisor: ExternalProcessSupervisor;
   }) {
-    this.tracker = new WorkspaceRevisionTracker({ root: input.root });
-    this.service = new CodeIntelligenceService({
-      workspaceId: input.workspaceId,
-      repositoryId: input.repositoryId,
-      tracker: this.tracker,
-      provider: createOwnedTypeScriptLanguageServerProvider({
-        root: input.root,
-        processSupervisor: input.processSupervisor,
-      }),
-    });
-  }
-
-  snapshot() {
-    return this.service.snapshot();
+    this.input = input;
   }
 
   async query<Q extends CodeQuery>(request: Q, options: { signal?: AbortSignal } = {}) {
-    if (this.startPromise === undefined) this.startPromise = this.tracker.start();
-    await this.startPromise;
-    return this.service.query(request, options);
+    await this.ensureStarted();
+    return this.service!.query(request, options);
   }
 
   async dispose(): Promise<void> {
     if (this.startPromise !== undefined) await this.startPromise.catch(() => undefined);
-    await this.service.dispose();
+    if (this.service !== undefined) await this.service.dispose();
+    else this.tracker?.close();
+    this.service = undefined;
+    this.tracker = undefined;
+  }
+
+  private async ensureStarted(): Promise<void> {
+    if (this.startPromise === undefined) {
+      this.startPromise = (async () => {
+        const tracker = new WorkspaceRevisionTracker({ root: this.input.root });
+        this.tracker = tracker;
+        try {
+          await tracker.start();
+          this.service = new CodeIntelligenceService({
+            workspaceId: this.input.workspaceId,
+            repositoryId: this.input.repositoryId,
+            tracker,
+            provider: createOwnedTypeScriptLanguageServerProvider({
+              root: this.input.root,
+              processSupervisor: this.input.processSupervisor,
+            }),
+          });
+        } catch (error) {
+          tracker.close();
+          throw error;
+        }
+      })();
+    }
+    await this.startPromise;
   }
 }
 
