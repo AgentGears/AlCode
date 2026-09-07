@@ -16,6 +16,7 @@
 // Contracts are consumed one-shot: once a contract node is linked to an
 // action result it is added to the consumed set and will not match again.
 
+import { createHash } from "node:crypto";
 import {
   NodeKind as NK,
   EdgeKind as EK,
@@ -574,7 +575,6 @@ export function matchesPredicate(
  * Uses SHA-256 truncated to 16 hex chars, matching Ouroboros verification.py.
  */
 export function canonicalDigestOf(value: unknown): string {
-  const { createHash } = require("node:crypto");
   const text = typeof value === "string" ? value : stableStringify(value);
   return createHash("sha256").update(text, "utf8").digest("hex").slice(0, 16);
 }
