@@ -24,5 +24,26 @@ jobs:
           node-version: 22.17.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Enrich focused trace with tool result payload
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts")
+          source = path.read_text()
+          needle = "    const invocation = maybeRecord(payload.programVerificationInvocation);\n"
+          replacement = '''    if (event.type === "tool.result.appended") {
+              return {
+                ...base,
+                toolName: payload.toolName,
+                isError: payload.isError,
+                content: payload.content,
+              };
+            }
+            const invocation = maybeRecord(payload.programVerificationInvocation);
+          '''
+          if needle not in source:
+              raise SystemExit("diagnostic insertion point not found")
+          path.write_text(source.replace(needle, replacement, 1))
+          PY
       - name: Run focused P-02 semantic retry vertical
         run: npx vitest run packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts --reporter=verbose
