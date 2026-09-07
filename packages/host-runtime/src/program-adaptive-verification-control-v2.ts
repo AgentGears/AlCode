@@ -520,6 +520,12 @@ export class ProgramAdaptiveVerificationControlV2 {
       }
 
       if (result.status === "satisfied") continue;
+      // A verifier failure is authoritative only when the Host actually admitted
+      // an Operation. Admission denials/staleness have no verifier evidence and
+      // must not retire the current Attempt or fabricate retry facts.
+      if (result.status === "not_satisfied" && result.operationId === undefined) {
+        return { status: "stale" };
+      }
       await this.returnCurrentWorkToPending(
         programStateId,
         sessionId as SessionId,
