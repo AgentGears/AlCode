@@ -3,7 +3,11 @@ import {
   resolveTypeScriptLanguageServerCli,
   TypeScriptLanguageServerProvider,
   WorkspaceRevisionTracker,
+  type CodeDiagnostic,
+  type CodeLocation,
+  type CodeObservation,
   type CodeQuery,
+  type CodeSymbol,
 } from "@alcode/code-intelligence";
 import type { HostCapability } from "./capability-broker.ts";
 import type { ExternalProcessSupervisor } from "./external-process.ts";
@@ -59,6 +63,11 @@ export function createOwnedTypeScriptLanguageServerProvider(input: {
 }
 
 type LocalSemanticPlanningQuery = Exclude<CodeQuery, { type: "definition" }>;
+type LocalSemanticPlanningResult<Q extends LocalSemanticPlanningQuery> =
+  Q extends { type: "symbol_search" } ? { symbols: CodeSymbol[] } :
+  Q extends { type: "references" } ? { locations: CodeLocation[] } :
+  Q extends { type: "diagnostics" } ? { diagnostics: CodeDiagnostic[] } :
+  never;
 
 /**
  * Host-owned local semantic observation composition. Tracker baselining and
@@ -92,9 +101,12 @@ export class OwnedLocalCodeIntelligenceService {
     this.input = input;
   }
 
-  async query<Q extends LocalSemanticPlanningQuery>(request: Q, options: { signal?: AbortSignal } = {}) {
+  async query<Q extends LocalSemanticPlanningQuery>(
+    request: Q,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<CodeObservation<LocalSemanticPlanningResult<Q>>> {
     await this.ensureStarted();
-    return this.service!.query(request, options);
+    return this.service!.query(request, options) as Promise<CodeObservation<LocalSemanticPlanningResult<Q>>>;
   }
 
   async dispose(): Promise<void> {
