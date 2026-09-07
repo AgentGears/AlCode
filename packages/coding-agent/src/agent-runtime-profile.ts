@@ -31,13 +31,20 @@ interface ScriptedTurn {
   errorMessage?: string;
 }
 
-class ScriptedWorkerProvider implements ModelProvider {
-  private index = 0;
+interface ScriptedCursor { index: number }
 
-  constructor(private readonly turns: readonly ScriptedTurn[]) {}
+class ScriptedWorkerProvider implements ModelProvider {
+  private readonly cursor: ScriptedCursor;
+
+  constructor(
+    private readonly turns: readonly ScriptedTurn[],
+    cursor?: ScriptedCursor,
+  ) {
+    this.cursor = cursor ?? { index: 0 };
+  }
 
   async stream(_request: ModelRequest): Promise<ModelStream> {
-    const turn = this.turns[this.index++] ?? {
+    const turn = this.turns[this.cursor.index++] ?? {
       text: "ALCODE Agent is idle.",
       stopReason: "stop" as const,
     };
@@ -72,17 +79,29 @@ class ScriptedWorkerProvider implements ModelProvider {
   }
 }
 
-function scriptedProviderFromEnvironment(name: string, raw: string): ModelProvider {
+function parseScriptedTurns(name: string, raw: string): ScriptedTurn[] {
   const parsed = JSON.parse(raw) as unknown;
   if (!Array.isArray(parsed)) {
     throw new Error(`${name} must be a JSON array`);
   }
-  return new ScriptedWorkerProvider(parsed as ScriptedTurn[]);
+  return parsed as ScriptedTurn[];
 }
+
+function scriptedProviderFromEnvironment(name: string, raw: string, cursor?: ScriptedCursor): ModelProvider {
+  return new ScriptedWorkerProvider(parseScriptedTurns(name, raw), cursor);
+}
+
+let sharedAgentScript: { raw: string; cursor: ScriptedCursor } | undefined;
 
 function createDefaultProvider(): ModelProvider {
   const raw = process.env.ALCODE_AGENT_SCRIPT;
-  if (raw) return scriptedProviderFromEnvironment("ALCODE_AGENT_SCRIPT", raw);
+  if (raw) {
+    if (process.env.ALCODE_AGENT_SCRIPT_SHARED_CURSOR === "1") {
+      if (sharedAgentScript?.raw !== raw) sharedAgentScript = { raw, cursor: { index: 0 } };
+      return scriptedProviderFromEnvironment("ALCODE_AGENT_SCRIPT", raw, sharedAgentScript.cursor);
+    }
+    return scriptedProviderFromEnvironment("ALCODE_AGENT_SCRIPT", raw);
+  }
   return createProductionModelProvider();
 }
 
