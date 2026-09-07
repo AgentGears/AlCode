@@ -238,7 +238,7 @@ describe("P-02 semantic planning + typed verification product vertical", () => {
     expect(result.error).toBeUndefined();
     expect(
       result.status,
-      `${result.stderr}\n${result.stdout}\nDurable trace:\n${JSON.stringify(diagnosticTrace(events))}`,
+      `${result.stderr}\n${result.stdout}\nDurable trace:\n${diagnosticTrace(events).map((entry) => JSON.stringify(entry)).join("\n")}`,
     ).toBe(0);
     expect(readFileSync(join(root, valuePath), "utf8")).toBe(correctedValue);
     expect(result.stdout).toContain("Corrected the value after the Host typecheck failure.");
