@@ -5,6 +5,8 @@ on:
     paths:
       - "packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts"
       - "packages/coding-agent/src/agent-runtime-profile.ts"
+      - "packages/coding-agent/src/host-capabilities.ts"
+      - "packages/coding-agent/src/host-capabilities-quiescence.test.ts"
       - "packages/host-runtime/src/program-adaptive-verification-control-v2.ts"
       - "packages/reasoning/src/cognitive-operations.ts"
       - "packages/reasoning/src/cognitive-operations-esm.test.ts"
