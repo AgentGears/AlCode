@@ -11,12 +11,14 @@ import { parseArgs } from "node:util";
 import {
   AgentSupervisor,
   DefaultHostPolicy,
+  ExternalProcessSupervisor,
   HostArtifactStore,
   ProgramTerminalStaleError,
   createProgramExecutionRuntimeV1,
   type ProgramExecutionObservationSourceV1,
 } from "@alcode/host-runtime";
 import { createProgramAdaptiveProductionRuntimeV1 } from "@alcode/host-runtime/adaptive-production-v1";
+import { createOwnedLocalCodeIntelligenceService } from "@alcode/host-runtime/code-intelligence";
 import { openLockedWorkspaceStore } from "@alcode/storage";
 import { WorkspaceRegistry } from "@alcode/workspace";
 import { agentErrorStillTargetsLiveConnection } from "./agent-error-arbitration.ts";
@@ -144,6 +146,13 @@ async function main(): Promise<void> {
     root,
   });
   const capabilities = createDefaultHostCapabilities(workspace);
+  const codeIntelligenceProcesses = new ExternalProcessSupervisor({ maxProcesses: 1 });
+  const codeIntelligence = createOwnedLocalCodeIntelligenceService({
+    root,
+    workspaceId: workspace.identity.workspaceId,
+    repositoryId: workspace.identity.repositoryId,
+    processSupervisor: codeIntelligenceProcesses,
+  });
 
   const observations: ProgramExecutionObservationSourceV1 = {
     observe: async () => {
@@ -188,7 +197,7 @@ async function main(): Promise<void> {
       capabilities,
       policy: new DefaultHostPolicy({ knownTools: capabilities.map((capability) => capability.name), allowMutations: true }),
     },
-    planningReads: createLocalPlanningReadRegistry(workspace),
+    planningReads: createLocalPlanningReadRegistry(workspace, codeIntelligence),
     creationPolicy: {
       current: () => ({ generation: "alcode-cli-policy-v1", digest: "alcode-cli-policy-v1", requirements: [] }),
     },
@@ -455,6 +464,8 @@ async function main(): Promise<void> {
   } finally {
     for (const unsubscribe of unsubscribeAgentErrors.splice(0)) unsubscribe();
     for (const attached of attachedAgents.splice(0).reverse()) attached.detach();
+    await codeIntelligence.dispose().catch(() => undefined);
+    await codeIntelligenceProcesses.stopAll().catch(() => undefined);
     await supervisor.shutdown(completedSuccessfully ? "completed" : "cancelled").catch(() => undefined);
     locked.close();
   }
