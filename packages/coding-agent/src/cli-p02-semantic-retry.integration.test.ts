@@ -144,6 +144,12 @@ function record(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function maybeRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
 function diagnosticTrace(events: PersistedDomainEvent<string, unknown>[]): Array<Record<string, unknown>> {
   const relevantTypes = new Set([
     "program.transitioned",
@@ -153,14 +159,61 @@ function diagnosticTrace(events: PersistedDomainEvent<string, unknown>[]): Array
     "program.cancelled",
     "program.completed",
   ]);
-  return events
-    .filter((event) => relevantTypes.has(event.type))
-    .slice(-80)
-    .map((event) => ({
+  return events.filter((event) => relevantTypes.has(event.type)).slice(-80).map((event) => {
+    const payload = maybeRecord(event.payload) ?? {};
+    const base: Record<string, unknown> = {
       sequence: event.sequence,
       type: event.type,
-      payload: event.payload,
-    }));
+      ...(event.operationId !== undefined ? { operationId: String(event.operationId) } : {}),
+    };
+    if (event.type === "program.transitioned" || event.type === "program.cancelled" || event.type === "program.completed") {
+      const state = maybeRecord(payload.state);
+      const activeAttempt = maybeRecord(state?.activeAttempt);
+      const workItems = Array.isArray(state?.workItems) ? state.workItems : [];
+      return {
+        ...base,
+        ...(typeof payload.transitionKind === "string" ? { transitionKind: payload.transitionKind } : {}),
+        ...(typeof payload.reason === "string" ? { reason: payload.reason } : {}),
+        ...(state !== undefined ? {
+          revision: state.revision,
+          lifecycle: state.lifecycle,
+          activeAttempt: activeAttempt === undefined ? null : {
+            programAttemptId: activeAttempt.programAttemptId,
+            workItemId: activeAttempt.workItemId,
+            agentGeneration: activeAttempt.agentGeneration,
+          },
+          workItems: workItems.map((item) => {
+            const work = maybeRecord(item) ?? {};
+            return { workItemId: work.workItemId, lifecycle: work.lifecycle };
+          }),
+        } : {}),
+      };
+    }
+    if (event.type === "program.verification.failed") {
+      return {
+        ...base,
+        programAttemptId: payload.programAttemptId,
+        workItemId: payload.workItemId,
+        verificationObligationId: payload.verificationObligationId,
+        reason: payload.reason,
+        details: payload.details,
+      };
+    }
+    const invocation = maybeRecord(payload.programVerificationInvocation);
+    return {
+      ...base,
+      ...(typeof payload.capabilityName === "string" ? { capabilityName: payload.capabilityName } : {}),
+      ...(typeof payload.outcome === "string" ? { outcome: payload.outcome } : {}),
+      ...((typeof payload.exitCode === "number" || payload.exitCode === null) ? { exitCode: payload.exitCode } : {}),
+      ...(invocation !== undefined ? {
+        verification: {
+          verificationObligationId: invocation.verificationObligationId,
+          specId: invocation.specId,
+          specVersion: invocation.specVersion,
+        },
+      } : {}),
+    };
+  });
 }
 
 describe("P-02 semantic planning + typed verification product vertical", () => {
@@ -193,7 +246,7 @@ describe("P-02 semantic planning + typed verification product vertical", () => {
     expect(result.error).toBeUndefined();
     expect(
       result.status,
-      `${result.stderr}\n${result.stdout}\nDurable trace:\n${JSON.stringify(diagnosticTrace(events), null, 2)}`,
+      `${result.stderr}\n${result.stdout}\nDurable trace:\n${JSON.stringify(diagnosticTrace(events))}`,
     ).toBe(0);
     expect(readFileSync(join(root, valuePath), "utf8")).toBe(correctedValue);
     expect(result.stdout).toContain("Corrected the value after the Host typecheck failure.");
