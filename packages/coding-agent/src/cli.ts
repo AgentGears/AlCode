@@ -4,8 +4,9 @@
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { readdir, readFile, readlink, lstat } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
 import {
@@ -38,6 +39,8 @@ const PROGRAM_DRIVE_TIMEOUT_MS = 5 * 60_000;
 const PROGRAM_REDRIVE_INTERVAL_MS = 100;
 const FALLBACK_MAX_ENTRIES = 20_000;
 const FALLBACK_MAX_BYTES = 64 * 1024 * 1024;
+const require = createRequire(import.meta.url);
+const AGENT_TSX_IMPORT = pathToFileURL(require.resolve("tsx")).href;
 
 async function fallbackWorkspaceDigest(root: string): Promise<string> {
   const hash = createHash("sha256");
@@ -234,7 +237,7 @@ async function main(): Promise<void> {
   const supervisor = new AgentSupervisor({
     entrypoint: fileURLToPath(new URL("./agent-worker.ts", import.meta.url)),
     cwd: root,
-    execArgv: ["--import", "tsx"],
+    execArgv: ["--import", AGENT_TSX_IMPORT],
   });
   const attachedAgents: Array<Awaited<ReturnType<typeof runtime.attachAgent>>> = [];
   const unsubscribeAgentErrors: Array<() => void> = [];
