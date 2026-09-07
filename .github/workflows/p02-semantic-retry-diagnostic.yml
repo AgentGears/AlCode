@@ -1,0 +1,28 @@
+name: P-02 Semantic Retry Diagnostic
+
+on:
+  pull_request:
+    paths:
+      - "packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts"
+      - "packages/coding-agent/src/agent-runtime-profile.ts"
+      - "packages/host-runtime/src/program-adaptive-verification-control-v2.ts"
+      - ".github/workflows/p02-semantic-retry-diagnostic.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  p02-semantic-retry:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.17.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run focused P-02 semantic retry vertical
+        run: npx vitest run packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts --reporter=verbose
