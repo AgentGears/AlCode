@@ -50,10 +50,16 @@ jobs:
           if needle not in source:
               raise SystemExit("diagnostic insertion point not found")
           source = source.replace(needle, replacement, 1)
+
+          needle = "      timeout: 120_000,\n"
+          if needle not in source:
+              raise SystemExit("subprocess timeout insertion point not found")
+          source = source.replace(needle, "      timeout: 20_000,\n", 1)
+
           needle = "    expect(result.error).toBeUndefined();\n"
           replacement = '''    expect(
               result.error,
-              `Subprocess error: ${String(result.error)}\\nDurable trace:\\n${diagnosticTrace(events)}`,
+              `Subprocess error: ${String(result.error)}\\nDurable trace:\\n${diagnosticTrace(events).map((entry) => JSON.stringify(entry)).join("\\n")}`,
             ).toBeUndefined();
           '''
           if needle not in source:
