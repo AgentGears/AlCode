@@ -33,18 +33,37 @@ interface ScriptedTurn {
 
 interface ScriptedCursor { index: number }
 
+/**
+ * Test-provider cursor derived only from the exact Host-supplied durable
+ * transcript projected into the current inference. This lets deterministic
+ * scripted tests survive disposable Agent replacement without turning process
+ * memory into cross-generation authority.
+ */
+export function scriptedTurnIndexFromDurableTranscript(
+  request: Pick<ModelRequest, "messages">,
+): number {
+  return request.messages.reduce(
+    (count, message) => count + (message.role === "assistant" ? 1 : 0),
+    0,
+  );
+}
+
 class ScriptedWorkerProvider implements ModelProvider {
   private readonly cursor: ScriptedCursor;
 
   constructor(
     private readonly turns: readonly ScriptedTurn[],
     cursor?: ScriptedCursor,
+    private readonly durableTranscriptCursor = false,
   ) {
     this.cursor = cursor ?? { index: 0 };
   }
 
-  async stream(_request: ModelRequest): Promise<ModelStream> {
-    const turn = this.turns[this.cursor.index++] ?? {
+  async stream(request: ModelRequest): Promise<ModelStream> {
+    const index = this.durableTranscriptCursor
+      ? scriptedTurnIndexFromDurableTranscript(request)
+      : this.cursor.index++;
+    const turn = this.turns[index] ?? {
       text: "ALCODE Agent is idle.",
       stopReason: "stop" as const,
     };
@@ -87,8 +106,17 @@ function parseScriptedTurns(name: string, raw: string): ScriptedTurn[] {
   return parsed as ScriptedTurn[];
 }
 
-function scriptedProviderFromEnvironment(name: string, raw: string, cursor?: ScriptedCursor): ModelProvider {
-  return new ScriptedWorkerProvider(parseScriptedTurns(name, raw), cursor);
+function scriptedProviderFromEnvironment(
+  name: string,
+  raw: string,
+  cursor?: ScriptedCursor,
+  durableTranscriptCursor = false,
+): ModelProvider {
+  return new ScriptedWorkerProvider(
+    parseScriptedTurns(name, raw),
+    cursor,
+    durableTranscriptCursor,
+  );
 }
 
 let sharedAgentScript: { raw: string; cursor: ScriptedCursor } | undefined;
@@ -96,6 +124,9 @@ let sharedAgentScript: { raw: string; cursor: ScriptedCursor } | undefined;
 function createDefaultProvider(): ModelProvider {
   const raw = process.env.ALCODE_AGENT_SCRIPT;
   if (raw) {
+    if (process.env.ALCODE_AGENT_SCRIPT_DURABLE_CURSOR === "1") {
+      return scriptedProviderFromEnvironment("ALCODE_AGENT_SCRIPT", raw, undefined, true);
+    }
     if (process.env.ALCODE_AGENT_SCRIPT_SHARED_CURSOR === "1") {
       if (sharedAgentScript?.raw !== raw) sharedAgentScript = { raw, cursor: { index: 0 } };
       return scriptedProviderFromEnvironment("ALCODE_AGENT_SCRIPT", raw, sharedAgentScript.cursor);
