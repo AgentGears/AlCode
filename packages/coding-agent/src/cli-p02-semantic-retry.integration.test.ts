@@ -155,15 +155,7 @@ function maybeRecord(value: unknown): Record<string, unknown> | undefined {
 }
 
 function diagnosticTrace(events: PersistedDomainEvent<string, unknown>[]): Array<Record<string, unknown>> {
-  const relevantTypes = new Set([
-    "program.transitioned",
-    "operation.requested",
-    "operation.completed",
-    "program.verification.failed",
-    "program.cancelled",
-    "program.completed",
-  ]);
-  return events.filter((event) => relevantTypes.has(event.type)).slice(-80).map((event) => {
+  return events.slice(-80).map((event) => {
     const payload = maybeRecord(event.payload) ?? {};
     const base: Record<string, unknown> = {
       sequence: event.sequence,
