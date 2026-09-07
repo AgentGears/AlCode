@@ -10,6 +10,7 @@ on:
       - "packages/host-runtime/src/program-adaptive-verification-control-v2.ts"
       - "packages/reasoning/src/cognitive-operations.ts"
       - "packages/reasoning/src/cognitive-operations-esm.test.ts"
+      - "packages/reasoning/src/verification.ts"
       - ".github/workflows/p02-semantic-retry-diagnostic.yml"
 
 permissions:
@@ -48,6 +49,15 @@ jobs:
           '''
           if needle not in source:
               raise SystemExit("diagnostic insertion point not found")
+          source = source.replace(needle, replacement, 1)
+          needle = "    expect(result.error).toBeUndefined();\n"
+          replacement = '''    expect(
+              result.error,
+              `Subprocess error: ${String(result.error)}\\nDurable trace:\\n${diagnosticTrace(events)}`,
+            ).toBeUndefined();
+          '''
+          if needle not in source:
+              raise SystemExit("subprocess error diagnostic insertion point not found")
           test.write_text(source.replace(needle, replacement, 1))
 
           agent = Path("packages/host-runtime/src/program-agent-v2.ts")
