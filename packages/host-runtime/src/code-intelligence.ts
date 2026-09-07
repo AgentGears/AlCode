@@ -1,7 +1,8 @@
 import {
+  CodeIntelligenceService,
   resolveTypeScriptLanguageServerCli,
   TypeScriptLanguageServerProvider,
-  type CodeIntelligenceService,
+  WorkspaceRevisionTracker,
   type CodeQuery,
 } from "@alcode/code-intelligence";
 import type { HostCapability } from "./capability-broker.ts";
@@ -55,4 +56,58 @@ export function createOwnedTypeScriptLanguageServerProvider(input: {
       };
     },
   });
+}
+
+/**
+ * Host-owned local semantic observation composition. The tracker starts lazily
+ * on the first semantic planning query, so repositories that never need a
+ * semantic read pay no LSP or baseline startup cost. Provider execution remains
+ * under the supplied Host ExternalProcessSupervisor.
+ */
+export class OwnedLocalCodeIntelligenceService {
+  private readonly tracker: WorkspaceRevisionTracker;
+  private readonly service: CodeIntelligenceService;
+  private startPromise: Promise<unknown> | undefined;
+
+  constructor(input: {
+    root: string;
+    workspaceId: string;
+    repositoryId: string;
+    processSupervisor: ExternalProcessSupervisor;
+  }) {
+    this.tracker = new WorkspaceRevisionTracker({ root: input.root });
+    this.service = new CodeIntelligenceService({
+      workspaceId: input.workspaceId,
+      repositoryId: input.repositoryId,
+      tracker: this.tracker,
+      provider: createOwnedTypeScriptLanguageServerProvider({
+        root: input.root,
+        processSupervisor: input.processSupervisor,
+      }),
+    });
+  }
+
+  snapshot() {
+    return this.service.snapshot();
+  }
+
+  async query<Q extends CodeQuery>(request: Q, options: { signal?: AbortSignal } = {}) {
+    if (this.startPromise === undefined) this.startPromise = this.tracker.start();
+    await this.startPromise;
+    return this.service.query(request, options);
+  }
+
+  async dispose(): Promise<void> {
+    if (this.startPromise !== undefined) await this.startPromise.catch(() => undefined);
+    await this.service.dispose();
+  }
+}
+
+export function createOwnedLocalCodeIntelligenceService(input: {
+  root: string;
+  workspaceId: string;
+  repositoryId: string;
+  processSupervisor: ExternalProcessSupervisor;
+}): OwnedLocalCodeIntelligenceService {
+  return new OwnedLocalCodeIntelligenceService(input);
 }
