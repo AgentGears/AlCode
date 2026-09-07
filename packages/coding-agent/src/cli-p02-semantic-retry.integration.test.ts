@@ -227,7 +227,7 @@ describe("P-02 semantic planning + typed verification product vertical", () => {
         ...process.env,
         ALCODE_HOME: home,
         ALCODE_AGENT_SCRIPT: agentScript,
-        ALCODE_AGENT_SCRIPT_SHARED_CURSOR: "1",
+        ALCODE_AGENT_SCRIPT_DURABLE_CURSOR: "1",
         ALCODE_PLANNING_SCRIPT: planningScript,
       },
       encoding: "utf8",
