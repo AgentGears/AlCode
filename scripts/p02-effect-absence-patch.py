@@ -204,3 +204,59 @@ if old not in tail:
     raise SystemExit("mutating verifier setup terminator not found")
 source = source[:pos] + tail.replace(old, new, 1)
 tests.write_text(source)
+
+reducer = Path("packages/program-state/src/reducer-core.ts")
+source = reducer.read_text()
+source = replace_once(
+    source,
+    '''      const work = state.workItems[index]!;
+      const workItems = [...state.workItems];
+      if (work.lifecycle === "in_progress") workItems[index] = { ...work, lifecycle: "pending" };
+      return finalize(state, { ...state, workItems, activeAttempt: null });''',
+    '''      const work = state.workItems[index]!;
+      const workItems = [...state.workItems];
+      if (work.lifecycle === "in_progress" || work.lifecycle === "awaiting_verification") {
+        workItems[index] = { ...work, lifecycle: "pending" };
+      }
+      return finalize(state, { ...state, workItems, activeAttempt: null });''',
+    "attempt interruption awaiting-verification recovery",
+)
+reducer.write_text(source)
+
+state_tests = Path("packages/program-state/src/program-state.test.ts")
+source = state_tests.read_text()
+marker = '''  it("records mismatch + interrupts Attempt + invalidates multiple verification generations in one revision", () => {'''
+inserted = '''  it("interrupts awaiting-verification work back to pending for fresh Attempt replacement", () => {
+    let program = state();
+    const executionBase = baseExecutionBase();
+    program = applyProgramTransition(program, {
+      kind: "attempt.issue",
+      expectedProgramRevision: program.revision,
+      attempt: {
+        programAttemptId: asProgramAttemptId("attempt-awaiting-verification"),
+        workItemId: workA,
+        sessionId: program.attachedSessionIds[0]!,
+        agentGeneration: 1,
+        initialExecutionBase: executionBase,
+        expectedExecutionBase: executionBase,
+      },
+    });
+    program = applyProgramTransition(program, {
+      kind: "work.lifecycle.set",
+      expectedProgramRevision: program.revision,
+      workItemId: workA,
+      lifecycle: "awaiting_verification",
+    });
+    const interrupted = applyProgramTransition(program, {
+      kind: "attempt.interrupt",
+      expectedProgramRevision: program.revision,
+      programAttemptId: "attempt-awaiting-verification",
+    });
+    expect(interrupted.activeAttempt).toBeNull();
+    expect(interrupted.workItems[0]!.lifecycle).toBe("pending");
+  });
+
+'''
+if marker not in source:
+    raise SystemExit("program-state awaiting-verification regression insertion point not found")
+state_tests.write_text(source.replace(marker, inserted + marker, 1))
