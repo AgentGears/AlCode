@@ -1,6 +1,6 @@
 name: P-02 Verifier Effect-Absence Patch
 
-on:
+"on":
   push:
     branches:
       - feat/p02-semantic-planning-v1
@@ -25,247 +25,25 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Apply Host verifier effect-absence semantics and regressions
-        shell: bash
         run: |
           if [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; then
             echo "bot follow-up push; nothing to patch"
             exit 0
           fi
-          python - <<'PY'
-          from pathlib import Path
-
-          dispatch = Path("packages/host-runtime/src/program-dispatch.ts")
-          source = dispatch.read_text()
-
-          old = '''        const outcome = String(record(completed.payload).outcome ?? "failed");
-        const effectConfirmed = outcome === "succeeded";
-        const settlementDrafts: EventDraft<string, unknown>[] = [...terminalDrafts];
-        let nextState: ProgramState | null = state;
-
-        if (effectConfirmed) {'''
-          new = '''        const outcome = String(record(completed.payload).outcome ?? "failed");
-        const currentAttemptForMeasurement = state.lifecycle === "active" ? state.activeAttempt : null;
-        const measurementEffectAbsent =
-          requestedPayload.programVerificationOperationCompletionSemantics === "numeric_exit_is_completed" &&
-          input.quiescenceProven &&
-          quiesced !== undefined &&
-          postObservation?.status === "complete" &&
-          state.revision === input.program.expectedProgramRevision &&
-          currentAttemptForMeasurement !== null &&
-          String(currentAttemptForMeasurement.programAttemptId) === programAttemptId &&
-          String(currentAttemptForMeasurement.sessionId) === sessionId &&
-          currentAttemptForMeasurement.agentGeneration === input.program.agentGeneration &&
-          sameBase(
-            currentAttemptForMeasurement.expectedExecutionBase,
-            effectiveObservedBase(events, postObservation.base),
-          );
-        if (measurementEffectAbsent) {
-          const completedIndex = terminalDrafts.indexOf(completed);
-          terminalDrafts[completedIndex] = {
-            ...completed,
-            payload: { ...record(completed.payload), toolDeclaredEffect: "absent" },
-          };
-        }
-        const effectConfirmed = outcome === "succeeded" && !measurementEffectAbsent;
-        const settlementDrafts: EventDraft<string, unknown>[] = [...terminalDrafts];
-        let nextState: ProgramState | null = state;
-
-        if (effectConfirmed) {'''
-          if old not in source:
-              raise SystemExit("program-dispatch outcome insertion point not found")
-          source = source.replace(old, new, 1)
-
-          old = '''        } else if (state.lifecycle === "active") {
-          // A failed may_write has indeterminate effect certainty. Whether or not
-          // quiescence is proven, no trusted execution base may be adopted.'''
-          new = '''        } else if (!measurementEffectAbsent && state.lifecycle === "active") {
-          // A failed may_write has indeterminate effect certainty. Whether or not
-          // quiescence is proven, no trusted execution base may be adopted.'''
-          if old not in source:
-              raise SystemExit("program-dispatch failed-effect branch not found")
-          dispatch.write_text(source.replace(old, new, 1))
-
-          verification = Path("packages/host-runtime/src/program-verification.ts")
-          source = verification.read_text()
-          old = '''  if (expectedAccess === "may_write") {
-    if (!hasQuiescence(events, operationId) || operation.effectStatus !== "confirmed" ||
-        (operation.reconciliationStatus !== "not_required" && operation.reconciliationStatus !== "resolved")) {
-      throw new ProgramVerificationControlError("Mutating Host verification operation is not quiescent/effect-certain");
-    }
-  } else if (operation.effectStatus !== "not_applicable") {'''
-          new = '''  if (expectedAccess === "may_write") {
-    if (!hasQuiescence(events, operationId) ||
-        (operation.effectStatus !== "confirmed" && operation.effectStatus !== "absent") ||
-        (operation.reconciliationStatus !== "not_required" && operation.reconciliationStatus !== "resolved")) {
-      throw new ProgramVerificationControlError("Mutating Host verification operation is not quiescent/effect-certain");
-    }
-  } else if (operation.effectStatus !== "not_applicable") {'''
-          if old not in source:
-              raise SystemExit("program-verification safety insertion point not found")
-          verification.write_text(source.replace(old, new, 1))
-
-          tests = Path("packages/host-runtime/src/program-verification.test.ts")
-          source = tests.read_text()
-          old = '''import { CapabilityBroker, type HostCapability } from "./capability-broker.ts";'''
-          new = '''import { CapabilityBroker, type CapabilityBrokerResult, type HostCapability } from "./capability-broker.ts";'''
-          if old not in source:
-              raise SystemExit("test import insertion point not found")
-          source = source.replace(old, new, 1)
-
-          old = '''async function setup(
-  makeCapability: (observations: ObservationSource) => HostCapability,
-  verificationKind: "operation" | "path" | "artifact" = "operation",
-) {'''
-          new = '''async function setup(
-  makeCapability: (observations: ObservationSource) => HostCapability,
-  verificationKind: "operation" | "path" | "artifact" = "operation",
-  operationCompletionSemantics?: "numeric_exit_is_completed",
-  operationSuccess?: (result: CapabilityBrokerResult) => boolean,
-) {'''
-          if old not in source:
-              raise SystemExit("test setup signature insertion point not found")
-          source = source.replace(old, new, 1)
-
-          old = '''  const registry = new HostVerificationOperationRegistryV1([{
-    specId: "verify-spec", specVersion: 1, capabilityName: capability.name,
-    workspaceAccessClass: capability.workspaceAccessClass ?? (capability.isReadOnly ? "read_only" : "may_write"),
-    isSuccessful: (result) => result.outcome === "succeeded" && typeof result.result === "string",
-    extractOutput: (result, channel) => channel === "stdout" && typeof result.result === "string" ? result.result : undefined,
-  }]);'''
-          new = '''  const registry = new HostVerificationOperationRegistryV1([{
-    specId: "verify-spec", specVersion: 1, capabilityName: capability.name,
-    workspaceAccessClass: capability.workspaceAccessClass ?? (capability.isReadOnly ? "read_only" : "may_write"),
-    ...(operationCompletionSemantics !== undefined ? { operationCompletionSemantics } : {}),
-    isSuccessful: operationSuccess ?? ((result) => result.outcome === "succeeded" && typeof result.result === "string"),
-    extractOutput: (result, channel) => channel === "stdout" && typeof result.result === "string" ? result.result : undefined,
-  }]);'''
-          if old not in source:
-              raise SystemExit("test registry insertion point not found")
-          source = source.replace(old, new, 1)
-
-          marker = '''  it("does not let a mutating verifier self-certify the generation its unknown impact invalidates", async () => {'''
-          inserted = '''  it("allows a quiescent typed verifier to certify the unchanged execution base without inventing a mutation", async () => {
-    const f = await setup(() => ({
-      name: "verify", workspaceAccessClass: "may_write",
-      quiescence: { containmentKind: "operation_scoped_containment", proofContractId: "host-capability-promise-v1", proofContractVersion: 1 },
-      async execute(_args, context) {
-        const containmentInstanceId = context.quiescenceContract!.containmentInstanceId;
-        return {
-          result: "verified", outcome: "succeeded",
-          quiescenceProof: {
-            containmentInstanceId, proofContractId: "host-capability-promise-v1", proofContractVersion: 1,
-            proofKind: "operation_containment_ended", evidence: { kind: "operation_scope_ended", containmentInstanceId },
-          },
-        };
-      },
-    }), "operation", "numeric_exit_is_completed");
-    const result = await f.service.satisfyOperationResult({
-      programStateId: String(f.initial.programStateId), expectedProgramRevision: f.withAttempt.revision,
-      verificationObligationId: String(f.obligationId), sessionId: f.sessionId,
-    });
-    expect(result.status).toBe("satisfied");
-    const state = await latestState(f.locked, String(f.initial.programStateId));
-    expect(isVerificationCurrent(state.verification[0]!)).toBe(true);
-    const events = [] as Array<{ type: string; payload: unknown }>;
-    for await (const event of f.locked.store.replay()) events.push({ type: event.type, payload: event.payload });
-    const completed = events.find((event) => event.type === "operation.completed")!;
-    expect((completed.payload as Record<string, unknown>).toolDeclaredEffect).toBe("absent");
-    expect(events.some((event) => event.type === "workspace.effect_generation.advanced")).toBe(false);
-  });
-
-  it("keeps a negative typed verifier measurement terminal and effect-absent so retry can remain authoritative", async () => {
-    const f = await setup(() => ({
-      name: "verify", workspaceAccessClass: "may_write",
-      quiescence: { containmentKind: "operation_scoped_containment", proofContractId: "host-capability-promise-v1", proofContractVersion: 1 },
-      async execute(_args, context) {
-        const containmentInstanceId = context.quiescenceContract!.containmentInstanceId;
-        return {
-          result: { details: { exitCode: 1 } }, outcome: "failed", exitCode: 1,
-          quiescenceProof: {
-            containmentInstanceId, proofContractId: "host-capability-promise-v1", proofContractVersion: 1,
-            proofKind: "operation_containment_ended", evidence: { kind: "operation_scope_ended", containmentInstanceId },
-          },
-        };
-      },
-    }), "operation", "numeric_exit_is_completed", () => false);
-    const result = await f.service.satisfyOperationResult({
-      programStateId: String(f.initial.programStateId), expectedProgramRevision: f.withAttempt.revision,
-      verificationObligationId: String(f.obligationId), sessionId: f.sessionId,
-    });
-    expect(result.status).toBe("not_satisfied");
-    const events = [] as Array<{ type: string; payload: unknown }>;
-    for await (const event of f.locked.store.replay()) events.push({ type: event.type, payload: event.payload });
-    const completed = events.find((event) => event.type === "operation.completed")!;
-    expect(completed.payload).toMatchObject({ outcome: "succeeded", toolDeclaredEffect: "absent" });
-    expect(events.some((event) => event.type === "workspace.effect_generation.advanced")).toBe(false);
-    const state = await latestState(f.locked, String(f.initial.programStateId));
-    expect(state.revision).toBe(f.withAttempt.revision);
-    expect(state.activeAttempt?.programAttemptId).toBe(f.withAttempt.activeAttempt?.programAttemptId);
-  });
-
-'''
-          if marker not in source:
-              raise SystemExit("test insertion marker not found")
-          source = source.replace(marker, inserted + marker, 1)
-
-          old = '''    }));
-    const result = await f.service.satisfyOperationResult({
-      programStateId: String(f.initial.programStateId), expectedProgramRevision: f.withAttempt.revision,
-      verificationObligationId: String(f.obligationId), sessionId: f.sessionId,
-    });
-    expect(result.status).toBe("stale_generation");'''
-          # Target only the mutating test by replacing the occurrence immediately after its unique mutation string.
-          anchor = 'observations.current = base(observations.current.observation.workspaceIdentity, 1, "after-verifier-mutation");'
-          pos = source.find(anchor)
-          if pos < 0:
-              raise SystemExit("mutating verifier anchor not found")
-          tail = source[pos:]
-          if old not in tail:
-              raise SystemExit("mutating verifier setup terminator not found")
-          tail = tail.replace(old, '''    }), "operation", "numeric_exit_is_completed");
-    const result = await f.service.satisfyOperationResult({
-      programStateId: String(f.initial.programStateId), expectedProgramRevision: f.withAttempt.revision,
-      verificationObligationId: String(f.obligationId), sessionId: f.sessionId,
-    });
-    expect(result.status).toBe("stale_generation");''', 1)
-          source = source[:pos] + tail
-          tests.write_text(source)
-          PY
+          python scripts/p02-effect-absence-patch.py
       - name: Run focused Host verifier regressions
-        run: pnpm exec vitest run packages/host-runtime/src/program-verification.test.ts packages/coding-agent/src/verification-profile.test.ts --reporter=verbose
-      - name: Run P-02 product vertical or expose masked driver error
-        shell: bash
         run: |
-          if pnpm exec vitest run packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts --reporter=verbose; then
-            exit 0
-          fi
-          python - <<'PY'
-          from pathlib import Path
-          path = Path("packages/coding-agent/src/cli.ts")
-          source = path.read_text()
-          old = '''    } catch (error) {
-      await cancelActiveProgram("program_driver_failure").catch(() => undefined);'''
-          new = '''    } catch (error) {
-      console.error("[p02-driver-root]", error instanceof Error ? `${error.name}: ${error.message}` : String(error));
-      await cancelActiveProgram("program_driver_failure").catch(() => undefined);'''
-          if old not in source:
-              raise SystemExit("driver diagnostic insertion point not found")
-          path.write_text(source.replace(old, new, 1))
-          PY
-          pnpm exec vitest run packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts --reporter=verbose || true
-          exit 1
+          if [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; then exit 0; fi
+          pnpm exec vitest run packages/host-runtime/src/program-verification.test.ts packages/coding-agent/src/verification-profile.test.ts --reporter=verbose
+      - name: Run P-02 product vertical
+        run: |
+          if [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; then exit 0; fi
+          pnpm exec vitest run packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts --reporter=verbose
       - name: Commit verified effect-absence semantics
-        shell: bash
         run: |
-          if [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; then
-            exit 0
-          fi
+          if [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; then exit 0; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add packages/host-runtime/src/program-dispatch.ts packages/host-runtime/src/program-verification.ts packages/host-runtime/src/program-verification.test.ts
-          if git diff --cached --quiet; then
-            echo "no patch to commit"
-            exit 0
-          fi
           git commit -m "fix(p02): certify unchanged verifier measurement effects"
           git push origin HEAD:feat/p02-semantic-planning-v1
