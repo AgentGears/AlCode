@@ -124,3 +124,81 @@ method = replace_once(
     "settlement append",
 )
 dispatch.write_text(prefix + method)
+
+
+adaptive = Path("packages/host-runtime/src/program-adaptive-operation-v2.ts")
+source = adaptive.read_text()
+method_marker = "  async settleProgramMutation(\n"
+method_index = source.find(method_marker)
+if method_index < 0:
+    raise SystemExit("adaptive settleProgramMutation method not found")
+prefix = source[:method_index]
+method = source[method_index:]
+method = replace_once(
+    method,
+    '''    try {
+      await this.options.currentState.current(input.program.programStateId);
+    } catch (error) {''',
+    '''    console.error(`[p02-adaptive-settle pid=${process.pid}] current-start operation=${String(input.operationId)}`);
+    try {
+      await this.options.currentState.current(input.program.programStateId);
+      console.error(`[p02-adaptive-settle pid=${process.pid}] current-done operation=${String(input.operationId)}`);
+    } catch (error) {''',
+    "adaptive current",
+)
+method = replace_once(
+    method,
+    '''    return this.options.workspaceCoordinator.runExclusive(async () => {
+      const postObservation = input.quiescenceProven ? await this.options.observations.observe() : null;''',
+    '''    console.error(`[p02-adaptive-settle pid=${process.pid}] coordinator-wait operation=${String(input.operationId)}`);
+    return this.options.workspaceCoordinator.runExclusive(async () => {
+      console.error(`[p02-adaptive-settle pid=${process.pid}] coordinator-enter operation=${String(input.operationId)}`);
+      console.error(`[p02-adaptive-settle pid=${process.pid}] observation-start operation=${String(input.operationId)} quiescence=${String(input.quiescenceProven)}`);
+      const postObservation = input.quiescenceProven ? await this.options.observations.observe() : null;
+      console.error(`[p02-adaptive-settle pid=${process.pid}] observation-done operation=${String(input.operationId)} status=${String(postObservation?.status ?? "skipped")}`);''',
+    "adaptive coordinator",
+)
+method = replace_once(
+    method,
+    '''      return this.options.admission.enqueue(async () => {
+        const events = await replayAll(this.options.store);''',
+    '''      console.error(`[p02-adaptive-settle pid=${process.pid}] admission-wait operation=${String(input.operationId)}`);
+      return this.options.admission.enqueue(async () => {
+        console.error(`[p02-adaptive-settle pid=${process.pid}] admission-enter operation=${String(input.operationId)}`);
+        const events = await replayAll(this.options.store);
+        console.error(`[p02-adaptive-settle pid=${process.pid}] replay-done operation=${String(input.operationId)} events=${events.length}`);''',
+    "adaptive admission",
+)
+method = replace_once(
+    method,
+    '''        const current = await this.options.currentState.current(input.program.programStateId);
+        const raw = requireAdaptiveRawProgramStateV2(events, input.program.programStateId);''',
+    '''        console.error(`[p02-adaptive-settle pid=${process.pid}] current2-start operation=${String(input.operationId)}`);
+        const current = await this.options.currentState.current(input.program.programStateId);
+        console.error(`[p02-adaptive-settle pid=${process.pid}] current2-done operation=${String(input.operationId)}`);
+        const raw = requireAdaptiveRawProgramStateV2(events, input.program.programStateId);''',
+    "adaptive current inside admission",
+)
+method = replace_once(
+    method,
+    '''        const head = await this.options.store.headSequence();
+        const terminalDrafts = [...input.buildTerminalDrafts(head)];''',
+    '''        console.error(`[p02-adaptive-settle pid=${process.pid}] head-start operation=${String(input.operationId)}`);
+        const head = await this.options.store.headSequence();
+        console.error(`[p02-adaptive-settle pid=${process.pid}] head-done operation=${String(input.operationId)} sequence=${head}`);
+        console.error(`[p02-adaptive-settle pid=${process.pid}] drafts-start operation=${String(input.operationId)}`);
+        const terminalDrafts = [...input.buildTerminalDrafts(head)];
+        console.error(`[p02-adaptive-settle pid=${process.pid}] drafts-done operation=${String(input.operationId)} count=${terminalDrafts.length}`);''',
+    "adaptive drafts",
+)
+method = replace_once(
+    method,
+    '''        const persisted = await this.options.store.append(settlementDrafts);
+        for (let index = 0; index < persisted.length; index++) {''',
+    '''        console.error(`[p02-adaptive-settle pid=${process.pid}] append-start operation=${String(input.operationId)} count=${settlementDrafts.length}`);
+        const persisted = await this.options.store.append(settlementDrafts);
+        console.error(`[p02-adaptive-settle pid=${process.pid}] append-done operation=${String(input.operationId)} count=${persisted.length}`);
+        for (let index = 0; index < persisted.length; index++) {''',
+    "adaptive append",
+)
+adaptive.write_text(prefix + method)
