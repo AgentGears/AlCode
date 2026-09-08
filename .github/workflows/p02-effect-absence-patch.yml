@@ -26,35 +26,17 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Apply Host verifier effect-absence semantics and regressions
         run: |
-          if [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; then
-            echo "bot follow-up push; nothing to patch"
-            exit 0
-          fi
+          if [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; then exit 0; fi
           python scripts/p02-effect-absence-patch.py
       - name: Run focused Host verifier regressions
         run: |
           if [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; then exit 0; fi
           pnpm exec vitest run packages/host-runtime/src/program-verification.test.ts packages/coding-agent/src/verification-profile.test.ts --reporter=verbose
       - name: Run P-02 vertical and expose masked driver root on failure
-        shell: bash
         run: |
           if [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; then exit 0; fi
-          if pnpm exec vitest run packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts --reporter=verbose; then
-            exit 0
-          fi
-          python - <<'PY'
-          from pathlib import Path
-          path = Path("packages/coding-agent/src/cli.ts")
-          source = path.read_text()
-          old = '''    } catch (error) {
-      await cancelActiveProgram("program_driver_failure").catch(() => undefined);'''
-          new = '''    } catch (error) {
-      console.error("[p02-driver-root]", error instanceof Error ? `${error.name}: ${error.message}` : String(error));
-      await cancelActiveProgram("program_driver_failure").catch(() => undefined);'''
-          if old not in source:
-              raise SystemExit("driver diagnostic insertion point not found")
-          path.write_text(source.replace(old, new, 1))
-          PY
+          if pnpm exec vitest run packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts --reporter=verbose; then exit 0; fi
+          python scripts/p02-driver-diagnostic.py
           pnpm exec vitest run packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts --reporter=verbose || true
           exit 1
       - name: Commit verified effect-absence semantics
