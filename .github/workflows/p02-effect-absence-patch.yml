@@ -32,10 +32,14 @@ jobs:
           python scripts/p02-verification-singleflight-deadlock-patch.py
           python scripts/p02-adaptive-effect-absence-patch.py
           python scripts/p02-finalize-runtime-regressions.py
+      - name: Run replay liveness regression
+        run: |
+          pnpm exec vitest run packages/storage/src/sqlite-event-store.test.ts \
+            -t "replay releases SQLite query ownership before each async yield" \
+            --reporter=verbose
       - name: Run P-02 focused regressions
         run: |
           pnpm exec vitest run \
-            packages/storage/src/sqlite-event-store.test.ts \
             packages/program-state/src/program-state.test.ts \
             packages/host-runtime/src/program-verification.test.ts \
             packages/host-runtime/src/program-adaptive-verification-retry.p02.test.ts \
@@ -65,6 +69,7 @@ jobs:
             packages/host-runtime/src/program-verification.ts \
             packages/host-runtime/src/program-verification.test.ts \
             packages/host-runtime/src/program-adaptive-verification-control-v2.ts \
+            packages/host-runtime/src/program-adaptive-verification-retry.p02.test.ts \
             packages/host-runtime/src/program-adaptive-verification-singleflight.p02.test.ts \
             packages/host-runtime/src/program-adaptive-operation-v2.ts \
             packages/host-runtime/src/program-adaptive-operation-v2.test.ts \
