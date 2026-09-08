@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -31,7 +32,10 @@ const correctedValue = "export const value: number = 2;\n";
 const verifierCommand = "pnpm --filter fixture-app typecheck";
 
 function createFixtureWorkspace(): string {
-  const root = mkdtempSync(join(tmpdir(), "alcode-p02-product-workspace-"));
+  // macOS exposes /var as an alias of /private/var while child process.cwd()
+  // reports the physical path. Use one physical root so parent replay and the CLI
+  // address the same WorkspaceRegistry alias and workspace database.
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "alcode-p02-product-workspace-")));
   roots.push(root);
   mkdirSync(join(root, "packages", "app", "src"), { recursive: true });
   writeFileSync(join(root, "package.json"), JSON.stringify({ private: true }, null, 2));
