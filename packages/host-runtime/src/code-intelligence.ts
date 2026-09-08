@@ -88,7 +88,7 @@ export class OwnedLocalCodeIntelligenceService {
     repositoryId: string;
     processSupervisor: ExternalProcessSupervisor;
   };
-  private tracker: WorkspaceRevisionTracker | undefined;
+  private readonly tracker: WorkspaceRevisionTracker;
   private service: CodeIntelligenceService | undefined;
   private startPromise: Promise<void> | undefined;
 
@@ -99,6 +99,14 @@ export class OwnedLocalCodeIntelligenceService {
     processSupervisor: ExternalProcessSupervisor;
   }) {
     this.input = input;
+    // Construction is side-effect free: the tracker does not open its watcher or
+    // baseline until ensureStarted(). Keeping the instance here lets planning arg
+    // normalization consult the exact tracker coverage policy before the first query.
+    this.tracker = new WorkspaceRevisionTracker({ root: input.root });
+  }
+
+  isRevisionTrackedPath(workspaceRelativePath: string): boolean {
+    return this.tracker.isRevisionTrackedPath(workspaceRelativePath);
   }
 
   async query<Q extends LocalSemanticPlanningQuery>(
@@ -112,16 +120,14 @@ export class OwnedLocalCodeIntelligenceService {
   async dispose(): Promise<void> {
     if (this.startPromise !== undefined) await this.startPromise.catch(() => undefined);
     if (this.service !== undefined) await this.service.dispose();
-    else this.tracker?.close();
+    else this.tracker.close();
     this.service = undefined;
-    this.tracker = undefined;
   }
 
   private async ensureStarted(): Promise<void> {
     if (this.startPromise === undefined) {
       this.startPromise = (async () => {
-        const tracker = new WorkspaceRevisionTracker({ root: this.input.root });
-        this.tracker = tracker;
+        const tracker = this.tracker;
         try {
           await tracker.start();
           this.service = new CodeIntelligenceService({

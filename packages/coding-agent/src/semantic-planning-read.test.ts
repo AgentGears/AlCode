@@ -21,6 +21,7 @@ interface FakeState {
   fingerprint: string;
   symbolComplete: boolean;
   referenceComplete: boolean;
+  referenceResultPath?: string;
 }
 
 async function fixture() {
@@ -50,6 +51,10 @@ async function fixture() {
   });
 
   const service = {
+    isRevisionTrackedPath(workspaceRelativePath: string) {
+      return !workspaceRelativePath.split(/[\\/]/).some((segment) =>
+        [".git", "node_modules", ".alcode", "dist", "coverage"].includes(segment));
+    },
     async query(request: SemanticPlanningQuery) {
       switch (request.type) {
         case "symbol_search":
@@ -78,7 +83,7 @@ async function fixture() {
           return observe({
             locations: [
               {
-                path: join(root, "src", "use-b.ts"),
+                path: state.referenceResultPath ?? join(root, "src", "use-b.ts"),
                 start: { line: 9, column: 4 },
                 end: { line: 9, column: 9 },
               },
@@ -223,4 +228,24 @@ describe("P-02 semantic CodeIntelligence planning reads", () => {
       column: 0,
     })).rejects.toThrow(/escapes workspace root/);
   });
+  it("rejects semantic evidence outside revision-tracked workspace coverage", async () => {
+    const { root, state, registry } = await fixture();
+    await expect(registry.read("code.references", 1, {
+      path: "dist/generated.ts",
+      line: 0,
+      column: 0,
+    })).rejects.toThrow(/outside CodeIntelligence revision coverage/);
+
+    state.referenceResultPath = join(root, "node_modules", "pkg", "index.d.ts");
+    await expect(registry.read("code.references", 1, {
+      path: "src/target.ts",
+      line: 0,
+      column: 0,
+    })).rejects.toThrow(/outside CodeIntelligence revision coverage/);
+
+    await expect(registry.read("code.diagnostics", 1, {
+      path: "coverage/generated.ts",
+    })).rejects.toThrow(/outside CodeIntelligence revision coverage/);
+  });
+
 });

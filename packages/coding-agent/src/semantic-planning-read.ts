@@ -64,6 +64,7 @@ export interface SemanticPlanningObservation<T> {
  * service instance.
  */
 export interface SemanticPlanningCodeIntelligence {
+  isRevisionTrackedPath(workspaceRelativePath: string): boolean;
   query<Q extends SemanticPlanningQuery>(
     request: Q,
     options?: { signal?: AbortSignal },
@@ -140,6 +141,17 @@ function observedWorkspacePath(root: string, observedPath: string): string {
   return rel === "" ? "." : rel.split(sep).join("/");
 }
 
+function assertRevisionTrackedPath(
+  service: SemanticPlanningCodeIntelligence,
+  workspaceRelativePath: string,
+  label: string,
+): string {
+  if (!service.isRevisionTrackedPath(workspaceRelativePath)) {
+    throw new PlanningReadError(`${label} is outside CodeIntelligence revision coverage: ${workspaceRelativePath}`);
+  }
+  return workspaceRelativePath;
+}
+
 function compareText(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
@@ -152,9 +164,17 @@ function compareLocation(a: SemanticPlanningLocation, b: SemanticPlanningLocatio
     || a.end.column - b.end.column;
 }
 
-function normalizeLocation(root: string, location: SemanticPlanningLocation) {
+function normalizeLocation(
+  root: string,
+  service: SemanticPlanningCodeIntelligence,
+  location: SemanticPlanningLocation,
+) {
   return {
-    path: observedWorkspacePath(root, location.path),
+    path: assertRevisionTrackedPath(
+      service,
+      observedWorkspacePath(root, location.path),
+      "CodeIntelligence result path",
+    ),
     start: { line: location.start.line, column: location.start.column },
     end: { line: location.end.line, column: location.end.column },
   };
@@ -264,7 +284,7 @@ function symbolContract(input: {
       const symbols = observation.value.symbols.map((symbol) => ({
         name: symbol.name,
         kind: symbol.kind ?? null,
-        location: normalizeLocation(input.root, symbol.location),
+        location: normalizeLocation(input.root, input.service, symbol.location),
       })).sort((left, right) =>
         compareText(left.name, right.name)
         || compareText(left.kind ?? "", right.kind ?? "")
@@ -292,7 +312,11 @@ function referencesContract(input: {
     normalizeArgs(value) {
       const record = asRecord(value);
       return {
-        path: workspaceRelativePath(input.root, requiredString(record, "path", SEMANTIC_PATH_MAX_CHARS), "path"),
+        path: assertRevisionTrackedPath(
+          input.service,
+          workspaceRelativePath(input.root, requiredString(record, "path", SEMANTIC_PATH_MAX_CHARS), "path"),
+          "path",
+        ),
         line: requiredNonNegativeInteger(record, "line"),
         column: requiredNonNegativeInteger(record, "column"),
         includeDeclaration: optionalBoolean(record, "includeDeclaration", true),
@@ -309,7 +333,7 @@ function referencesContract(input: {
       });
       assertObservationAuthority(observation, input.workspaceId, input.repositoryId);
       const locations = observation.value.locations
-        .map((location) => normalizeLocation(input.root, location))
+        .map((location) => normalizeLocation(input.root, input.service, location))
         .sort(compareLocation);
       return {
         result: observationEnvelope(observation, { locations }),
@@ -337,7 +361,11 @@ function diagnosticsContract(input: {
       return {
         path: path === undefined || path === null
           ? null
-          : workspaceRelativePath(input.root, requiredString(record, "path", SEMANTIC_PATH_MAX_CHARS), "path"),
+          : assertRevisionTrackedPath(
+            input.service,
+            workspaceRelativePath(input.root, requiredString(record, "path", SEMANTIC_PATH_MAX_CHARS), "path"),
+            "path",
+          ),
       };
     },
     async execute(canonicalArgs) {
@@ -349,7 +377,11 @@ function diagnosticsContract(input: {
       });
       assertObservationAuthority(observation, input.workspaceId, input.repositoryId);
       const diagnostics = observation.value.diagnostics.map((diagnostic) => ({
-        path: observedWorkspacePath(input.root, diagnostic.path),
+        path: assertRevisionTrackedPath(
+          input.service,
+          observedWorkspacePath(input.root, diagnostic.path),
+          "CodeIntelligence diagnostic result path",
+        ),
         severity: diagnostic.severity,
         message: diagnostic.message,
         range: {

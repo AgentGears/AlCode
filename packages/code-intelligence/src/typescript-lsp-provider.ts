@@ -30,6 +30,8 @@ interface LspDiagnostic { range: LspRange; severity?: number; message: string; s
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"]);
 const SOURCE_DISCOVERY_IGNORES = new Set([".git", ".alcode", "node_modules", "dist", "coverage"]);
 const MAX_SOURCE_DISCOVERY_ENTRIES = 10_000;
+const MAX_SYNCHRONIZATION_SOURCES = 2_000;
+const MAX_SYNCHRONIZATION_SYMBOLS = 50_000;
 
 function sameRevision(a: CodeRevisionToken | undefined, b: CodeRevisionToken): boolean {
   return !!a && a.epoch === b.epoch && a.generation === b.generation && a.fingerprint === b.fingerprint;
@@ -59,6 +61,9 @@ export class TypeScriptLanguageServerProvider implements CodeIntelligenceProvide
   private process: LspOwnedProcess | undefined;
   private rpc: LspJsonRpcClient | undefined;
   private syncedRevision: CodeRevisionToken | undefined;
+  private workspaceCoverageEstablished = false;
+  private readonly documentSymbols = new Map<string, LspSymbol[]>();
+  private workspaceSymbols: LspSymbol[] = [];
   private readonly diagnostics = new Map<string, LspDiagnostic[]>();
   private readonly opened = new Set<string>();
 
@@ -69,28 +74,45 @@ export class TypeScriptLanguageServerProvider implements CodeIntelligenceProvide
   }
 
   async synchronize(revision: CodeRevisionToken, options: { signal?: AbortSignal } = {}): Promise<ProviderSyncResult> {
-    if (sameRevision(this.syncedRevision, revision) && this.rpc) return { status: "synchronized" };
+    if (sameRevision(this.syncedRevision, revision) && this.rpc && this.workspaceCoverageEstablished) {
+      return { status: "synchronized" };
+    }
     try {
       await this.restart(options.signal);
-      const seed = await this.findSynchronizationSeed();
-      if (!seed) {
+      const sources = await this.findSynchronizationSources();
+      if (sources.length === 0) {
         await this.dispose();
         return { status: "unsupported", reason: "no TypeScript/JavaScript source file is available to establish provider synchronization" };
       }
 
-      // typescript-language-server does not create a tsserver project merely from
-      // initialize/workspaceFolders. Open one deterministic workspace source and
-      // await textDocument/documentSymbol. That request reaches tsserver NavTree,
-      // so successful completion is the provider-specific fence proving the freshly
-      // restarted provider has consumed a workspace file after the captured Host
-      // revision. The service still performs the mandatory Host revision/health
-      // recheck after every semantic query before publishing it as current.
-      await this.openFile(path.relative(this.root, seed));
+      // workspace/symbol is authoritative only after every eligible source that
+      // participates in the revision policy has been loaded into tsserver. Both
+      // discovery and source count are bounded; overflow fails synchronization closed.
+      for (const sourcePath of sources) {
+        if (options.signal?.aborted) {
+          throw options.signal.reason instanceof Error
+            ? options.signal.reason
+            : new Error("provider synchronization aborted");
+        }
+        await this.openFile(path.relative(this.root, sourcePath));
+      }
 
+      // Do not use the language server's asynchronously populated global
+      // workspace/symbol index as completeness evidence. Every eligible source
+      // has already crossed a per-document NavTree fence in openFile(); derive
+      // the authoritative bounded workspace symbol set directly from those
+      // document snapshots instead.
+      const workspaceSymbols = [...this.documentSymbols.values()].flat();
+      if (workspaceSymbols.length > MAX_SYNCHRONIZATION_SYMBOLS) {
+        throw new Error(`TypeScript synchronization symbol coverage exceeds ${MAX_SYNCHRONIZATION_SYMBOLS} symbols`);
+      }
+      this.workspaceSymbols = workspaceSymbols;
+      this.workspaceCoverageEstablished = true;
       this.syncedRevision = structuredClone(revision);
       return { status: "synchronized" };
     } catch (error) {
       this.syncedRevision = undefined;
+      this.workspaceCoverageEstablished = false;
       return { status: "uncertain", reason: error instanceof Error ? error.message : String(error) };
     }
   }
@@ -99,9 +121,26 @@ export class TypeScriptLanguageServerProvider implements CodeIntelligenceProvide
     if (!this.rpc || !this.syncedRevision) throw new Error("TypeScript LSP provider is not synchronized");
     switch (request.type) {
       case "symbol_search": {
-        const result = await this.rpc.request<LspSymbol[]>("workspace/symbol", { query: request.query }, options.signal);
+        const query = request.query.toLowerCase();
+        const result = this.workspaceSymbols
+          .filter((symbol) => symbol.name.toLowerCase().includes(query))
+          .sort((a, b) => a.name.localeCompare(b.name, "en")
+            || a.location.uri.localeCompare(b.location.uri, "en")
+            || a.location.range.start.line - b.location.range.start.line
+            || a.location.range.start.character - b.location.range.start.character
+            || a.location.range.end.line - b.location.range.end.line
+            || a.location.range.end.character - b.location.range.end.character);
         const limit = Math.max(1, Math.min(request.limit ?? 100, 500));
-        return { value: { symbols: result.slice(0, limit).map((symbol) => ({ name: symbol.name, kind: String(symbol.kind), location: location(symbol.location) })) } as CodeQueryResult<Q>, complete: result.length <= limit };
+        return {
+          value: {
+            symbols: result.slice(0, limit).map((symbol) => ({
+              name: symbol.name,
+              kind: String(symbol.kind),
+              location: location(symbol.location),
+            })),
+          } as CodeQueryResult<Q>,
+          complete: this.workspaceCoverageEstablished && result.length <= limit,
+        };
       }
       case "definition": {
         const uri = await this.openFile(request.path);
@@ -137,8 +176,11 @@ export class TypeScriptLanguageServerProvider implements CodeIntelligenceProvide
 
   async dispose(): Promise<void> {
     this.syncedRevision = undefined;
+    this.workspaceCoverageEstablished = false;
     this.rpc = undefined;
     this.opened.clear();
+    this.documentSymbols.clear();
+    this.workspaceSymbols = [];
     this.diagnostics.clear();
     const process = this.process;
     this.process = undefined;
@@ -174,25 +216,31 @@ export class TypeScriptLanguageServerProvider implements CodeIntelligenceProvide
     rpc.notify("initialized", {});
   }
 
-  private async findSynchronizationSeed(): Promise<string | undefined> {
+  private async findSynchronizationSources(): Promise<string[]> {
     let visited = 0;
-    const walk = async (directory: string): Promise<string | undefined> => {
+    const sources: string[] = [];
+    const walk = async (directory: string): Promise<void> => {
       const children = await readdir(directory, { withFileTypes: true });
       children.sort((a, b) => a.name.localeCompare(b.name, "en"));
       for (const child of children) {
         if (SOURCE_DISCOVERY_IGNORES.has(child.name)) continue;
         visited += 1;
-        if (visited > MAX_SOURCE_DISCOVERY_ENTRIES) throw new Error(`TypeScript synchronization source discovery exceeds ${MAX_SOURCE_DISCOVERY_ENTRIES} entries`);
-        const absolute = path.join(directory, child.name);
-        if (child.isFile() && SOURCE_EXTENSIONS.has(path.extname(child.name).toLowerCase())) return absolute;
-        if (child.isDirectory()) {
-          const found = await walk(absolute);
-          if (found) return found;
+        if (visited > MAX_SOURCE_DISCOVERY_ENTRIES) {
+          throw new Error(`TypeScript synchronization source discovery exceeds ${MAX_SOURCE_DISCOVERY_ENTRIES} entries`);
         }
+        const absolute = path.join(directory, child.name);
+        if (child.isFile() && SOURCE_EXTENSIONS.has(path.extname(child.name).toLowerCase())) {
+          sources.push(absolute);
+          if (sources.length > MAX_SYNCHRONIZATION_SOURCES) {
+            throw new Error(`TypeScript synchronization coverage exceeds ${MAX_SYNCHRONIZATION_SOURCES} source files`);
+          }
+          continue;
+        }
+        if (child.isDirectory()) await walk(absolute);
       }
-      return undefined;
     };
-    return walk(this.root);
+    await walk(this.root);
+    return sources;
   }
 
   private async openFile(filePath: string): Promise<string> {
@@ -203,8 +251,12 @@ export class TypeScriptLanguageServerProvider implements CodeIntelligenceProvide
     if (this.opened.has(uri)) return uri;
     const text = await readFile(absolute, "utf8");
     this.rpc!.notify("textDocument/didOpen", { textDocument: { uri, languageId: languageId(absolute), version: 1, text } });
-    // Round trip after didOpen is the provider-specific fence for exact file bytes used by this query.
-    await this.rpc!.request("textDocument/documentSymbol", { textDocument: { uri } });
+    // Round trip after didOpen is the provider-specific fence for exact file bytes
+    // and yields the per-document symbol snapshot used for complete workspace
+    // symbol coverage. The client does not advertise hierarchical symbols, so
+    // typescript-language-server returns SymbolInformation locations here.
+    const symbols = await this.rpc!.request<LspSymbol[] | null>("textDocument/documentSymbol", { textDocument: { uri } });
+    this.documentSymbols.set(uri, symbols ?? []);
     this.opened.add(uri);
     return uri;
   }

@@ -23,6 +23,10 @@ export class CodeIntelligenceService {
 
   snapshot() { return this.options.tracker.snapshot(); }
 
+  isRevisionTrackedPath(workspaceRelativePath: string): boolean {
+    return this.options.tracker.isRevisionTrackedPath(workspaceRelativePath);
+  }
+
   async query<Q extends CodeQuery>(request: Q, options: { signal?: AbortSignal } = {}): Promise<CodeObservation<CodeQueryResult<Q>>> {
     const before = this.options.tracker.snapshot();
     if (before.state !== "HEALTHY" || !before.revision) throw new Error(`code intelligence tracker is not healthy: ${before.state}`);
