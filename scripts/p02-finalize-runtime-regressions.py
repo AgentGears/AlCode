@@ -183,6 +183,9 @@ adaptive_test.write_text(source)
 
 # Retry regression fixtures must use a valid branded WorkspaceId because the
 # failure path now emits a canonical Host event rather than remaining test-local.
+# Attempt interruption itself restores awaiting-verification work to pending, so
+# the retry fact and retirement are admitted atomically without a redundant
+# second work.lifecycle transition.
 retry = Path("packages/host-runtime/src/program-adaptive-verification-retry.p02.test.ts")
 source = retry.read_text()
 source = source.replace(
@@ -193,8 +196,24 @@ source = source.replace(
     'workspaceId: "workspace-p02-retry"',
     'workspaceId: "018f0000-0000-7000-8000-00000000d204"',
 )
-source = source.replace(
-    'workspaceId: "workspace-p02-retry",',
-    'workspaceId: "018f0000-0000-7000-8000-00000000d204",',
+source = replace_once(
+    source,
+    '''    expect(appendBatches[0]!.map((draft) => draft.type)).toEqual([
+      "program.verification.failed",
+      "program.transitioned",
+      "program.transitioned",
+    ]);
+    expect(appendBatches[0]!.slice(1).map((draft) => record(draft.payload).transitionKind)).toEqual([
+      "attempt.interrupt:verification_failed",
+      "work.lifecycle.set:pending",
+    ]);''',
+    '''    expect(appendBatches[0]!.map((draft) => draft.type)).toEqual([
+      "program.verification.failed",
+      "program.transitioned",
+    ]);
+    expect(appendBatches[0]!.slice(1).map((draft) => record(draft.payload).transitionKind)).toEqual([
+      "attempt.interrupt:verification_failed",
+    ]);''',
+    "retry atomic retirement expectation",
 )
 retry.write_text(source)
