@@ -66,8 +66,14 @@ broker.write_text(source)
 
 dispatch = Path("packages/host-runtime/src/program-dispatch.ts")
 source = dispatch.read_text()
-source = replace_once(
-    source,
+method_marker = "  async settleProgramMutation(\n"
+method_index = source.find(method_marker)
+if method_index < 0:
+    raise SystemExit("settleProgramMutation method not found")
+prefix = source[:method_index]
+method = source[method_index:]
+method = replace_once(
+    method,
     '''    return this.options.workspaceCoordinator.runExclusive(async () => {
       const postObservation = input.quiescenceProven
         ? await this.options.observations.observe()
@@ -82,8 +88,8 @@ source = replace_once(
       console.error(`[p02-settle pid=${process.pid}] observation-done operation=${operationId} status=${String(postObservation?.status ?? "skipped")}`);''',
     "settlement coordinator observation",
 )
-source = replace_once(
-    source,
+method = replace_once(
+    method,
     '''      return this.options.admission.enqueue(async () => {
         const events = await replayAll(this.options.store);
         const state = requireProgramState(events, programStateId);''',
@@ -95,18 +101,20 @@ source = replace_once(
         const state = requireProgramState(events, programStateId);''',
     "settlement admission",
 )
-source = replace_once(
-    source,
+method = replace_once(
+    method,
     '''        const head = await this.options.store.headSequence();
         const terminalDrafts = [...input.buildTerminalDrafts(head)];''',
-    '''        const head = await this.options.store.headSequence();
-        console.error(`[p02-settle pid=${process.pid}] head operation=${operationId} sequence=${head}`);
+    '''        console.error(`[p02-settle pid=${process.pid}] head-start operation=${operationId}`);
+        const head = await this.options.store.headSequence();
+        console.error(`[p02-settle pid=${process.pid}] head-done operation=${operationId} sequence=${head}`);
+        console.error(`[p02-settle pid=${process.pid}] drafts-start operation=${operationId}`);
         const terminalDrafts = [...input.buildTerminalDrafts(head)];
-        console.error(`[p02-settle pid=${process.pid}] drafts-built operation=${operationId} count=${terminalDrafts.length}`);''',
+        console.error(`[p02-settle pid=${process.pid}] drafts-done operation=${operationId} count=${terminalDrafts.length}`);''',
     "settlement drafts",
 )
-source = replace_once(
-    source,
+method = replace_once(
+    method,
     '''        const persisted = await this.options.store.append(settlementDrafts);
         for (let i = 0; i < persisted.length; i++) {''',
     '''        console.error(`[p02-settle pid=${process.pid}] append-start operation=${operationId} count=${settlementDrafts.length}`);
@@ -115,4 +123,4 @@ source = replace_once(
         for (let i = 0; i < persisted.length; i++) {''',
     "settlement append",
 )
-dispatch.write_text(source)
+dispatch.write_text(prefix + method)
