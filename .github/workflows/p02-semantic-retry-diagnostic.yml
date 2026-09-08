@@ -25,13 +25,13 @@ jobs:
           node-version: 22.17.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Shorten focused timeout and expose durable trace
+      - name: Shorten focused timeout and expose verifier settlement throws
         run: |
           python - <<'PY'
           from pathlib import Path
 
-          path = Path("packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts")
-          source = path.read_text()
+          test_path = Path("packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts")
+          source = test_path.read_text()
           source = source.replace("      timeout: 120_000,", "      timeout: 20_000,", 1)
           old = "    expect(result.error).toBeUndefined();"
           new = "\n".join([
@@ -42,7 +42,47 @@ jobs:
           ])
           if old not in source:
               raise SystemExit("diagnostic assertion insertion point not found")
-          path.write_text(source.replace(old, new, 1))
+          test_path.write_text(source.replace(old, new, 1))
+
+          broker_path = Path("packages/host-runtime/src/capability-broker.ts")
+          broker = broker_path.read_text()
+          old_eval = "    const verification = await this.cognition.evaluateVerification(request.sessionId as string, verificationPlan.match, resultData);"
+          new_eval = "\n".join([
+              "    const verification = await (async () => {",
+              "      try {",
+              "        return await this.cognition.evaluateVerification(request.sessionId as string, verificationPlan.match, resultData);",
+              "      } catch (error) {",
+              "        console.error(\"[p02-diagnostic] cognition.evaluateVerification failed\", error);",
+              "        throw error;",
+              "      }",
+              "    })();",
+          ])
+          if old_eval not in broker:
+              raise SystemExit("cognition diagnostic insertion point not found")
+          broker = broker.replace(old_eval, new_eval, 1)
+
+          old_settle = """      await this.programOperationAuthority.settleProgramMutation({
+        sessionId: request.sessionId,
+        operationId: operationId as string,
+        program,
+        quiescenceProven: validatedQuiescenceProof !== undefined,
+        buildTerminalDrafts: terminalDraftsForHead,
+      });"""
+          new_settle = """      try {
+        await this.programOperationAuthority.settleProgramMutation({
+          sessionId: request.sessionId,
+          operationId: operationId as string,
+          program,
+          quiescenceProven: validatedQuiescenceProof !== undefined,
+          buildTerminalDrafts: terminalDraftsForHead,
+        });
+      } catch (error) {
+        console.error("[p02-diagnostic] settleProgramMutation failed", error);
+        throw error;
+      }"""
+          if old_settle not in broker:
+              raise SystemExit("settlement diagnostic insertion point not found")
+          broker_path.write_text(broker.replace(old_settle, new_settle, 1))
           PY
       - name: Run focused P-02 semantic retry vertical
         run: npx vitest run packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts --reporter=verbose
