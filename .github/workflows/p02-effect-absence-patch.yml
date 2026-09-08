@@ -1,4 +1,4 @@
-name: P-02 Verifier Effect-Absence Patch
+name: P-02 Runtime Finalization
 
 "on":
   push:
@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   patch-and-verify:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,28 +25,54 @@ jobs:
           node-version: 22.17.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Apply P-02 verifier, recovery, and replay corrections
+      - name: Apply verified P-02 runtime corrections
         run: |
-          if [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; then exit 0; fi
           python scripts/p02-effect-absence-patch.py
           python scripts/p02-replay-cursor-fix.py
-      - name: Run replay liveness regression
+          python scripts/p02-verification-singleflight-deadlock-patch.py
+          python scripts/p02-adaptive-effect-absence-patch.py
+          python scripts/p02-finalize-runtime-regressions.py
+      - name: Run P-02 focused regressions
         run: |
-          if [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; then exit 0; fi
-          pnpm exec vitest run packages/storage/src/sqlite-event-store.test.ts -t "replay releases SQLite query ownership before each async yield" --reporter=verbose
-      - name: Run focused verifier and recovery regressions
+          pnpm exec vitest run \
+            packages/storage/src/sqlite-event-store.test.ts \
+            packages/program-state/src/program-state.test.ts \
+            packages/host-runtime/src/program-verification.test.ts \
+            packages/host-runtime/src/program-adaptive-verification-retry.p02.test.ts \
+            packages/host-runtime/src/program-adaptive-verification-singleflight.p02.test.ts \
+            packages/host-runtime/src/program-adaptive-operation-v2.test.ts \
+            packages/host-runtime/src/program-adaptive-verification-control-v2.test.ts \
+            packages/coding-agent/src/verification-profile.test.ts \
+            --reporter=verbose
+      - name: Typecheck affected packages
         run: |
-          if [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; then exit 0; fi
-          pnpm exec vitest run packages/host-runtime/src/program-verification.test.ts packages/coding-agent/src/verification-profile.test.ts packages/program-state/src/program-state.test.ts --reporter=verbose
+          pnpm --filter @alcode/storage typecheck
+          pnpm --filter @alcode/program-state typecheck
+          pnpm --filter @alcode/host-runtime typecheck
+          pnpm --filter @alcode/coding-agent typecheck
       - name: Run P-02 product vertical
+        run: pnpm exec vitest run packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts --reporter=verbose
+      - name: Commit verified P-02 runtime corrections
         run: |
-          if [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; then exit 0; fi
-          pnpm exec vitest run packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts --reporter=verbose
-      - name: Commit verified P-02 verifier, recovery, and replay corrections
-        run: |
-          if [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; then exit 0; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add packages/host-runtime/src/program-dispatch.ts packages/host-runtime/src/program-verification.ts packages/host-runtime/src/program-verification.test.ts packages/program-state/src/reducer-core.ts packages/program-state/src/program-state.test.ts packages/storage/src/sqlite-event-store.ts packages/storage/src/sqlite-event-store.test.ts
-          git commit -m "fix(p02): preserve verifier and replay authority"
+          git add \
+            packages/storage/src/sqlite-event-store.ts \
+            packages/storage/src/sqlite-event-store.test.ts \
+            packages/program-state/src/reducer-core.ts \
+            packages/program-state/src/program-state.test.ts \
+            packages/host-runtime/src/program-dispatch.ts \
+            packages/host-runtime/src/program-verification.ts \
+            packages/host-runtime/src/program-verification.test.ts \
+            packages/host-runtime/src/program-adaptive-verification-control-v2.ts \
+            packages/host-runtime/src/program-adaptive-verification-singleflight.p02.test.ts \
+            packages/host-runtime/src/program-adaptive-operation-v2.ts \
+            packages/host-runtime/src/program-adaptive-operation-v2.test.ts \
+            packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo "No P-02 runtime changes to commit"
+            exit 0
+          fi
+          git commit -m "fix(p02): close semantic verification retry runtime"
           git push origin HEAD:feat/p02-semantic-planning-v1
