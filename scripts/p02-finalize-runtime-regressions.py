@@ -179,3 +179,22 @@ test = '''  it("certifies an unchanged numeric-exit Host verifier as effect-abse
 '''
 source = replace_once(source, anchor, test + anchor, "adaptive effect-absence regression")
 adaptive_test.write_text(source)
+
+
+# Retry regression fixtures must use a valid branded WorkspaceId because the
+# failure path now emits a canonical Host event rather than remaining test-local.
+retry = Path("packages/host-runtime/src/program-adaptive-verification-retry.p02.test.ts")
+source = retry.read_text()
+source = source.replace(
+    'workspaceIdentity: "workspace-p02-retry"',
+    'workspaceIdentity: "018f0000-0000-7000-8000-00000000d204"',
+)
+source = source.replace(
+    'workspaceId: "workspace-p02-retry"',
+    'workspaceId: "018f0000-0000-7000-8000-00000000d204"',
+)
+source = source.replace(
+    'workspaceId: "workspace-p02-retry",',
+    'workspaceId: "018f0000-0000-7000-8000-00000000d204",',
+)
+retry.write_text(source)
