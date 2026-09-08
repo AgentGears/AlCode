@@ -1,0 +1,603 @@
+name: P-02 semantic authority review closure
+
+"on":
+  push:
+    branches:
+      - feat/p02-semantic-planning-v1
+
+permissions:
+  contents: write
+
+jobs:
+  close-review-findings:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/p02-semantic-planning-v1
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.17.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Apply semantic revision-coverage correction
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          tracker = Path("packages/code-intelligence/src/tracker.ts")
+          source = tracker.read_text()
+          anchor = '''  snapshot(): TrackerSnapshot {
+              return {
+                state: this.state,
+                ...(this.state === "HEALTHY" ? { revision: this.revision() } : {}),
+                ...(this.reason !== undefined ? { reason: this.reason } : {}),
+              };
+            }
+          '''
+          replacement = anchor + '''
+            isRevisionTrackedPath(workspaceRelativePath: string): boolean {
+              return !this.isIgnored(workspaceRelativePath.replace(/\\\\/g, "/"));
+            }
+          '''
+          if anchor not in source:
+              raise SystemExit("tracker snapshot anchor not found")
+          tracker.write_text(source.replace(anchor, replacement, 1))
+
+          service = Path("packages/code-intelligence/src/service.ts")
+          source = service.read_text()
+          anchor = '''  snapshot() { return this.options.tracker.snapshot(); }
+          '''
+          replacement = anchor + '''
+            isRevisionTrackedPath(workspaceRelativePath: string): boolean {
+              return this.options.tracker.isRevisionTrackedPath(workspaceRelativePath);
+            }
+          '''
+          if anchor not in source:
+              raise SystemExit("service snapshot anchor not found")
+          service.write_text(source.replace(anchor, replacement, 1))
+
+          semantic = Path("packages/coding-agent/src/semantic-planning-read.ts")
+          source = semantic.read_text()
+          old = '''export interface SemanticPlanningCodeIntelligence {
+            query<Q extends SemanticPlanningQuery>(
+              request: Q,
+              options?: { signal?: AbortSignal },
+            ): Promise<SemanticPlanningObservation<SemanticPlanningQueryResult<Q>>>;
+          }
+          '''
+          new = '''export interface SemanticPlanningCodeIntelligence {
+            isRevisionTrackedPath(workspaceRelativePath: string): boolean;
+            query<Q extends SemanticPlanningQuery>(
+              request: Q,
+              options?: { signal?: AbortSignal },
+            ): Promise<SemanticPlanningObservation<SemanticPlanningQueryResult<Q>>>;
+          }
+          '''
+          if old not in source:
+              raise SystemExit("semantic service interface anchor not found")
+          source = source.replace(old, new, 1)
+
+          anchor = '''function compareText(a: string, b: string): number {
+            return a < b ? -1 : a > b ? 1 : 0;
+          }
+          '''
+          helper = '''function assertRevisionTrackedPath(
+            service: SemanticPlanningCodeIntelligence,
+            workspaceRelativePath: string,
+            label: string,
+          ): string {
+            if (!service.isRevisionTrackedPath(workspaceRelativePath)) {
+              throw new PlanningReadError(`${label} is outside CodeIntelligence revision coverage: ${workspaceRelativePath}`);
+            }
+            return workspaceRelativePath;
+          }
+
+          ''' + anchor
+          if anchor not in source:
+              raise SystemExit("semantic compareText anchor not found")
+          source = source.replace(anchor, helper, 1)
+
+          old = '''function normalizeLocation(root: string, location: SemanticPlanningLocation) {
+            return {
+              path: observedWorkspacePath(root, location.path),
+              start: { line: location.start.line, column: location.start.column },
+              end: { line: location.end.line, column: location.end.column },
+            };
+          }
+          '''
+          new = '''function normalizeLocation(
+            root: string,
+            service: SemanticPlanningCodeIntelligence,
+            location: SemanticPlanningLocation,
+          ) {
+            const path = assertRevisionTrackedPath(
+              service,
+              observedWorkspacePath(root, location.path),
+              "CodeIntelligence result path",
+            );
+            return {
+              path,
+              start: { line: location.start.line, column: location.start.column },
+              end: { line: location.end.line, column: location.end.column },
+            };
+          }
+          '''
+          if old not in source:
+              raise SystemExit("normalizeLocation anchor not found")
+          source = source.replace(old, new, 1)
+          source = source.replace("location: normalizeLocation(input.root, symbol.location),", "location: normalizeLocation(input.root, input.service, symbol.location),", 1)
+          source = source.replace(".map((location) => normalizeLocation(input.root, location))", ".map((location) => normalizeLocation(input.root, input.service, location))", 1)
+
+          old = '''        path: workspaceRelativePath(input.root, requiredString(record, "path", SEMANTIC_PATH_MAX_CHARS), "path"),
+          line: requiredNonNegativeInteger(record, "line"),
+          column: requiredNonNegativeInteger(record, "column"),
+          includeDeclaration: optionalBoolean(record, "includeDeclaration", true),
+          '''
+          new = '''        path: assertRevisionTrackedPath(
+              input.service,
+              workspaceRelativePath(input.root, requiredString(record, "path", SEMANTIC_PATH_MAX_CHARS), "path"),
+              "path",
+            ),
+            line: requiredNonNegativeInteger(record, "line"),
+            column: requiredNonNegativeInteger(record, "column"),
+            includeDeclaration: optionalBoolean(record, "includeDeclaration", true),
+          '''
+          if old not in source:
+              raise SystemExit("reference input anchor not found")
+          source = source.replace(old, new, 1)
+
+          old = '''        path: path === undefined || path === null
+                  ? null
+                  : workspaceRelativePath(input.root, requiredString(record, "path", SEMANTIC_PATH_MAX_CHARS), "path"),
+              };
+          '''
+          new = '''        path: path === undefined || path === null
+                  ? null
+                  : assertRevisionTrackedPath(
+                    input.service,
+                    workspaceRelativePath(input.root, requiredString(record, "path", SEMANTIC_PATH_MAX_CHARS), "path"),
+                    "path",
+                  ),
+              };
+          '''
+          if old not in source:
+              raise SystemExit("diagnostic input anchor not found")
+          source = source.replace(old, new, 1)
+
+          old = '''      const diagnostics = observation.value.diagnostics.map((diagnostic) => ({
+                path: observedWorkspacePath(input.root, diagnostic.path),
+                severity: diagnostic.severity,
+                message: diagnostic.message,
+                range: {
+                  line: diagnostic.range.line,
+                  column: diagnostic.range.column,
+                  endLine: diagnostic.range.endLine,
+                  endColumn: diagnostic.range.endColumn,
+                },
+                source: diagnostic.source ?? null,
+                code: diagnostic.code ?? null,
+              })).sort((left, right) =>
+          '''
+          new = '''      const diagnostics = observation.value.diagnostics.map((diagnostic) => {
+                const path = assertRevisionTrackedPath(
+                  input.service,
+                  observedWorkspacePath(input.root, diagnostic.path),
+                  "CodeIntelligence diagnostic result path",
+                );
+                return {
+                  path,
+                  severity: diagnostic.severity,
+                  message: diagnostic.message,
+                  range: {
+                    line: diagnostic.range.line,
+                    column: diagnostic.range.column,
+                    endLine: diagnostic.range.endLine,
+                    endColumn: diagnostic.range.endColumn,
+                  },
+                  source: diagnostic.source ?? null,
+                  code: diagnostic.code ?? null,
+                };
+              }).sort((left, right) =>
+          '''
+          if old not in source:
+              raise SystemExit("diagnostic result anchor not found")
+          source = source.replace(old, new, 1)
+          semantic.write_text(source)
+          PY
+
+      - name: Apply bounded TypeScript workspace coverage correction
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          provider = Path("packages/code-intelligence/src/typescript-lsp-provider.ts")
+          source = provider.read_text()
+          source = source.replace(
+              'const MAX_SOURCE_DISCOVERY_ENTRIES = 10_000;\n',
+              'const MAX_SOURCE_DISCOVERY_ENTRIES = 10_000;\nconst MAX_SYNCHRONIZATION_SOURCES = 2_000;\n',
+              1,
+          )
+          source = source.replace(
+              '  private syncedRevision: CodeRevisionToken | undefined;\n',
+              '  private syncedRevision: CodeRevisionToken | undefined;\n  private workspaceCoverageEstablished = false;\n',
+              1,
+          )
+          old = '''    if (sameRevision(this.syncedRevision, revision) && this.rpc) return { status: "synchronized" };
+              try {
+                await this.restart(options.signal);
+                const seed = await this.findSynchronizationSeed();
+                if (!seed) {
+                  await this.dispose();
+                  return { status: "unsupported", reason: "no TypeScript/JavaScript source file is available to establish provider synchronization" };
+                }
+
+                // typescript-language-server does not create a tsserver project merely from
+                // initialize/workspaceFolders. Open one deterministic workspace source and
+                // await textDocument/documentSymbol. That request reaches tsserver NavTree,
+                // so successful completion is the provider-specific fence proving the freshly
+                // restarted provider has consumed a workspace file after the captured Host
+                // revision. The service still performs the mandatory Host revision/health
+                // recheck after every semantic query before publishing it as current.
+                await this.openFile(path.relative(this.root, seed));
+
+                this.syncedRevision = structuredClone(revision);
+                return { status: "synchronized" };
+              } catch (error) {
+                this.syncedRevision = undefined;
+                return { status: "uncertain", reason: error instanceof Error ? error.message : String(error) };
+              }
+          '''
+          new = '''    if (sameRevision(this.syncedRevision, revision) && this.rpc && this.workspaceCoverageEstablished) {
+                return { status: "synchronized" };
+              }
+              try {
+                await this.restart(options.signal);
+                const sources = await this.findSynchronizationSources();
+                if (sources.length === 0) {
+                  await this.dispose();
+                  return { status: "unsupported", reason: "no TypeScript/JavaScript source file is available to establish provider synchronization" };
+                }
+
+                // Workspace-symbol completeness is only authoritative after every eligible,
+                // revision-covered TS/JS source is loaded into tsserver. The walk and source
+                // count are both bounded; exceeding either bound fails synchronization closed.
+                for (const sourcePath of sources) {
+                  if (options.signal?.aborted) {
+                    throw options.signal.reason instanceof Error
+                      ? options.signal.reason
+                      : new Error("provider synchronization aborted");
+                  }
+                  await this.openFile(path.relative(this.root, sourcePath));
+                }
+
+                this.workspaceCoverageEstablished = true;
+                this.syncedRevision = structuredClone(revision);
+                return { status: "synchronized" };
+              } catch (error) {
+                this.syncedRevision = undefined;
+                this.workspaceCoverageEstablished = false;
+                return { status: "uncertain", reason: error instanceof Error ? error.message : String(error) };
+              }
+          '''
+          if old not in source:
+              raise SystemExit("provider synchronize anchor not found")
+          source = source.replace(old, new, 1)
+          old = 'return { value: { symbols: result.slice(0, limit).map((symbol) => ({ name: symbol.name, kind: String(symbol.kind), location: location(symbol.location) })) } as CodeQueryResult<Q>, complete: result.length <= limit };'
+          new = 'return { value: { symbols: result.slice(0, limit).map((symbol) => ({ name: symbol.name, kind: String(symbol.kind), location: location(symbol.location) })) } as CodeQueryResult<Q>, complete: this.workspaceCoverageEstablished && result.length <= limit };'
+          if old not in source:
+              raise SystemExit("provider symbol completeness anchor not found")
+          source = source.replace(old, new, 1)
+          source = source.replace(
+              '  async dispose(): Promise<void> {\n    this.syncedRevision = undefined;\n',
+              '  async dispose(): Promise<void> {\n    this.syncedRevision = undefined;\n    this.workspaceCoverageEstablished = false;\n',
+              1,
+          )
+          old = '''  private async findSynchronizationSeed(): Promise<string | undefined> {
+              let visited = 0;
+              const walk = async (directory: string): Promise<string | undefined> => {
+                const children = await readdir(directory, { withFileTypes: true });
+                children.sort((a, b) => a.name.localeCompare(b.name, "en"));
+                for (const child of children) {
+                  if (SOURCE_DISCOVERY_IGNORES.has(child.name)) continue;
+                  visited += 1;
+                  if (visited > MAX_SOURCE_DISCOVERY_ENTRIES) throw new Error(`TypeScript synchronization source discovery exceeds ${MAX_SOURCE_DISCOVERY_ENTRIES} entries`);
+                  const absolute = path.join(directory, child.name);
+                  if (child.isFile() && SOURCE_EXTENSIONS.has(path.extname(child.name).toLowerCase())) return absolute;
+                  if (child.isDirectory()) {
+                    const found = await walk(absolute);
+                    if (found) return found;
+                  }
+                }
+                return undefined;
+              };
+              return walk(this.root);
+            }
+          '''
+          new = '''  private async findSynchronizationSources(): Promise<string[]> {
+              let visited = 0;
+              const sources: string[] = [];
+              const walk = async (directory: string): Promise<void> => {
+                const children = await readdir(directory, { withFileTypes: true });
+                children.sort((a, b) => a.name.localeCompare(b.name, "en"));
+                for (const child of children) {
+                  if (SOURCE_DISCOVERY_IGNORES.has(child.name)) continue;
+                  visited += 1;
+                  if (visited > MAX_SOURCE_DISCOVERY_ENTRIES) {
+                    throw new Error(`TypeScript synchronization source discovery exceeds ${MAX_SOURCE_DISCOVERY_ENTRIES} entries`);
+                  }
+                  const absolute = path.join(directory, child.name);
+                  if (child.isFile() && SOURCE_EXTENSIONS.has(path.extname(child.name).toLowerCase())) {
+                    sources.push(absolute);
+                    if (sources.length > MAX_SYNCHRONIZATION_SOURCES) {
+                      throw new Error(`TypeScript synchronization coverage exceeds ${MAX_SYNCHRONIZATION_SOURCES} source files`);
+                    }
+                    continue;
+                  }
+                  if (child.isDirectory()) await walk(absolute);
+                }
+              };
+              await walk(this.root);
+              return sources;
+            }
+          '''
+          if old not in source:
+              raise SystemExit("provider source discovery anchor not found")
+          provider.write_text(source.replace(old, new, 1))
+          PY
+
+      - name: Add review regressions
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          test = Path("packages/coding-agent/src/semantic-planning-read.test.ts")
+          source = test.read_text()
+          source = source.replace(
+              '  referenceComplete: boolean;\n',
+              '  referenceComplete: boolean;\n  referenceResultPath?: string;\n',
+              1,
+          )
+          source = source.replace(
+              '                path: join(root, "src", "use-b.ts"),',
+              '                path: state.referenceResultPath ?? join(root, "src", "use-b.ts"),',
+              1,
+          )
+          anchor = '''  const service = {
+              async query(request: SemanticPlanningQuery) {
+          '''
+          replacement = '''  const service = {
+              isRevisionTrackedPath(workspaceRelativePath: string) {
+                return !workspaceRelativePath.split(/[\\\\/]/).some((segment) =>
+                  [".git", "node_modules", ".alcode", "dist", "coverage"].includes(segment));
+              },
+              async query(request: SemanticPlanningQuery) {
+          '''
+          if anchor not in source:
+              raise SystemExit("semantic fake service anchor not found")
+          source = source.replace(anchor, replacement, 1)
+          anchor = '''  it("rejects semantic arguments and results that escape the workspace", async () => {
+              const { registry } = await fixture();
+              await expect(registry.read("code.references", 1, {
+                path: "../outside.ts",
+                line: 0,
+                column: 0,
+              })).rejects.toThrow(/escapes workspace root/);
+            });
+          '''
+          addition = anchor + '''
+            it("rejects semantic evidence outside revision-tracked workspace coverage", async () => {
+              const { root, state, registry } = await fixture();
+              await expect(registry.read("code.references", 1, {
+                path: "dist/generated.ts",
+                line: 0,
+                column: 0,
+              })).rejects.toThrow(/outside CodeIntelligence revision coverage/);
+
+              state.referenceResultPath = join(root, "node_modules", "pkg", "index.d.ts");
+              await expect(registry.read("code.references", 1, {
+                path: "src/target.ts",
+                line: 0,
+                column: 0,
+              })).rejects.toThrow(/outside CodeIntelligence revision coverage/);
+
+              await expect(registry.read("code.diagnostics", 1, {
+                path: "coverage/generated.ts",
+              })).rejects.toThrow(/outside CodeIntelligence revision coverage/);
+            });
+          '''
+          if anchor not in source:
+              raise SystemExit("semantic workspace escape test anchor not found")
+          test.write_text(source.replace(anchor, addition, 1))
+
+          ci_test = Path("packages/code-intelligence/src/code-intelligence.test.ts")
+          source = ci_test.read_text()
+          anchor = '''describe("CodeIntelligence freshness", () => {
+          '''
+          addition = anchor + '''  it("exposes the exact default revision-covered path policy", async () => {
+              const root = await tempRoot();
+              const tracker = new WorkspaceRevisionTracker({ root });
+              expect(tracker.isRevisionTrackedPath("src/a.ts")).toBe(true);
+              expect(tracker.isRevisionTrackedPath("packages/app/src/a.ts")).toBe(true);
+              for (const pathValue of [
+                "dist/a.js",
+                "packages/app/node_modules/pkg/index.d.ts",
+                ".alcode/state.json",
+                "coverage/report.json",
+                ".git/index",
+              ]) {
+                expect(tracker.isRevisionTrackedPath(pathValue)).toBe(false);
+              }
+            });
+
+          '''
+          if anchor not in source:
+              raise SystemExit("code intelligence describe anchor not found")
+          ci_test.write_text(source.replace(anchor, addition, 1))
+          PY
+
+          cat > packages/code-intelligence/src/typescript-lsp-provider.p02.test.ts <<'EOF'
+          import { PassThrough, Writable } from "node:stream";
+          import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+          import { tmpdir } from "node:os";
+          import path from "node:path";
+          import { fileURLToPath } from "node:url";
+          import { afterEach, describe, expect, it } from "vitest";
+          import type { LspOwnedProcess } from "./lsp-jsonrpc.ts";
+          import { TypeScriptLanguageServerProvider } from "./typescript-lsp-provider.ts";
+
+          const roots: string[] = [];
+          afterEach(async () => {
+            await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+          });
+
+          class MockLspProcess implements LspOwnedProcess {
+            readonly pid = 12345;
+            readonly stdout = new PassThrough();
+            readonly stderr = new PassThrough();
+            readonly opened = new Set<string>();
+            private buffer = Buffer.alloc(0);
+            private expectedBodyBytes: number | undefined;
+            readonly stdin = new Writable({
+              write: (chunk, _encoding, callback) => {
+                try {
+                  this.accept(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+                  callback();
+                } catch (error) {
+                  callback(error instanceof Error ? error : new Error(String(error)));
+                }
+              },
+            });
+
+            async stop(): Promise<void> {
+              this.stdout.end();
+              this.stderr.end();
+            }
+
+            private accept(chunk: Buffer): void {
+              this.buffer = Buffer.concat([this.buffer, chunk]);
+              while (true) {
+                if (this.expectedBodyBytes === undefined) {
+                  const end = this.buffer.indexOf("\r\n\r\n");
+                  if (end < 0) return;
+                  const header = this.buffer.subarray(0, end).toString("ascii");
+                  this.buffer = this.buffer.subarray(end + 4);
+                  const match = /(?:^|\r\n)Content-Length:\s*(\d+)/i.exec(header);
+                  if (!match) throw new Error("mock LSP request missing Content-Length");
+                  this.expectedBodyBytes = Number(match[1]);
+                }
+                if (this.buffer.byteLength < this.expectedBodyBytes) return;
+                const body = this.buffer.subarray(0, this.expectedBodyBytes);
+                this.buffer = this.buffer.subarray(this.expectedBodyBytes);
+                this.expectedBodyBytes = undefined;
+                this.dispatch(JSON.parse(body.toString("utf8")) as Record<string, unknown>);
+              }
+            }
+
+            private dispatch(message: Record<string, unknown>): void {
+              if (message.method === "textDocument/didOpen") {
+                const params = message.params as { textDocument?: { uri?: unknown } } | undefined;
+                if (typeof params?.textDocument?.uri === "string") this.opened.add(params.textDocument.uri);
+                return;
+              }
+              if (typeof message.id !== "number") return;
+              let result: unknown = null;
+              if (message.method === "initialize") result = {};
+              else if (message.method === "textDocument/documentSymbol") result = [];
+              else if (message.method === "workspace/symbol") {
+                result = [...this.opened].sort().map((uri) => ({
+                  name: path.basename(fileURLToPath(uri), path.extname(fileURLToPath(uri))),
+                  kind: 12,
+                  location: {
+                    uri,
+                    range: {
+                      start: { line: 0, character: 0 },
+                      end: { line: 0, character: 1 },
+                    },
+                  },
+                }));
+              }
+              this.respond(message.id, result);
+            }
+
+            private respond(id: number, result: unknown): void {
+              const body = Buffer.from(JSON.stringify({ jsonrpc: "2.0", id, result }), "utf8");
+              this.stdout.write(`Content-Length: ${body.byteLength}\r\n\r\n`);
+              this.stdout.write(body);
+            }
+          }
+
+          describe("P-02 TypeScript workspace symbol completeness", () => {
+            it("loads every bounded eligible source across independent TypeScript projects before certifying workspace symbols complete", async () => {
+              const root = await mkdtemp(path.join(tmpdir(), "alcode-p02-ts-workspace-"));
+              roots.push(root);
+              for (const name of ["a", "b"]) {
+                const directory = path.join(root, "packages", name);
+                await mkdir(directory, { recursive: true });
+                await writeFile(path.join(directory, "tsconfig.json"), JSON.stringify({ include: ["./*.ts"] }));
+                await writeFile(path.join(directory, `${name}.ts`), `export const ${name} = ${JSON.stringify(name)};\n`);
+              }
+              await mkdir(path.join(root, "dist"), { recursive: true });
+              await writeFile(path.join(root, "dist", "generated.ts"), "export const generated = true;\n");
+
+              const process = new MockLspProcess();
+              const provider = new TypeScriptLanguageServerProvider({
+                root,
+                processFactory: () => process,
+                serverVersion: "test",
+              });
+              const sync = await provider.synchronize({ epoch: "epoch", generation: 0, fingerprint: "fp" });
+              expect(sync).toEqual({ status: "synchronized" });
+              expect([...process.opened].map((uri) => path.relative(root, fileURLToPath(uri))).sort()).toEqual([
+                path.join("packages", "a", "a.ts"),
+                path.join("packages", "b", "b.ts"),
+              ]);
+
+              const result = await provider.query({ type: "symbol_search", query: "", limit: 20 });
+              expect(result.complete).toBe(true);
+              expect(result.value.symbols.map((symbol) => symbol.name).sort()).toEqual(["a", "b"]);
+              await provider.dispose();
+            });
+          });
+          EOF
+
+      - name: Typecheck affected packages
+        run: |
+          pnpm --filter @alcode/code-intelligence typecheck
+          pnpm --filter @alcode/coding-agent typecheck
+
+      - name: Run focused semantic authority regressions
+        run: |
+          pnpm exec vitest run \
+            packages/code-intelligence/src/code-intelligence.test.ts \
+            packages/code-intelligence/src/typescript-lsp-provider.p02.test.ts \
+            packages/coding-agent/src/semantic-planning-read.test.ts \
+            --reporter=verbose
+
+      - name: Run P-02 product vertical
+        run: pnpm exec vitest run packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts --reporter=verbose
+
+      - name: Run CodeIntelligence gate
+        run: pnpm gate:0.9
+
+      - name: Commit verified review closure
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/p02-semantic-authority-review-closure.yml
+          git add \
+            packages/code-intelligence/src/tracker.ts \
+            packages/code-intelligence/src/service.ts \
+            packages/code-intelligence/src/code-intelligence.test.ts \
+            packages/code-intelligence/src/typescript-lsp-provider.ts \
+            packages/code-intelligence/src/typescript-lsp-provider.p02.test.ts \
+            packages/coding-agent/src/semantic-planning-read.ts \
+            packages/coding-agent/src/semantic-planning-read.test.ts
+          git diff --cached --check
+          git commit -m "fix(p02): close semantic planning authority gaps"
+          git push origin HEAD:feat/p02-semantic-planning-v1
