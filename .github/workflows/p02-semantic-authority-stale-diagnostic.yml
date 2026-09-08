@@ -35,119 +35,64 @@ jobs:
           python - <<'PY'
           from pathlib import Path
 
+          def replace_once(source: str, old: str, new: str, label: str) -> str:
+              if old not in source:
+                  raise SystemExit(f"{label} anchor not found")
+              return source.replace(old, new, 1)
+
           tracker = Path("packages/code-intelligence/src/tracker.ts")
           source = tracker.read_text()
-          old = '''      this.watcher = watch(this.root, { recursive: true }, (_event, filename) => {
-                if (filename && this.isIgnored(String(filename))) return;
-                if (this.state === "REBASELINING") this.changedDuringBaseline = true;
-                else if (this.state === "HEALTHY") {
-                  this.generation += 1;
-                  this.emit();
-                }
-              });
-          '''
-          new = '''      this.watcher = watch(this.root, { recursive: true }, (_event, filename) => {
-                if (filename && this.isIgnored(String(filename))) return;
-                if (process.env.ALCODE_P02_AUTHORITY_DIAG === "1") {
-                  console.error("[p02-authority-tracker-event]", JSON.stringify({
-                    filename: filename === null ? null : String(filename),
-                    state: this.state,
-                    generation: this.generation,
-                  }));
-                }
-                if (this.state === "REBASELINING") this.changedDuringBaseline = true;
-                else if (this.state === "HEALTHY") {
-                  this.generation += 1;
-                  this.emit();
-                }
-              });
-          '''
-          if old not in source:
-              raise SystemExit("tracker watcher diagnostic anchor not found")
-          tracker.write_text(source.replace(old, new, 1))
+          source = replace_once(
+              source,
+              '        if (filename && this.isIgnored(String(filename))) return;\n',
+              '        if (filename && this.isIgnored(String(filename))) return;\n'
+              '        if (process.env.ALCODE_P02_AUTHORITY_DIAG === "1") {\n'
+              '          console.error("[p02-authority-tracker-event]", JSON.stringify({ filename: filename === null ? null : String(filename), state: this.state, generation: this.generation }));\n'
+              '        }\n',
+              'tracker watcher diagnostic',
+          )
+          tracker.write_text(source)
 
           service = Path("packages/code-intelligence/src/service.ts")
           source = service.read_text()
-          old = '''    const before = this.options.tracker.snapshot();
-              if (before.state !== "HEALTHY" || !before.revision) throw new Error(`code intelligence tracker is not healthy: ${before.state}`);
-              const revision = before.revision;
-          '''
-          new = '''    const before = this.options.tracker.snapshot();
-              if (process.env.ALCODE_P02_AUTHORITY_DIAG === "1") {
-                console.error("[p02-authority-query-before]", JSON.stringify({ request, before }));
-              }
-              if (before.state !== "HEALTHY" || !before.revision) throw new Error(`code intelligence tracker is not healthy: ${before.state}`);
-              const revision = before.revision;
-          '''
-          if old not in source:
-              raise SystemExit("service before diagnostic anchor not found")
-          source = source.replace(old, new, 1)
-          old = '''    const after = this.options.tracker.snapshot();
-              const current = after.state === "HEALTHY" && !!after.revision && sameRevision(revision, after.revision);
-          '''
-          new = '''    const after = this.options.tracker.snapshot();
-              if (process.env.ALCODE_P02_AUTHORITY_DIAG === "1") {
-                console.error("[p02-authority-query-after]", JSON.stringify({
-                  type: request.type,
-                  revision,
-                  after,
-                  providerComplete: result.complete,
-                  result: result.value,
-                }));
-              }
-              const current = after.state === "HEALTHY" && !!after.revision && sameRevision(revision, after.revision);
-          '''
-          if old not in source:
-              raise SystemExit("service after diagnostic anchor not found")
-          service.write_text(source.replace(old, new, 1))
+          source = replace_once(
+              source,
+              '    const before = this.options.tracker.snapshot();\n',
+              '    const before = this.options.tracker.snapshot();\n'
+              '    if (process.env.ALCODE_P02_AUTHORITY_DIAG === "1") console.error("[p02-authority-query-before]", JSON.stringify({ request, before }));\n',
+              'service before diagnostic',
+          )
+          source = replace_once(
+              source,
+              '    const after = this.options.tracker.snapshot();\n',
+              '    const after = this.options.tracker.snapshot();\n'
+              '    if (process.env.ALCODE_P02_AUTHORITY_DIAG === "1") console.error("[p02-authority-query-after]", JSON.stringify({ type: request.type, revision, after, providerComplete: result.complete, result: result.value }));\n',
+              'service after diagnostic',
+          )
+          service.write_text(source)
 
           planning = Path("packages/host-runtime/src/planning-read.ts")
           source = planning.read_text()
-          old = '''      const actual = current.dependency;
-              if (actual.canonicalArgsDigest !== dependency.canonicalArgsDigest ||
-                  actual.canonicalResultDigest !== dependency.canonicalResultDigest ||
-                  actual.coverageIdentity !== dependency.coverageIdentity ||
-                  actual.providerBindingRevision !== dependency.providerBindingRevision) {
-          '''
-          new = '''      const actual = current.dependency;
-              if (process.env.ALCODE_P02_AUTHORITY_DIAG === "1") {
-                console.error("[p02-authority-recheck]", JSON.stringify({
-                  readContractId: dependency.readContractId,
-                  sealed: dependency,
-                  actual,
-                }));
-              }
-              if (actual.canonicalArgsDigest !== dependency.canonicalArgsDigest ||
-                  actual.canonicalResultDigest !== dependency.canonicalResultDigest ||
-                  actual.coverageIdentity !== dependency.coverageIdentity ||
-                  actual.providerBindingRevision !== dependency.providerBindingRevision) {
-          '''
-          if old not in source:
-              raise SystemExit("planning recheck diagnostic anchor not found")
-          planning.write_text(source.replace(old, new, 1))
+          source = replace_once(
+              source,
+              '      const actual = current.dependency;\n',
+              '      const actual = current.dependency;\n'
+              '      if (process.env.ALCODE_P02_AUTHORITY_DIAG === "1") console.error("[p02-authority-recheck]", JSON.stringify({ readContractId: dependency.readContractId, sealed: dependency, actual }));\n',
+              'planning recheck diagnostic',
+          )
+          planning.write_text(source)
 
           creation = Path("packages/host-runtime/src/program-creation.ts")
           source = creation.read_text()
-          old = '''        } catch (error) {
-                  if (error instanceof PlanningBaseStaleError) {
-                    throw new ProgramCreationStaleError(error.message);
-                  }
-                  throw error;
-                }
-          '''
-          new = '''        } catch (error) {
-                  if (process.env.ALCODE_P02_AUTHORITY_DIAG === "1") {
-                    console.error("[p02-authority-accept-recheck-error]", error instanceof Error ? `${error.name}: ${error.message}` : String(error));
-                  }
-                  if (error instanceof PlanningBaseStaleError) {
-                    throw new ProgramCreationStaleError(error.message);
-                  }
-                  throw error;
-                }
-          '''
-          if old not in source:
-              raise SystemExit("program creation diagnostic anchor not found")
-          creation.write_text(source.replace(old, new, 1))
+          source = replace_once(
+              source,
+              '        } catch (error) {\n          if (error instanceof PlanningBaseStaleError) {\n',
+              '        } catch (error) {\n'
+              '          if (process.env.ALCODE_P02_AUTHORITY_DIAG === "1") console.error("[p02-authority-accept-recheck-error]", error instanceof Error ? `${error.name}: ${error.message}` : String(error));\n'
+              '          if (error instanceof PlanningBaseStaleError) {\n',
+              'program creation diagnostic',
+          )
+          creation.write_text(source)
           PY
 
       - name: Run P-02 product stale diagnostic
