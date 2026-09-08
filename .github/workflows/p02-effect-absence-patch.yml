@@ -32,6 +32,20 @@ jobs:
         run: |
           if [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; then exit 0; fi
           pnpm exec vitest run packages/host-runtime/src/program-verification.test.ts packages/coding-agent/src/verification-profile.test.ts packages/program-state/src/program-state.test.ts --reporter=verbose
+      - name: Expose verifier child lifecycle in the product vertical
+        run: |
+          if [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; then exit 0; fi
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts")
+          source = path.read_text()
+          source = source.replace("      timeout: 20_000,", "      timeout: 45_000,", 1)
+          anchor = "    const events = await replay(home, root);"
+          replacement = "    process.stderr.write(result.stderr ?? \"\");\n    process.stdout.write(result.stdout ?? \"\");\n" + anchor
+          if anchor not in source:
+              raise SystemExit("P-02 product diagnostic anchor not found")
+          path.write_text(source.replace(anchor, replacement, 1))
+          PY
       - name: Run P-02 product vertical
         run: |
           if [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; then exit 0; fi
