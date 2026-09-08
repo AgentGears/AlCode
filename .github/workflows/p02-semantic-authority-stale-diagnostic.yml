@@ -1,0 +1,156 @@
+name: P-02 semantic authority stale diagnostic
+
+"on":
+  push:
+    branches:
+      - feat/p02-semantic-planning-v1
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose-stale-recheck:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/p02-semantic-planning-v1
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.17.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Apply candidate authority corrections
+        run: |
+          python scripts/p02-semantic-authority-review-closure.py
+          python scripts/p02-semantic-authority-host-bridge.py
+
+      - name: Add bounded stale-recheck diagnostics
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          tracker = Path("packages/code-intelligence/src/tracker.ts")
+          source = tracker.read_text()
+          old = '''      this.watcher = watch(this.root, { recursive: true }, (_event, filename) => {
+                if (filename && this.isIgnored(String(filename))) return;
+                if (this.state === "REBASELINING") this.changedDuringBaseline = true;
+                else if (this.state === "HEALTHY") {
+                  this.generation += 1;
+                  this.emit();
+                }
+              });
+          '''
+          new = '''      this.watcher = watch(this.root, { recursive: true }, (_event, filename) => {
+                if (filename && this.isIgnored(String(filename))) return;
+                if (process.env.ALCODE_P02_AUTHORITY_DIAG === "1") {
+                  console.error("[p02-authority-tracker-event]", JSON.stringify({
+                    filename: filename === null ? null : String(filename),
+                    state: this.state,
+                    generation: this.generation,
+                  }));
+                }
+                if (this.state === "REBASELINING") this.changedDuringBaseline = true;
+                else if (this.state === "HEALTHY") {
+                  this.generation += 1;
+                  this.emit();
+                }
+              });
+          '''
+          if old not in source:
+              raise SystemExit("tracker watcher diagnostic anchor not found")
+          tracker.write_text(source.replace(old, new, 1))
+
+          service = Path("packages/code-intelligence/src/service.ts")
+          source = service.read_text()
+          old = '''    const before = this.options.tracker.snapshot();
+              if (before.state !== "HEALTHY" || !before.revision) throw new Error(`code intelligence tracker is not healthy: ${before.state}`);
+              const revision = before.revision;
+          '''
+          new = '''    const before = this.options.tracker.snapshot();
+              if (process.env.ALCODE_P02_AUTHORITY_DIAG === "1") {
+                console.error("[p02-authority-query-before]", JSON.stringify({ request, before }));
+              }
+              if (before.state !== "HEALTHY" || !before.revision) throw new Error(`code intelligence tracker is not healthy: ${before.state}`);
+              const revision = before.revision;
+          '''
+          if old not in source:
+              raise SystemExit("service before diagnostic anchor not found")
+          source = source.replace(old, new, 1)
+          old = '''    const after = this.options.tracker.snapshot();
+              const current = after.state === "HEALTHY" && !!after.revision && sameRevision(revision, after.revision);
+          '''
+          new = '''    const after = this.options.tracker.snapshot();
+              if (process.env.ALCODE_P02_AUTHORITY_DIAG === "1") {
+                console.error("[p02-authority-query-after]", JSON.stringify({
+                  type: request.type,
+                  revision,
+                  after,
+                  providerComplete: result.complete,
+                  result: result.value,
+                }));
+              }
+              const current = after.state === "HEALTHY" && !!after.revision && sameRevision(revision, after.revision);
+          '''
+          if old not in source:
+              raise SystemExit("service after diagnostic anchor not found")
+          service.write_text(source.replace(old, new, 1))
+
+          planning = Path("packages/host-runtime/src/planning-read.ts")
+          source = planning.read_text()
+          old = '''      const actual = current.dependency;
+              if (actual.canonicalArgsDigest !== dependency.canonicalArgsDigest ||
+                  actual.canonicalResultDigest !== dependency.canonicalResultDigest ||
+                  actual.coverageIdentity !== dependency.coverageIdentity ||
+                  actual.providerBindingRevision !== dependency.providerBindingRevision) {
+          '''
+          new = '''      const actual = current.dependency;
+              if (process.env.ALCODE_P02_AUTHORITY_DIAG === "1") {
+                console.error("[p02-authority-recheck]", JSON.stringify({
+                  readContractId: dependency.readContractId,
+                  sealed: dependency,
+                  actual,
+                }));
+              }
+              if (actual.canonicalArgsDigest !== dependency.canonicalArgsDigest ||
+                  actual.canonicalResultDigest !== dependency.canonicalResultDigest ||
+                  actual.coverageIdentity !== dependency.coverageIdentity ||
+                  actual.providerBindingRevision !== dependency.providerBindingRevision) {
+          '''
+          if old not in source:
+              raise SystemExit("planning recheck diagnostic anchor not found")
+          planning.write_text(source.replace(old, new, 1))
+
+          creation = Path("packages/host-runtime/src/program-creation.ts")
+          source = creation.read_text()
+          old = '''        } catch (error) {
+                  if (error instanceof PlanningBaseStaleError) {
+                    throw new ProgramCreationStaleError(error.message);
+                  }
+                  throw error;
+                }
+          '''
+          new = '''        } catch (error) {
+                  if (process.env.ALCODE_P02_AUTHORITY_DIAG === "1") {
+                    console.error("[p02-authority-accept-recheck-error]", error instanceof Error ? `${error.name}: ${error.message}` : String(error));
+                  }
+                  if (error instanceof PlanningBaseStaleError) {
+                    throw new ProgramCreationStaleError(error.message);
+                  }
+                  throw error;
+                }
+          '''
+          if old not in source:
+              raise SystemExit("program creation diagnostic anchor not found")
+          creation.write_text(source.replace(old, new, 1))
+          PY
+
+      - name: Run P-02 product stale diagnostic
+        env:
+          ALCODE_P02_AUTHORITY_DIAG: "1"
+        run: pnpm exec vitest run packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts --reporter=verbose
