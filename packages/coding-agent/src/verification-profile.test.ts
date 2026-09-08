@@ -62,6 +62,11 @@ describe("P-02 default verifier profile", () => {
     const spec = profile.operationSpecs.resolve(COMMAND_EXIT_ZERO_SPEC_ID, 1);
     expect(spec.capabilityName).toBe("bash");
     expect(spec.workspaceAccessClass).toBe("may_write");
+    expect(spec.operationCompletionSemantics).toBeUndefined();
+    for (const typedSpecId of [PACKAGE_TYPECHECK_SPEC_ID, PACKAGE_LINT_SPEC_ID, TARGETED_PACKAGE_TEST_SPEC_ID]) {
+      expect(profile.operationSpecs.resolve(typedSpecId, 1).operationCompletionSemantics)
+        .toBe("numeric_exit_is_completed");
+    }
     expect(spec.isSuccessful({ outcome: "succeeded", result: { details: { exitCode: 0 } } })).toBe(true);
     expect(spec.isSuccessful({ outcome: "succeeded", result: { details: { exitCode: 1 } } })).toBe(false);
     const catalog = profile.verifierCatalog.catalog();

@@ -45,6 +45,8 @@ export interface HostVerificationOperationSpecV1 {
   specVersion: number;
   capabilityName: string;
   workspaceAccessClass: WorkspaceAccessClassV1;
+  /** A numeric process exit completed the measurement; the Host predicate still decides satisfaction. */
+  operationCompletionSemantics?: "numeric_exit_is_completed";
   isSuccessful(result: CapabilityBrokerResult): boolean;
   extractOutput?(result: CapabilityBrokerResult, outputChannel: string): Uint8Array | string | undefined;
 }
@@ -312,6 +314,9 @@ export class ProgramVerificationServiceV1 {
       args: prepared.args,
       program: prepared.attempt,
       programVerificationInvocation: invocation,
+      ...(prepared.spec.operationCompletionSemantics !== undefined
+        ? { programVerificationOperationCompletionSemantics: prepared.spec.operationCompletionSemantics }
+        : {}),
     });
     const operationId = result.operationId ? String(result.operationId) : undefined;
     if (result.outcome !== "succeeded" || operationId === undefined || !prepared.spec.isSuccessful(result)) {

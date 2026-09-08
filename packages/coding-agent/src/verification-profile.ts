@@ -114,11 +114,15 @@ export function createDefaultProgramVerifierConfiguration(options: {
     workspaceAccessClass: "may_write" as const,
     isSuccessful: (result: CapabilityBrokerResult) => result.outcome === "succeeded" && brokerExitCode(result) === 0,
   };
+  const numericExitVerifier = {
+    ...exitZero,
+    operationCompletionSemantics: "numeric_exit_is_completed" as const,
+  };
   const operationSpecs = new HostVerificationOperationRegistryV1([
     { specId: COMMAND_EXIT_ZERO_SPEC_ID, specVersion: COMMAND_EXIT_ZERO_SPEC_VERSION, ...exitZero },
-    { specId: PACKAGE_TYPECHECK_SPEC_ID, specVersion: PACKAGE_TYPECHECK_SPEC_VERSION, ...exitZero },
-    { specId: PACKAGE_LINT_SPEC_ID, specVersion: PACKAGE_LINT_SPEC_VERSION, ...exitZero },
-    { specId: TARGETED_PACKAGE_TEST_SPEC_ID, specVersion: TARGETED_PACKAGE_TEST_SPEC_VERSION, ...exitZero },
+    { specId: PACKAGE_TYPECHECK_SPEC_ID, specVersion: PACKAGE_TYPECHECK_SPEC_VERSION, ...numericExitVerifier },
+    { specId: PACKAGE_LINT_SPEC_ID, specVersion: PACKAGE_LINT_SPEC_VERSION, ...numericExitVerifier },
+    { specId: TARGETED_PACKAGE_TEST_SPEC_ID, specVersion: TARGETED_PACKAGE_TEST_SPEC_VERSION, ...numericExitVerifier },
   ]);
 
   const verifierCatalog = new HostProgramVerifierCatalogV1([
