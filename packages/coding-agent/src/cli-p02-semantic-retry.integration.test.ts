@@ -1,4 +1,3 @@
-// Temporary P-02 diagnostic trigger; remove with diagnostic workflow cleanup.
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
 import {
