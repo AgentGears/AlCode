@@ -63,12 +63,22 @@ jobs:
               raise SystemExit("progressFailure anchor not found")
           runtime.write_text(source.replace(anchor, helper, 1))
           PY
-      - name: Add bounded product diagnostics
+      - name: Canonicalize macOS fixture path and add bounded diagnostics
         run: |
           python - <<'PY'
           from pathlib import Path
           test = Path("packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts")
           source = test.read_text()
+          source = source.replace(
+              "  readFileSync,\n  rmSync,",
+              "  readFileSync,\n  realpathSync,\n  rmSync,",
+              1,
+          )
+          source = source.replace(
+              '  const root = mkdtempSync(join(tmpdir(), "alcode-p02-product-workspace-"));',
+              '  const root = realpathSync(mkdtempSync(join(tmpdir(), "alcode-p02-product-workspace-")));',
+              1,
+          )
           anchor = '    const trace = diagnosticTrace(events).map((entry) => JSON.stringify(entry)).join("\\n");\n'
           diagnostic = anchor + '''    process.stderr.write(`\\n[P02-MAC-STDERR]\\n${result.stderr ?? ""}`);
               process.stderr.write(`\\n[P02-MAC-STDOUT]\\n${result.stdout ?? ""}`);
