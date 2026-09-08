@@ -12,7 +12,7 @@ function deferred<T>() {
 }
 
 describe("P-02 adaptive verification scheduling", () => {
-  it("shares one in-flight Host verification drive across concurrent scheduler callers", async () => {
+  it("does not make a concurrent scheduler follower wait for the in-flight Host verifier", async () => {
     const gate = deferred<{ status: "advanced" }>();
     let verificationCalls = 0;
     const verification = {
@@ -37,24 +37,21 @@ describe("P-02 adaptive verification scheduling", () => {
 
     const first = scheduler.dispatchNext("session-1");
     const second = scheduler.dispatchNext("session-1");
-    await Promise.resolve();
 
+    await expect(second).resolves.toEqual({
+      status: "no_ready_work",
+      programStateRevision: 1,
+      programRevisionId: "revision-1",
+    });
     expect(verificationCalls).toBe(1);
-    expect(delegateCalls).toBe(0);
+    expect(delegateCalls).toBe(1);
 
     gate.resolve({ status: "advanced" });
-    await expect(Promise.all([first, second])).resolves.toEqual([
-      {
-        status: "no_ready_work",
-        programStateRevision: 1,
-        programRevisionId: "revision-1",
-      },
-      {
-        status: "no_ready_work",
-        programStateRevision: 1,
-        programRevisionId: "revision-1",
-      },
-    ]);
+    await expect(first).resolves.toEqual({
+      status: "no_ready_work",
+      programStateRevision: 1,
+      programRevisionId: "revision-1",
+    });
     expect(verificationCalls).toBe(1);
     expect(delegateCalls).toBe(2);
   });

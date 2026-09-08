@@ -242,7 +242,8 @@ function requireOperationSafety(
     throw new ProgramVerificationControlError("Host verification operation is not terminal-successful");
   }
   if (expectedAccess === "may_write") {
-    if (!hasQuiescence(events, operationId) || operation.effectStatus !== "confirmed" ||
+    if (!hasQuiescence(events, operationId) ||
+        (operation.effectStatus !== "confirmed" && operation.effectStatus !== "absent") ||
         (operation.reconciliationStatus !== "not_required" && operation.reconciliationStatus !== "resolved")) {
       throw new ProgramVerificationControlError("Mutating Host verification operation is not quiescent/effect-certain");
     }

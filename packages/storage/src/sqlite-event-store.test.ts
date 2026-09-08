@@ -89,6 +89,28 @@ describeLocked("SqliteEventStore — basic operations", () => {
     expect(seqs).toEqual([2, 3]);
   });
 
+  it("replay releases SQLite query ownership before each async yield", async () => {
+    await store.append([makeDraft(), makeDraft()]);
+    const iterator = store.replay()[Symbol.asyncIterator]();
+    const first = await iterator.next();
+    if (first.done) throw new Error("Expected replay to yield the first persisted event");
+    expect(first.value.sequence).toBe(1);
+
+    // The replay iterator is suspended here. Canonical writes on the same
+    // Host connection must remain legal, and the in-flight replay must retain
+    // its original head rather than absorbing later appends.
+    const [appended] = await store.append([makeDraft()]);
+    expect(appended.sequence).toBe(3);
+
+    const remaining: number[] = [];
+    for (;;) {
+      const next = await iterator.next();
+      if (next.done) break;
+      remaining.push(next.value.sequence);
+    }
+    expect(remaining).toEqual([2]);
+  });
+
   it("headSequence returns 0 for empty store", async () => { expect(await store.headSequence()).toBe(0); });
 
   it("append rejects non-canonical payloads", async () => {

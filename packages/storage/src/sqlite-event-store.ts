@@ -436,12 +436,33 @@ class SqliteEventStoreImpl implements WorkspaceEventStore {
   }
 
   async *replay(fromSequence?: number, toSequence?: number): AsyncIterable<PersistedDomainEvent<string, unknown>> {
-    const start = fromSequence === undefined ? 1 : fromSequence + 1;
-    const end = toSequence === undefined ? Number.MAX_SAFE_INTEGER : toSequence;
-    for (const row of this.db.prepare(
-      "SELECT * FROM events WHERE sequence >= ? AND sequence <= ? ORDER BY sequence",
-    ).iterate(start, end) as Iterable<EventRow>) {
-      yield verifyEventRow(row, this.workspaceId);
+    // Never suspend an async generator while a better-sqlite3 iterator is live.
+    // A suspended SQLite iterator marks the shared connection busy, which can
+    // make an unrelated Host transaction fail while replay consumers yield to
+    // other protocol work. Materialize bounded batches and freeze the replay
+    // head at iterator start so no SQLite statement remains active across a
+    // JavaScript async suspension and replay retains snapshot semantics.
+    const startAfter = fromSequence ?? 0;
+    const headRow = this.db.prepare(
+      "SELECT MAX(sequence) as max_seq FROM events",
+    ).get() as { max_seq: number | null } | undefined;
+    const snapshotHead = headRow?.max_seq ?? 0;
+    const end = Math.min(toSequence ?? snapshotHead, snapshotHead);
+    if (startAfter >= end) return;
+
+    const statement = this.db.prepare(
+      "SELECT * FROM events WHERE sequence > ? AND sequence <= ? ORDER BY sequence LIMIT ?",
+    );
+    const batchSize = 1000;
+    let cursor = startAfter;
+    while (cursor < end) {
+      const rows = statement.all(cursor, end, batchSize) as EventRow[];
+      if (rows.length === 0) return;
+      for (const row of rows) {
+        const event = verifyEventRow(row, this.workspaceId);
+        cursor = row.sequence;
+        yield event;
+      }
     }
   }
 

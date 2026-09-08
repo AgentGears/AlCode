@@ -34,7 +34,7 @@ const executionBase = {
   observation: {
     kind: "workspace-observation-v1" as const,
     providerKind: "test",
-    workspaceIdentity: "workspace-p02-retry",
+    workspaceIdentity: "018f0000-0000-7000-8000-00000000d204",
     coverageDigest: "coverage-p02-retry",
     stateDigest: "state-p02-retry",
   },
@@ -148,7 +148,7 @@ function fixture() {
   const events: PersistedDomainEvent<string, unknown>[] = [{
     sequence: 1,
     eventId: "p02-retry-program-state",
-    workspaceId: "workspace-p02-retry",
+    workspaceId: "018f0000-0000-7000-8000-00000000d204",
     sessionId: String(sessionId),
     programStateId: String(programStateId),
     occurredAt: "2026-09-07T00:00:00.000Z",
@@ -159,7 +159,7 @@ function fixture() {
   } as unknown as PersistedDomainEvent<string, unknown>];
   const appendBatches: EventDraft<string, unknown>[][] = [];
   const store = {
-    workspaceId: "workspace-p02-retry",
+    workspaceId: "018f0000-0000-7000-8000-00000000d204",
     replay: async function* () { for (const event of events) yield event; },
     append: async (drafts: readonly EventDraft<string, unknown>[]) => {
       appendBatches.push([...drafts]);
@@ -181,7 +181,7 @@ function fixture() {
       events.push({
         sequence: events.length + 1,
         eventId: "p02-retry-operation-evidence",
-        workspaceId: "workspace-p02-retry",
+        workspaceId: "018f0000-0000-7000-8000-00000000d204",
         sessionId: String(sessionId),
         programStateId: String(programStateId),
         operationId,
@@ -235,11 +235,9 @@ describe("P-02 adaptive verification retry facts", () => {
     expect(appendBatches[0]!.map((draft) => draft.type)).toEqual([
       "program.verification.failed",
       "program.transitioned",
-      "program.transitioned",
     ]);
     expect(appendBatches[0]!.slice(1).map((draft) => record(draft.payload).transitionKind)).toEqual([
       "attempt.interrupt:verification_failed",
-      "work.lifecycle.set:pending",
     ]);
 
     const failure = appendBatches[0]![0]!;

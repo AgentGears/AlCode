@@ -295,8 +295,9 @@ describe("P-02 semantic planning + typed verification product vertical", () => {
 
     const verificationRequests = events.filter((event) => {
       if (event.type !== "operation.requested") return false;
-      const invocation = record(record(event.payload).programVerificationInvocation);
-      return invocation.specId === "package_typecheck";
+      const invocation = record(event.payload).programVerificationInvocation;
+      if (typeof invocation !== "object" || invocation === null || Array.isArray(invocation)) return false;
+      return record(invocation).specId === "package_typecheck";
     });
     expect(verificationRequests.length).toBeGreaterThanOrEqual(2);
     expect(events.some((event) => event.type === "program.completed")).toBe(true);
