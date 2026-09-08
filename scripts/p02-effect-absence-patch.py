@@ -260,3 +260,58 @@ inserted = '''  it("interrupts awaiting-verification work back to pending for fr
 if marker not in source:
     raise SystemExit("program-state awaiting-verification regression insertion point not found")
 state_tests.write_text(source.replace(marker, inserted + marker, 1))
+
+# Temporary process-lifecycle diagnostics. This file is not staged by the patch workflow.
+bash_tool = Path("packages/coding-agent/src/tools/bash.ts")
+source = bash_tool.read_text()
+source = replace_once(
+    source,
+    '''        let stdoutBuf = Buffer.alloc(0);''',
+    '''        console.error(`[p02-bash] launched pid=${String(child.pid)} command=${input.command}`);
+        child.on("spawn", () => console.error(`[p02-bash] spawn pid=${String(child.pid)}`));
+        child.on("exit", (code, signalName) => console.error(`[p02-bash] exit pid=${String(child.pid)} code=${String(code)} signal=${String(signalName)}`));
+
+        let stdoutBuf = Buffer.alloc(0);''',
+    "bash lifecycle launch",
+)
+source = replace_once(
+    source,
+    '''        const timer = setTimeout(() => {
+          timedOut = true;
+          killChild(child);
+        }, timeoutMs);''',
+    '''        const timer = setTimeout(() => {
+          timedOut = true;
+          console.error(`[p02-bash] timeout pid=${String(child.pid)} after=${timeoutMs}`);
+          killChild(child);
+        }, timeoutMs);''',
+    "bash lifecycle timeout",
+)
+source = replace_once(
+    source,
+    '''        child.stdout?.on("data", (chunk: Buffer) => {
+          if (stdoutBuf.length + chunk.length > MAX_OUTPUT_BYTES) {''',
+    '''        child.stdout?.on("data", (chunk: Buffer) => {
+          console.error(`[p02-bash] stdout pid=${String(child.pid)} ${chunk.toString("utf8").trim()}`);
+          if (stdoutBuf.length + chunk.length > MAX_OUTPUT_BYTES) {''',
+    "bash stdout diagnostic",
+)
+source = replace_once(
+    source,
+    '''        child.stderr?.on("data", (chunk: Buffer) => {
+          if (stderrBuf.length + chunk.length > MAX_OUTPUT_BYTES) {''',
+    '''        child.stderr?.on("data", (chunk: Buffer) => {
+          console.error(`[p02-bash] stderr pid=${String(child.pid)} ${chunk.toString("utf8").trim()}`);
+          if (stderrBuf.length + chunk.length > MAX_OUTPUT_BYTES) {''',
+    "bash stderr diagnostic",
+)
+source = replace_once(
+    source,
+    '''        child.on("close", (exitCode) => {
+          if (settled) return;''',
+    '''        child.on("close", (exitCode) => {
+          console.error(`[p02-bash] close pid=${String(child.pid)} code=${String(exitCode)}`);
+          if (settled) return;''',
+    "bash close diagnostic",
+)
+bash_tool.write_text(source)
