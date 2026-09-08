@@ -32,7 +32,7 @@ jobs:
         run: |
           if [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; then exit 0; fi
           pnpm exec vitest run packages/host-runtime/src/program-verification.test.ts packages/coding-agent/src/verification-profile.test.ts packages/program-state/src/program-state.test.ts --reporter=verbose
-      - name: Pinpoint operations projection stall
+      - name: Identify verifier projection catch-up callers
         run: |
           if [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; then exit 0; fi
           python - <<'PY'
@@ -49,7 +49,7 @@ jobs:
           broker = Path("packages/host-runtime/src/capability-broker.ts")
           source = broker.read_text()
           old = """    this.catchUpBarriers();\n\n    let execution: HostCapabilityResult;"""
-          new = """    console.error(`[p02-broker] before-catchup operation=${String(operationId)} tool=${request.toolName}`);\n    this.catchUpBarriers();\n    console.error(`[p02-broker] after-catchup operation=${String(operationId)} tool=${request.toolName}`);\n\n    let execution: HostCapabilityResult;"""
+          new = """    console.error(`[p02-broker pid=${process.pid}] before-catchup operation=${String(operationId)} tool=${request.toolName}`);\n    this.catchUpBarriers();\n    console.error(`[p02-broker pid=${process.pid}] after-catchup operation=${String(operationId)} tool=${request.toolName}`);\n\n    let execution: HostCapabilityResult;"""
           if old not in source:
               raise SystemExit("capability broker catch-up diagnostic anchor not found")
           broker.write_text(source.replace(old, new, 1))
@@ -57,24 +57,24 @@ jobs:
           projection = Path("packages/storage/src/projection.ts")
           source = projection.read_text()
           old = """    let cursor = this.getCursor(projection.name);"""
-          new = """    if (projection.name === \"operations\") console.error(`[p02-proj] before-get-cursor`);\n    let cursor = this.getCursor(projection.name);\n    if (projection.name === \"operations\") console.error(`[p02-proj] after-get-cursor seq=${cursor.lastAppliedEventSequence}`);"""
+          new = """    if (projection.name === \"operations\") console.error(`[p02-proj-start pid=${process.pid}] ${new Error(\"operations.catchUp\").stack}`);\n    let cursor = this.getCursor(projection.name);\n    if (projection.name === \"operations\") console.error(`[p02-proj pid=${process.pid}] cursor=${cursor.lastAppliedEventSequence}`);"""
           if old not in source: raise SystemExit("cursor anchor not found")
           source = source.replace(old, new, 1)
           old = """    const headRow = this.db.prepare(\"SELECT MAX(sequence) as max_seq FROM events\").get() as { max_seq: number | null } | undefined;"""
-          new = """    if (projection.name === \"operations\") console.error(`[p02-proj] before-head`);\n    const headRow = this.db.prepare(\"SELECT MAX(sequence) as max_seq FROM events\").get() as { max_seq: number | null } | undefined;\n    if (projection.name === \"operations\") console.error(`[p02-proj] after-head max=${String(headRow?.max_seq ?? 0)}`);"""
+          new = """    const headRow = this.db.prepare(\"SELECT MAX(sequence) as max_seq FROM events\").get() as { max_seq: number | null } | undefined;\n    if (projection.name === \"operations\") console.error(`[p02-proj pid=${process.pid}] head=${String(headRow?.max_seq ?? 0)}`);"""
           if old not in source: raise SystemExit("head anchor not found")
           source = source.replace(old, new, 1)
           old = """    const events = this.verifiedReads(cursor.lastAppliedEventSequence, limit);"""
-          new = """    if (projection.name === \"operations\") console.error(`[p02-proj] before-verified-reads from=${cursor.lastAppliedEventSequence}`);\n    const events = this.verifiedReads(cursor.lastAppliedEventSequence, limit);\n    if (projection.name === \"operations\") console.error(`[p02-proj] after-verified-reads count=${events.length}`);"""
+          new = """    const events = this.verifiedReads(cursor.lastAppliedEventSequence, limit);\n    if (projection.name === \"operations\") console.error(`[p02-proj pid=${process.pid}] events=${events.length}`);"""
           if old not in source: raise SystemExit("reads anchor not found")
           source = source.replace(old, new, 1)
-          old = """    const statements = compileStatements(this.db, projection.statements);"""
-          new = """    if (projection.name === \"operations\") console.error(`[p02-proj] before-compile`);\n    const statements = compileStatements(this.db, projection.statements);\n    if (projection.name === \"operations\") console.error(`[p02-proj] after-compile`);"""
-          if old not in source: raise SystemExit("compile anchor not found")
-          source = source.replace(old, new, 1)
-          old = """      this.db.transaction(() => {\n        const { tx, invalidate } = createTransaction(this.db, statements);\n        try { projection.apply(event, tx); } finally { invalidate(); }\n        this.db.prepare(\n          `INSERT INTO projection_cursors (projection_name, last_applied_event_sequence, projection_schema_version, classification)\n           VALUES (?, ?, ?, ?)\n           ON CONFLICT(projection_name) DO UPDATE SET\n             last_applied_event_sequence = excluded.last_applied_event_sequence,\n             projection_schema_version = excluded.projection_schema_version,\n             classification = excluded.classification`,\n        ).run(projection.name, seq, projection.schemaVersion, projection.classification);\n      })();"""
-          new = """      if (projection.name === \"operations\") console.error(`[p02-proj] event seq=${seq} type=${event.type} before-transaction`);\n      this.db.transaction(() => {\n        if (projection.name === \"operations\") console.error(`[p02-proj] event seq=${seq} entered-transaction`);\n        const { tx, invalidate } = createTransaction(this.db, statements);\n        if (projection.name === \"operations\") console.error(`[p02-proj] event seq=${seq} before-apply`);\n        try { projection.apply(event, tx); } finally { invalidate(); }\n        if (projection.name === \"operations\") console.error(`[p02-proj] event seq=${seq} after-apply before-cursor`);\n        this.db.prepare(\n          `INSERT INTO projection_cursors (projection_name, last_applied_event_sequence, projection_schema_version, classification)\n           VALUES (?, ?, ?, ?)\n           ON CONFLICT(projection_name) DO UPDATE SET\n             last_applied_event_sequence = excluded.last_applied_event_sequence,\n             projection_schema_version = excluded.projection_schema_version,\n             classification = excluded.classification`,\n        ).run(projection.name, seq, projection.schemaVersion, projection.classification);\n        if (projection.name === \"operations\") console.error(`[p02-proj] event seq=${seq} after-cursor`);\n      })();\n      if (projection.name === \"operations\") console.error(`[p02-proj] event seq=${seq} after-transaction`);"""
+          old = """      this.db.transaction(() => {\n        const { tx, invalidate } = createTransaction(this.db, statements);"""
+          new = """      if (projection.name === \"operations\") console.error(`[p02-proj pid=${process.pid}] seq=${seq} type=${event.type} before-tx`);\n      this.db.transaction(() => {\n        if (projection.name === \"operations\") console.error(`[p02-proj pid=${process.pid}] seq=${seq} entered-tx`);\n        const { tx, invalidate } = createTransaction(this.db, statements);"""
           if old not in source: raise SystemExit("transaction anchor not found")
+          source = source.replace(old, new, 1)
+          old = """      })();\n      cursor = {"""
+          new = """      })();\n      if (projection.name === \"operations\") console.error(`[p02-proj pid=${process.pid}] seq=${seq} after-tx`);\n      cursor = {"""
+          if old not in source: raise SystemExit("after transaction anchor not found")
           projection.write_text(source.replace(old, new, 1))
           PY
       - name: Run P-02 product vertical
