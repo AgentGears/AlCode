@@ -24,68 +24,28 @@ jobs:
           node-version: 22.17.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Apply P-02 verifier and recovery corrections
+      - name: Apply P-02 verifier, recovery, and replay corrections
         run: |
           if [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; then exit 0; fi
           python scripts/p02-effect-absence-patch.py
+          python scripts/p02-replay-cursor-fix.py
+      - name: Run replay liveness regression
+        run: |
+          if [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; then exit 0; fi
+          pnpm exec vitest run packages/storage/src/sqlite-event-store.test.ts -t "replay releases SQLite query ownership before each async yield" --reporter=verbose
       - name: Run focused verifier and recovery regressions
         run: |
           if [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; then exit 0; fi
           pnpm exec vitest run packages/host-runtime/src/program-verification.test.ts packages/coding-agent/src/verification-profile.test.ts packages/program-state/src/program-state.test.ts --reporter=verbose
-      - name: Identify verifier projection catch-up callers
-        run: |
-          if [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; then exit 0; fi
-          python - <<'PY'
-          from pathlib import Path
-
-          test = Path("packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts")
-          source = test.read_text().replace("      timeout: 20_000,", "      timeout: 10_000,", 1)
-          anchor = "    const events = await replay(home, root);"
-          replacement = "    process.stderr.write(result.stderr ?? \"\");\n    process.stdout.write(result.stdout ?? \"\");\n" + anchor
-          if anchor not in source:
-              raise SystemExit("P-02 product diagnostic anchor not found")
-          test.write_text(source.replace(anchor, replacement, 1))
-
-          broker = Path("packages/host-runtime/src/capability-broker.ts")
-          source = broker.read_text()
-          old = """    this.catchUpBarriers();\n\n    let execution: HostCapabilityResult;"""
-          new = """    console.error(`[p02-broker pid=${process.pid}] before-catchup operation=${String(operationId)} tool=${request.toolName}`);\n    this.catchUpBarriers();\n    console.error(`[p02-broker pid=${process.pid}] after-catchup operation=${String(operationId)} tool=${request.toolName}`);\n\n    let execution: HostCapabilityResult;"""
-          if old not in source:
-              raise SystemExit("capability broker catch-up diagnostic anchor not found")
-          broker.write_text(source.replace(old, new, 1))
-
-          projection = Path("packages/storage/src/projection.ts")
-          source = projection.read_text()
-          old = """    let cursor = this.getCursor(projection.name);"""
-          new = """    if (projection.name === \"operations\") console.error(`[p02-proj-start pid=${process.pid}] ${new Error(\"operations.catchUp\").stack}`);\n    let cursor = this.getCursor(projection.name);\n    if (projection.name === \"operations\") console.error(`[p02-proj pid=${process.pid}] cursor=${cursor.lastAppliedEventSequence}`);"""
-          if old not in source: raise SystemExit("cursor anchor not found")
-          source = source.replace(old, new, 1)
-          old = """    const headRow = this.db.prepare(\"SELECT MAX(sequence) as max_seq FROM events\").get() as { max_seq: number | null } | undefined;"""
-          new = """    const headRow = this.db.prepare(\"SELECT MAX(sequence) as max_seq FROM events\").get() as { max_seq: number | null } | undefined;\n    if (projection.name === \"operations\") console.error(`[p02-proj pid=${process.pid}] head=${String(headRow?.max_seq ?? 0)}`);"""
-          if old not in source: raise SystemExit("head anchor not found")
-          source = source.replace(old, new, 1)
-          old = """    const events = this.verifiedReads(cursor.lastAppliedEventSequence, limit);"""
-          new = """    const events = this.verifiedReads(cursor.lastAppliedEventSequence, limit);\n    if (projection.name === \"operations\") console.error(`[p02-proj pid=${process.pid}] events=${events.length}`);"""
-          if old not in source: raise SystemExit("reads anchor not found")
-          source = source.replace(old, new, 1)
-          old = """      this.db.transaction(() => {\n        const { tx, invalidate } = createTransaction(this.db, statements);"""
-          new = """      if (projection.name === \"operations\") console.error(`[p02-proj pid=${process.pid}] seq=${seq} type=${event.type} before-tx`);\n      this.db.transaction(() => {\n        if (projection.name === \"operations\") console.error(`[p02-proj pid=${process.pid}] seq=${seq} entered-tx`);\n        const { tx, invalidate } = createTransaction(this.db, statements);"""
-          if old not in source: raise SystemExit("transaction anchor not found")
-          source = source.replace(old, new, 1)
-          old = """      })();\n      cursor = {"""
-          new = """      })();\n      if (projection.name === \"operations\") console.error(`[p02-proj pid=${process.pid}] seq=${seq} after-tx`);\n      cursor = {"""
-          if old not in source: raise SystemExit("after transaction anchor not found")
-          projection.write_text(source.replace(old, new, 1))
-          PY
       - name: Run P-02 product vertical
         run: |
           if [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; then exit 0; fi
           pnpm exec vitest run packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts --reporter=verbose
-      - name: Commit verified P-02 verifier and recovery corrections
+      - name: Commit verified P-02 verifier, recovery, and replay corrections
         run: |
           if [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; then exit 0; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add packages/host-runtime/src/program-dispatch.ts packages/host-runtime/src/program-verification.ts packages/host-runtime/src/program-verification.test.ts packages/program-state/src/reducer-core.ts packages/program-state/src/program-state.test.ts
-          git commit -m "fix(p02): preserve verifier and replacement authority"
+          git add packages/host-runtime/src/program-dispatch.ts packages/host-runtime/src/program-verification.ts packages/host-runtime/src/program-verification.test.ts packages/program-state/src/reducer-core.ts packages/program-state/src/program-state.test.ts packages/storage/src/sqlite-event-store.ts packages/storage/src/sqlite-event-store.test.ts
+          git commit -m "fix(p02): preserve verifier and replay authority"
           git push origin HEAD:feat/p02-semantic-planning-v1
