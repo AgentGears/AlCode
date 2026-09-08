@@ -28,6 +28,7 @@ jobs:
       - name: Apply candidate authority corrections
         run: |
           python scripts/p02-semantic-authority-review-closure.py
+          python scripts/p02-semantic-symbol-cache-correction.py
           python scripts/p02-semantic-authority-host-bridge.py
 
       - name: Add bounded stale-recheck diagnostics
@@ -81,18 +82,6 @@ jobs:
               'planning recheck diagnostic',
           )
           planning.write_text(source)
-
-          creation = Path("packages/host-runtime/src/program-creation.ts")
-          source = creation.read_text()
-          source = replace_once(
-              source,
-              '        } catch (error) {\n          if (error instanceof PlanningBaseStaleError) {\n',
-              '        } catch (error) {\n'
-              '          if (process.env.ALCODE_P02_AUTHORITY_DIAG === "1") console.error("[p02-authority-accept-recheck-error]", error instanceof Error ? `${error.name}: ${error.message}` : String(error));\n'
-              '          if (error instanceof PlanningBaseStaleError) {\n',
-              'program creation diagnostic',
-          )
-          creation.write_text(source)
           PY
 
       - name: Run P-02 product stale diagnostic
