@@ -232,14 +232,15 @@ describe("P-02 semantic planning + typed verification product vertical", () => {
         ALCODE_PLANNING_SCRIPT: planningScript,
       },
       encoding: "utf8",
-      timeout: 120_000,
+      timeout: 20_000,
     });
 
     const events = await replay(home, root);
-    expect(result.error).toBeUndefined();
+    const trace = diagnosticTrace(events).map((entry) => JSON.stringify(entry)).join("\n");
+    expect(result.error, `${result.stderr}\n${result.stdout}\nDurable trace:\n${trace}`).toBeUndefined();
     expect(
       result.status,
-      `${result.stderr}\n${result.stdout}\nDurable trace:\n${diagnosticTrace(events).map((entry) => JSON.stringify(entry)).join("\n")}`,
+      `${result.stderr}\n${result.stdout}\nDurable trace:\n${trace}`,
     ).toBe(0);
     expect(readFileSync(join(root, valuePath), "utf8")).toBe(correctedValue);
     expect(result.stdout).toContain("Corrected the value after the Host typecheck failure.");
