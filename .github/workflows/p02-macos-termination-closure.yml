@@ -6,10 +6,10 @@ name: P-02 macOS termination closure
       - feat/p02-semantic-planning-v1
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  close-macos-termination:
+  diagnose-macos-retry:
     if: github.actor != 'github-actions[bot]'
     runs-on: macos-latest
     steps:
@@ -62,53 +62,32 @@ jobs:
           if anchor not in source:
               raise SystemExit("progressFailure anchor not found")
           runtime.write_text(source.replace(anchor, helper, 1))
-
-          test = Path("packages/host-runtime/src/program-execution-runtime-v2.test.ts")
-          text = test.read_text()
-          text = text.replace(
-              'expect(source).toContain("connection.terminate();");',
-              'expect(source).toContain("terminateAgentBestEffort(connection);");',
+          PY
+      - name: Add bounded product diagnostics
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          test = Path("packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts")
+          source = test.read_text()
+          anchor = '    const trace = diagnosticTrace(events).map((entry) => JSON.stringify(entry)).join("\\n");\n'
+          diagnostic = anchor + '''    process.stderr.write(`\\n[P02-MAC-STDERR]\\n${result.stderr ?? ""}`);
+              process.stderr.write(`\\n[P02-MAC-STDOUT]\\n${result.stdout ?? ""}`);
+              process.stderr.write(`\\n[P02-MAC-TRACE]\\n${trace}\\n`);
+          '''
+          if anchor not in source:
+              raise SystemExit("trace anchor not found")
+          source = source.replace(anchor, diagnostic, 1)
+          source = source.replace(
+              '    expect(sealed).toBeDefined();',
+              '    expect(sealed, `sealed draft missing\\nDurable trace:\\n${trace}`).toBeDefined();',
               1,
           )
-          old = '''    const finalizer = source.indexOf("finally {\\n      connection.terminate();\\n    }", helper);
-          '''
-          new = '''    const finalizer = source.indexOf("finally {\\n      terminateAgentBestEffort(connection);\\n    }", helper);
-          '''
-          if old not in text:
-              raise SystemExit("terminal finalizer test anchor not found")
-          text = text.replace(old, new, 1)
-          insertion = '''
-            it("contains OS process-signalling failures inside adaptive fire-and-forget callbacks", () => {
-              const helper = source.indexOf("function terminateAgentBestEffort(connection: AgentConnection): void");
-              const signal = source.indexOf("connection.terminate();", helper);
-              const catcher = source.indexOf("} catch {", signal);
-              expect(helper).toBeGreaterThan(-1);
-              expect(signal).toBeGreaterThan(helper);
-              expect(catcher).toBeGreaterThan(signal);
-              expect(source.match(/terminateAgentBestEffort\\(connection\\);/g)?.length).toBeGreaterThanOrEqual(3);
-              expect(source).toContain("failures must not escape the Host callback");
-            });
-          '''
-          marker = '''  it("cleans adaptive generation state on displacement, explicit detach, and process exit", () => {
-          '''
-          if marker not in text:
-              raise SystemExit("adaptive cleanup test marker not found")
-          test.write_text(text.replace(marker, insertion + "\n" + marker, 1))
+          source = source.replace(
+              '    expect(failure).toBeDefined();',
+              '    expect(failure, `verification failure fact missing\\nDurable trace:\\n${trace}`).toBeDefined();',
+              1,
+          )
+          test.write_text(source)
           PY
-      - name: Typecheck Host runtime
-        run: pnpm --filter @alcode/host-runtime typecheck
-      - name: Run focused adaptive runtime regression
-        run: pnpm exec vitest run packages/host-runtime/src/program-execution-runtime-v2.test.ts --reporter=verbose
-      - name: Re-run failing macOS Phase 0.1B gate
-        run: pnpm gate:0.1B
-      - name: Commit verified macOS termination correction
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add \
-            packages/host-runtime/src/program-execution-runtime-v2.ts \
-            packages/host-runtime/src/program-execution-runtime-v2.test.ts
-          git rm .github/workflows/p02-macos-termination-closure.yml
-          git diff --cached --check
-          git commit -m "fix(p02): contain adaptive Agent termination races"
-          git push origin HEAD:feat/p02-semantic-planning-v1
+      - name: Run macOS P-02 product diagnostic
+        run: pnpm exec vitest run packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts --reporter=verbose
