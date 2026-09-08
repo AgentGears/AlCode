@@ -43,17 +43,21 @@ jobs:
           if anchor not in source:
               raise SystemExit("P-02 product diagnostic anchor not found")
           source = source.replace(anchor, replacement, 1)
-          old = '''    const verificationRequests = events.filter((event) => {
-      if (event.type !== "operation.requested") return false;
-      const invocation = record(record(event.payload).programVerificationInvocation);
-      return invocation.specId === "package_typecheck";
-    });'''
-          new = '''    const verificationRequests = events.filter((event) => {
-      if (event.type !== "operation.requested") return false;
-      const invocation = record(event.payload).programVerificationInvocation;
-      if (typeof invocation !== "object" || invocation === null || Array.isArray(invocation)) return false;
-      return record(invocation).specId === "package_typecheck";
-    });'''
+          old = "\n".join([
+              "    const verificationRequests = events.filter((event) => {",
+              "      if (event.type !== \"operation.requested\") return false;",
+              "      const invocation = record(record(event.payload).programVerificationInvocation);",
+              "      return invocation.specId === \"package_typecheck\";",
+              "    });",
+          ])
+          new = "\n".join([
+              "    const verificationRequests = events.filter((event) => {",
+              "      if (event.type !== \"operation.requested\") return false;",
+              "      const invocation = record(event.payload).programVerificationInvocation;",
+              "      if (typeof invocation !== \"object\" || invocation === null || Array.isArray(invocation)) return false;",
+              "      return record(invocation).specId === \"package_typecheck\";",
+              "    });",
+          ])
           if old not in source:
               raise SystemExit("P-02 verification request filter anchor not found")
           test.write_text(source.replace(old, new, 1))
