@@ -30,7 +30,7 @@ jobs:
       - name: Apply replay cursor correction
         run: python scripts/p02-replay-cursor-fix.py
       - name: Run replay cursor regression
-        run: pnpm exec vitest run packages/storage/src/sqlite-event-store.test.ts --reporter=verbose
+        run: pnpm exec vitest run packages/storage/src/sqlite-event-store.test.ts -t "replay releases SQLite query ownership before each async yield" --reporter=verbose
       - name: Add bounded lifecycle diagnostics
         run: |
           python - <<'PY'
