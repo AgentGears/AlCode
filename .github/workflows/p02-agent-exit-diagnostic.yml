@@ -30,6 +30,7 @@ jobs:
           python scripts/p02-effect-absence-patch.py
           python scripts/p02-replay-cursor-fix.py
           python scripts/p02-post-verifier-diagnostic.py
+          python scripts/p02-verification-singleflight-deadlock-patch.py
       - name: Add bounded product diagnostics
         run: |
           python - <<'PY'
