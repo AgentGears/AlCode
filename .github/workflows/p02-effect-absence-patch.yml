@@ -24,26 +24,23 @@ jobs:
           node-version: 22.17.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Apply Host verifier effect-absence semantics and regressions
+      - name: Apply P-02 verifier and recovery corrections
         run: |
           if [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; then exit 0; fi
           python scripts/p02-effect-absence-patch.py
-      - name: Run focused Host verifier regressions
+      - name: Run focused verifier and recovery regressions
         run: |
           if [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; then exit 0; fi
-          pnpm exec vitest run packages/host-runtime/src/program-verification.test.ts packages/coding-agent/src/verification-profile.test.ts --reporter=verbose
-      - name: Run P-02 vertical and expose masked driver root on failure
+          pnpm exec vitest run packages/host-runtime/src/program-verification.test.ts packages/coding-agent/src/verification-profile.test.ts packages/program-state/src/program-state.test.ts --reporter=verbose
+      - name: Run P-02 product vertical
         run: |
           if [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; then exit 0; fi
-          if pnpm exec vitest run packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts --reporter=verbose; then exit 0; fi
-          python scripts/p02-driver-diagnostic.py
-          pnpm exec vitest run packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts --reporter=verbose || true
-          exit 1
-      - name: Commit verified effect-absence semantics
+          pnpm exec vitest run packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts --reporter=verbose
+      - name: Commit verified P-02 verifier and recovery corrections
         run: |
           if [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; then exit 0; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add packages/host-runtime/src/program-dispatch.ts packages/host-runtime/src/program-verification.ts packages/host-runtime/src/program-verification.test.ts
-          git commit -m "fix(p02): certify unchanged verifier measurement effects"
+          git add packages/host-runtime/src/program-dispatch.ts packages/host-runtime/src/program-verification.ts packages/host-runtime/src/program-verification.test.ts packages/program-state/src/reducer-core.ts packages/program-state/src/program-state.test.ts
+          git commit -m "fix(p02): preserve verifier and replacement authority"
           git push origin HEAD:feat/p02-semantic-planning-v1
