@@ -28,20 +28,20 @@ describe("Program-backed Host capability adapters", () => {
     expect(capability.workspaceAccessClass).toBe("may_write");
     expect(capability.quiescence).toMatchObject({
       containmentKind: "operation_scoped_containment",
-      proofContractId: "coding-agent-owned-tool-promise-v1",
+      proofContractId: "host-capability-promise-v1",
       proofContractVersion: 1,
     });
     const result = await capability.execute({}, {
       quiescenceContract: {
         containment: "operation_scoped_containment",
-        proofContractId: "coding-agent-owned-tool-promise-v1",
+        proofContractId: "host-capability-promise-v1",
         proofContractVersion: 1,
         containmentInstanceId: "containment-1",
       },
     });
     expect(result.quiescenceProof).toEqual({
       containmentInstanceId: "containment-1",
-      proofContractId: "coding-agent-owned-tool-promise-v1",
+      proofContractId: "host-capability-promise-v1",
       proofContractVersion: 1,
       proofKind: "operation_containment_ended",
       evidence: { kind: "operation_scope_ended", containmentInstanceId: "containment-1" },
