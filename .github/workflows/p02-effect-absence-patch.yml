@@ -32,20 +32,51 @@ jobs:
         run: |
           if [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; then exit 0; fi
           pnpm exec vitest run packages/host-runtime/src/program-verification.test.ts packages/coding-agent/src/verification-profile.test.ts packages/program-state/src/program-state.test.ts --reporter=verbose
-      - name: Expose verifier child lifecycle in the product vertical
+      - name: Expose verifier dispatch and child lifecycle in the product vertical
         run: |
           if [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; then exit 0; fi
           python - <<'PY'
           from pathlib import Path
-          path = Path("packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts")
-          source = path.read_text()
+
+          test = Path("packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts")
+          source = test.read_text()
           source = source.replace("      timeout: 20_000,", "      timeout: 45_000,", 1)
           anchor = "    const events = await replay(home, root);"
           replacement = "    process.stderr.write(result.stderr ?? \"\");\n    process.stdout.write(result.stdout ?? \"\");\n" + anchor
           if anchor not in source:
               raise SystemExit("P-02 product diagnostic anchor not found")
-          path.write_text(source.replace(anchor, replacement, 1))
+          test.write_text(source.replace(anchor, replacement, 1))
+
+          broker = Path("packages/host-runtime/src/capability-broker.ts")
+          source = broker.read_text()
+          old = """    this.catchUpBarriers();\n\n    let execution: HostCapabilityResult;"""
+          new = """    console.error(`[p02-broker] before-catchup operation=${String(operationId)} tool=${request.toolName}`);\n    this.catchUpBarriers();\n    console.error(`[p02-broker] after-catchup operation=${String(operationId)} tool=${request.toolName}`);\n\n    let execution: HostCapabilityResult;"""
+          if old not in source:
+              raise SystemExit("capability broker catch-up diagnostic anchor not found")
+          source = source.replace(old, new, 1)
+          old = """      execution = await capability.execute(frozenArgs, context);\n      const rawOutcome = execution.outcome ?? \"succeeded\";"""
+          new = """      console.error(`[p02-broker] before-execute operation=${String(operationId)} tool=${request.toolName}`);\n      execution = await capability.execute(frozenArgs, context);\n      console.error(`[p02-broker] after-execute operation=${String(operationId)} tool=${request.toolName} outcome=${String(execution.outcome ?? \"succeeded\")}`);\n      const rawOutcome = execution.outcome ?? \"succeeded\";"""
+          if old not in source:
+              raise SystemExit("capability broker execute diagnostic anchor not found")
+          broker.write_text(source.replace(old, new, 1))
+
+          adapters = Path("packages/coding-agent/src/host-capabilities.ts")
+          source = adapters.read_text()
+          old = """      const result = await tool.execute(\n        args as TInput,\n        context.signal ? { signal: context.signal } : {},\n      );"""
+          new = """      console.error(`[p02-cap] before-tool name=${tool.name}`);\n      const result = await tool.execute(\n        args as TInput,\n        context.signal ? { signal: context.signal } : {},\n      );\n      console.error(`[p02-cap] after-tool name=${tool.name} outcome=${String(result.executionOutcome ?? \"succeeded\")}`);"""
+          if old not in source:
+              raise SystemExit("Host capability adapter diagnostic anchor not found")
+          adapters.write_text(source.replace(old, new, 1))
+
+          bash = Path("packages/coding-agent/src/tools/bash.ts")
+          source = bash.read_text()
+          old = """        const isWin = process.platform === \"win32\";\n        const child = spawn(isWin ? \"cmd\" : \"sh\", isWin ? [\"/c\", input.command] : [\"-c\", input.command], {"""
+          new = """        const isWin = process.platform === \"win32\";\n        console.error(`[p02-bash] before-spawn command=${input.command}`);\n        const child = spawn(isWin ? \"cmd\" : \"sh\", isWin ? [\"/c\", input.command] : [\"-c\", input.command], {"""
+          if old not in source:
+              raise SystemExit("bash before-spawn diagnostic anchor not found")
+          bash.write_text(source.replace(old, new, 1))
           PY
+          grep -n '\[p02-' packages/host-runtime/src/capability-broker.ts packages/coding-agent/src/host-capabilities.ts packages/coding-agent/src/tools/bash.ts
       - name: Run P-02 product vertical
         run: |
           if [ "$GITHUB_ACTOR" = "github-actions[bot]" ]; then exit 0; fi
