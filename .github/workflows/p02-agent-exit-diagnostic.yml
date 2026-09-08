@@ -26,55 +26,21 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Apply pending P-02 corrections
-        run: python scripts/p02-effect-absence-patch.py
-      - name: Apply replay cursor correction
-        run: python scripts/p02-replay-cursor-fix.py
-      - name: Run replay cursor regression
-        run: pnpm exec vitest run packages/storage/src/sqlite-event-store.test.ts -t "replay releases SQLite query ownership before each async yield" --reporter=verbose
-      - name: Add bounded lifecycle diagnostics
+        run: |
+          python scripts/p02-effect-absence-patch.py
+          python scripts/p02-replay-cursor-fix.py
+          python scripts/p02-post-verifier-diagnostic.py
+      - name: Add bounded product diagnostics
         run: |
           python - <<'PY'
           from pathlib import Path
-
           test = Path("packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts")
           source = test.read_text().replace("      timeout: 20_000,", "      timeout: 12_000,", 1)
           anchor = "    const events = await replay(home, root);"
           replacement = "    process.stderr.write(result.stderr ?? \"\");\n    process.stdout.write(result.stdout ?? \"\");\n" + anchor
           if anchor not in source:
-              raise SystemExit("P-02 test diagnostic anchor not found")
+              raise SystemExit("P-02 product diagnostic anchor not found")
           test.write_text(source.replace(anchor, replacement, 1))
-
-          runtime = Path("packages/host-runtime/src/program-execution-runtime-v2.ts")
-          source = runtime.read_text()
-          old = """        } catch {\n          // Protocol handlers are invoked fire-and-forget by the IPC transport."""
-          new = """        } catch (error) {\n          console.error(`[p02-runtime-handler pid=${process.pid}] type=${message.type} generation=${connection.generationId} error=${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);\n          // Protocol handlers are invoked fire-and-forget by the IPC transport."""
-          if old not in source:
-              raise SystemExit("adaptive runtime catch diagnostic anchor not found")
-          runtime.write_text(source.replace(old, new, 1))
-
-          supervisor = Path("packages/host-runtime/src/agent-supervisor.ts")
-          source = supervisor.read_text()
-          old = """    const transport = createChildProcessHostTransport(child);\n    const exit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {\n      child.once(\"exit\", (code, signal) => resolve({ code, signal }));\n    });"""
-          new = """    const transport = createChildProcessHostTransport(child);\n    child.on(\"disconnect\", () => console.error(`[p02-supervisor pid=${process.pid}] child-disconnect child=${String(child.pid)} generation=${generationId}`));\n    child.on(\"error\", (error) => console.error(`[p02-supervisor pid=${process.pid}] child-error child=${String(child.pid)} generation=${generationId} error=${error.stack ?? error.message}`));\n    child.on(\"exit\", (code, signal) => console.error(`[p02-supervisor pid=${process.pid}] child-exit child=${String(child.pid)} generation=${generationId} code=${String(code)} signal=${String(signal)}`));\n    const exit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {\n      child.once(\"exit\", (code, signal) => resolve({ code, signal }));\n    });"""
-          if old not in source:
-              raise SystemExit("agent supervisor diagnostic anchor not found")
-          supervisor.write_text(source.replace(old, new, 1))
-
-          worker = Path("packages/coding-agent/src/agent-worker.ts")
-          source = worker.read_text()
-          old = """const AGENT_SHUTDOWN_WATCHDOG_MS = 5_000;"""
-          new = """const AGENT_SHUTDOWN_WATCHDOG_MS = 5_000;\n\nprocess.on(\"uncaughtExceptionMonitor\", (error, origin) => {\n  console.error(`[p02-worker pid=${process.pid}] uncaught origin=${origin} error=${error.stack ?? error.message}`);\n});\nprocess.on(\"disconnect\", () => console.error(`[p02-worker pid=${process.pid}] disconnect`));\nprocess.on(\"beforeExit\", (code) => console.error(`[p02-worker pid=${process.pid}] beforeExit code=${code}`));\nprocess.on(\"exit\", (code) => console.error(`[p02-worker pid=${process.pid}] exit code=${code}`));"""
-          if old not in source:
-              raise SystemExit("agent worker diagnostic anchor not found")
-          worker.write_text(source.replace(old, new, 1))
-
-          broker = Path("packages/host-runtime/src/capability-broker.ts")
-          source = broker.read_text()
-          old = """    const actionId = `event:${request.sessionId as string}:${actionEvent.sequence}:action`;\n    this.catchUpBarriers();\n\n    let execution: HostCapabilityResult;"""
-          new = """    const actionId = `event:${request.sessionId as string}:${actionEvent.sequence}:action`;\n    console.error(`[p02-broker pid=${process.pid}] pre-exec-catchup-start operation=${String(operationId)} tool=${request.toolName}`);\n    try {\n      this.catchUpBarriers();\n    } catch (error) {\n      console.error(`[p02-broker pid=${process.pid}] pre-exec-catchup-failed operation=${String(operationId)} tool=${request.toolName} error=${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);\n      throw error;\n    }\n    console.error(`[p02-broker pid=${process.pid}] pre-exec-catchup-done operation=${String(operationId)} tool=${request.toolName}`);\n\n    let execution: HostCapabilityResult;"""
-          if old not in source:
-              raise SystemExit("capability broker pre-exec catch-up anchor not found")
-          broker.write_text(source.replace(old, new, 1))
           PY
       - name: Run P-02 product vertical diagnostic
         run: pnpm exec vitest run packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts --reporter=verbose
