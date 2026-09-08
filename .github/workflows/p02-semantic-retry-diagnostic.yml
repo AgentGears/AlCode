@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   patch-verifier-semantics:
-    if: github.event.head_commit.message != 'fix(p02): preserve negative verifier measurement completion'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,6 +20,11 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          import subprocess
+
+          commit_message = subprocess.check_output(["git", "log", "-1", "--pretty=%s"], text=True).strip()
+          if commit_message == "fix(p02): preserve negative verifier measurement completion":
+              raise SystemExit(0)
 
           def replace_once(path: str, old: str, new: str) -> None:
               target = Path(path)
@@ -85,6 +89,9 @@ jobs:
           git diff --check
       - name: Commit verifier semantics
         run: |
+          if git diff --quiet; then
+            exit 0
+          fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add packages/host-runtime/src/capability-broker.ts \
