@@ -1,16 +1,12 @@
 name: P-02 Semantic Retry Diagnostic
 
-on:
+"on":
+  push:
+    branches:
+      - feat/p02-semantic-planning-v1
   pull_request:
     paths:
       - "packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts"
-      - "packages/coding-agent/src/agent-runtime-profile.ts"
-      - "packages/coding-agent/src/host-capabilities.ts"
-      - "packages/coding-agent/src/host-capabilities-quiescence.test.ts"
-      - "packages/host-runtime/src/program-adaptive-verification-control-v2.ts"
-      - "packages/reasoning/src/cognitive-operations.ts"
-      - "packages/reasoning/src/cognitive-operations-esm.test.ts"
-      - "packages/reasoning/src/verification.ts"
       - ".github/workflows/p02-semantic-retry-diagnostic.yml"
 
 permissions:
@@ -29,78 +25,24 @@ jobs:
           node-version: 22.17.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Enrich focused capability failure diagnostics
+      - name: Shorten focused timeout and expose durable trace
         run: |
           python - <<'PY'
           from pathlib import Path
 
-          test = Path("packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts")
-          source = test.read_text()
-          needle = "    const invocation = maybeRecord(payload.programVerificationInvocation);\n"
-          replacement = '''    if (event.type === "tool.result.appended") {
-              return {
-                ...base,
-                toolName: payload.toolName,
-                isError: payload.isError,
-                content: payload.content,
-              };
-            }
-            const invocation = maybeRecord(payload.programVerificationInvocation);
-          '''
-          if needle not in source:
-              raise SystemExit("diagnostic insertion point not found")
-          source = source.replace(needle, replacement, 1)
-
-          needle = "      timeout: 120_000,\n"
-          if needle not in source:
-              raise SystemExit("subprocess timeout insertion point not found")
-          source = source.replace(needle, "      timeout: 20_000,\n", 1)
-
-          needle = "    expect(result.error).toBeUndefined();\n"
-          replacement = '''    expect(
-              result.error,
-              `Subprocess error: ${String(result.error)}\\nSTDERR:\\n${result.stderr}\\nSTDOUT:\\n${result.stdout}\\nDurable trace:\\n${diagnosticTrace(events).map((entry) => JSON.stringify(entry)).join("\\n")}`,
-            ).toBeUndefined();
-          '''
-          if needle not in source:
-              raise SystemExit("subprocess error diagnostic insertion point not found")
-          test.write_text(source.replace(needle, replacement, 1))
-
-          agent = Path("packages/host-runtime/src/program-agent-v2.ts")
-          source = agent.read_text()
-          needle = '  const text = error instanceof Error ? error.message : typeof error === "string" ? error : fallback;\n'
-          replacement = '  const text = error instanceof Error ? (error.stack ?? error.message) : typeof error === "string" ? error : fallback;\n'
-          if needle not in source:
-              raise SystemExit("runtime failure diagnostic insertion point not found")
-          agent.write_text(source.replace(needle, replacement, 1))
-
-          verification = Path("packages/host-runtime/src/program-verification.ts")
-          source = verification.read_text()
-          needle = '''    const result = await this.options.capabilityBroker.execute({
-      sessionId: command.sessionId,
-      toolCallId: uuidv7(),
-      toolName: prepared.spec.capabilityName,
-'''
-          replacement = '''    const diagnosticToolCallId = uuidv7();
-    console.error(`[P02 verifier broker start] toolCallId=${diagnosticToolCallId} obligation=${command.verificationObligationId}`);
-    const result = await this.options.capabilityBroker.execute({
-      sessionId: command.sessionId,
-      toolCallId: diagnosticToolCallId,
-      toolName: prepared.spec.capabilityName,
-'''
-          if needle not in source:
-              raise SystemExit("verifier start insertion point not found")
-          source = source.replace(needle, replacement, 1)
-          needle = '''    const operationId = result.operationId ? String(result.operationId) : undefined;
-    if (result.outcome !== "succeeded" || operationId === undefined || !prepared.spec.isSuccessful(result)) {
-'''
-          replacement = '''    const operationId = result.operationId ? String(result.operationId) : undefined;
-    console.error(`[P02 verifier broker result] toolCallId=${diagnosticToolCallId} outcome=${result.outcome} operationId=${operationId ?? "none"} errorCode=${result.errorCode ?? "none"} error=${result.error ?? "none"}`);
-    if (result.outcome !== "succeeded" || operationId === undefined || !prepared.spec.isSuccessful(result)) {
-'''
-          if needle not in source:
-              raise SystemExit("verifier result insertion point not found")
-          verification.write_text(source.replace(needle, replacement, 1))
+          path = Path("packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts")
+          source = path.read_text()
+          source = source.replace("      timeout: 120_000,", "      timeout: 20_000,", 1)
+          old = "    expect(result.error).toBeUndefined();"
+          new = "\n".join([
+              "    expect(",
+              "      result.error,",
+              "      `Subprocess error: ${String(result.error)}\\nSTDERR:\\n${result.stderr}\\nSTDOUT:\\n${result.stdout}\\nDurable trace:\\n${diagnosticTrace(events).map((entry) => JSON.stringify(entry)).join(\"\\n\")}` ,",
+              "    ).toBeUndefined();",
+          ])
+          if old not in source:
+              raise SystemExit("diagnostic assertion insertion point not found")
+          path.write_text(source.replace(old, new, 1))
           PY
       - name: Run focused P-02 semantic retry vertical
         run: npx vitest run packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts --reporter=verbose
