@@ -27,11 +27,14 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Apply semantic authority corrections and regressions
-        run: python scripts/p02-semantic-authority-review-closure.py
+        run: |
+          python scripts/p02-semantic-authority-review-closure.py
+          python scripts/p02-semantic-authority-host-bridge.py
 
       - name: Typecheck affected packages
         run: |
           pnpm --filter @alcode/code-intelligence typecheck
+          pnpm --filter @alcode/host-runtime typecheck
           pnpm --filter @alcode/coding-agent typecheck
 
       - name: Run focused semantic authority regressions
@@ -39,6 +42,7 @@ jobs:
           pnpm exec vitest run \
             packages/code-intelligence/src/code-intelligence.test.ts \
             packages/code-intelligence/src/typescript-lsp-provider.p02.test.ts \
+            packages/host-runtime/src/code-intelligence.test.ts \
             packages/coding-agent/src/semantic-planning-read.test.ts \
             --reporter=verbose
 
@@ -54,13 +58,15 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git rm \
             .github/workflows/p02-semantic-authority-review-closure.yml \
-            scripts/p02-semantic-authority-review-closure.py
+            scripts/p02-semantic-authority-review-closure.py \
+            scripts/p02-semantic-authority-host-bridge.py
           git add \
             packages/code-intelligence/src/tracker.ts \
             packages/code-intelligence/src/service.ts \
             packages/code-intelligence/src/code-intelligence.test.ts \
             packages/code-intelligence/src/typescript-lsp-provider.ts \
             packages/code-intelligence/src/typescript-lsp-provider.p02.test.ts \
+            packages/host-runtime/src/code-intelligence.ts \
             packages/coding-agent/src/semantic-planning-read.ts \
             packages/coding-agent/src/semantic-planning-read.test.ts
           git diff --cached --check
