@@ -26,68 +26,54 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
 
-      - name: Apply semantic revision-coverage correction
+      - name: Apply semantic authority corrections
         run: |
           python - <<'PY'
           from pathlib import Path
+          import re
+
+          def replace_once(source: str, old: str, new: str, label: str) -> str:
+              if old not in source:
+                  raise SystemExit(f"{label} anchor not found")
+              return source.replace(old, new, 1)
 
           tracker = Path("packages/code-intelligence/src/tracker.ts")
           source = tracker.read_text()
-          anchor = '''  snapshot(): TrackerSnapshot {
-              return {
-                state: this.state,
-                ...(this.state === "HEALTHY" ? { revision: this.revision() } : {}),
-                ...(this.reason !== undefined ? { reason: this.reason } : {}),
-              };
-            }
-          '''
-          replacement = anchor + '''
-            isRevisionTrackedPath(workspaceRelativePath: string): boolean {
-              return !this.isIgnored(workspaceRelativePath.replace(/\\\\/g, "/"));
-            }
-          '''
-          if anchor not in source:
-              raise SystemExit("tracker snapshot anchor not found")
-          tracker.write_text(source.replace(anchor, replacement, 1))
+          source = replace_once(
+              source,
+              '  onChange(listener: (snapshot: TrackerSnapshot) => void): () => void {',
+              '  isRevisionTrackedPath(workspaceRelativePath: string): boolean {\n'
+              '    return !this.isIgnored(workspaceRelativePath.replace(/\\\\/g, "/"));\n'
+              '  }\n\n'
+              '  onChange(listener: (snapshot: TrackerSnapshot) => void): () => void {',
+              'tracker coverage',
+          )
+          tracker.write_text(source)
 
           service = Path("packages/code-intelligence/src/service.ts")
           source = service.read_text()
-          anchor = '''  snapshot() { return this.options.tracker.snapshot(); }
-          '''
-          replacement = anchor + '''
-            isRevisionTrackedPath(workspaceRelativePath: string): boolean {
-              return this.options.tracker.isRevisionTrackedPath(workspaceRelativePath);
-            }
-          '''
-          if anchor not in source:
-              raise SystemExit("service snapshot anchor not found")
-          service.write_text(source.replace(anchor, replacement, 1))
+          source = replace_once(
+              source,
+              '  snapshot() { return this.options.tracker.snapshot(); }\n',
+              '  snapshot() { return this.options.tracker.snapshot(); }\n\n'
+              '  isRevisionTrackedPath(workspaceRelativePath: string): boolean {\n'
+              '    return this.options.tracker.isRevisionTrackedPath(workspaceRelativePath);\n'
+              '  }\n',
+              'service coverage',
+          )
+          service.write_text(source)
 
           semantic = Path("packages/coding-agent/src/semantic-planning-read.ts")
           source = semantic.read_text()
-          old = '''export interface SemanticPlanningCodeIntelligence {
-            query<Q extends SemanticPlanningQuery>(
-              request: Q,
-              options?: { signal?: AbortSignal },
-            ): Promise<SemanticPlanningObservation<SemanticPlanningQueryResult<Q>>>;
-          }
-          '''
-          new = '''export interface SemanticPlanningCodeIntelligence {
-            isRevisionTrackedPath(workspaceRelativePath: string): boolean;
-            query<Q extends SemanticPlanningQuery>(
-              request: Q,
-              options?: { signal?: AbortSignal },
-            ): Promise<SemanticPlanningObservation<SemanticPlanningQueryResult<Q>>>;
-          }
-          '''
-          if old not in source:
-              raise SystemExit("semantic service interface anchor not found")
-          source = source.replace(old, new, 1)
-
-          anchor = '''function compareText(a: string, b: string): number {
-            return a < b ? -1 : a > b ? 1 : 0;
-          }
-          '''
+          source = replace_once(
+              source,
+              'export interface SemanticPlanningCodeIntelligence {\n  query<Q extends SemanticPlanningQuery>(',
+              'export interface SemanticPlanningCodeIntelligence {\n'
+              '  isRevisionTrackedPath(workspaceRelativePath: string): boolean;\n'
+              '  query<Q extends SemanticPlanningQuery>(',
+              'semantic interface',
+          )
+          helper_anchor = 'function compareText(a: string, b: string): number {'
           helper = '''function assertRevisionTrackedPath(
             service: SemanticPlanningCodeIntelligence,
             workspaceRelativePath: string,
@@ -99,12 +85,9 @@ jobs:
             return workspaceRelativePath;
           }
 
-          ''' + anchor
-          if anchor not in source:
-              raise SystemExit("semantic compareText anchor not found")
-          source = source.replace(anchor, helper, 1)
-
-          old = '''function normalizeLocation(root: string, location: SemanticPlanningLocation) {
+          '''
+          source = replace_once(source, helper_anchor, helper + helper_anchor, 'semantic coverage helper')
+          old_normalize = '''function normalizeLocation(root: string, location: SemanticPlanningLocation) {
             return {
               path: observedWorkspacePath(root, location.path),
               start: { line: location.start.line, column: location.start.column },
@@ -112,110 +95,74 @@ jobs:
             };
           }
           '''
-          new = '''function normalizeLocation(
+          new_normalize = '''function normalizeLocation(
             root: string,
             service: SemanticPlanningCodeIntelligence,
             location: SemanticPlanningLocation,
           ) {
-            const path = assertRevisionTrackedPath(
-              service,
-              observedWorkspacePath(root, location.path),
-              "CodeIntelligence result path",
-            );
             return {
-              path,
+              path: assertRevisionTrackedPath(
+                service,
+                observedWorkspacePath(root, location.path),
+                "CodeIntelligence result path",
+              ),
               start: { line: location.start.line, column: location.start.column },
               end: { line: location.end.line, column: location.end.column },
             };
           }
           '''
-          if old not in source:
-              raise SystemExit("normalizeLocation anchor not found")
-          source = source.replace(old, new, 1)
-          source = source.replace("location: normalizeLocation(input.root, symbol.location),", "location: normalizeLocation(input.root, input.service, symbol.location),", 1)
-          source = source.replace(".map((location) => normalizeLocation(input.root, location))", ".map((location) => normalizeLocation(input.root, input.service, location))", 1)
-
-          old = '''        path: workspaceRelativePath(input.root, requiredString(record, "path", SEMANTIC_PATH_MAX_CHARS), "path"),
-          line: requiredNonNegativeInteger(record, "line"),
-          column: requiredNonNegativeInteger(record, "column"),
-          includeDeclaration: optionalBoolean(record, "includeDeclaration", true),
-          '''
-          new = '''        path: assertRevisionTrackedPath(
-              input.service,
-              workspaceRelativePath(input.root, requiredString(record, "path", SEMANTIC_PATH_MAX_CHARS), "path"),
-              "path",
-            ),
-            line: requiredNonNegativeInteger(record, "line"),
-            column: requiredNonNegativeInteger(record, "column"),
-            includeDeclaration: optionalBoolean(record, "includeDeclaration", true),
-          '''
-          if old not in source:
-              raise SystemExit("reference input anchor not found")
-          source = source.replace(old, new, 1)
-
-          old = '''        path: path === undefined || path === null
-                  ? null
-                  : workspaceRelativePath(input.root, requiredString(record, "path", SEMANTIC_PATH_MAX_CHARS), "path"),
-              };
-          '''
-          new = '''        path: path === undefined || path === null
-                  ? null
-                  : assertRevisionTrackedPath(
-                    input.service,
-                    workspaceRelativePath(input.root, requiredString(record, "path", SEMANTIC_PATH_MAX_CHARS), "path"),
-                    "path",
-                  ),
-              };
-          '''
-          if old not in source:
-              raise SystemExit("diagnostic input anchor not found")
-          source = source.replace(old, new, 1)
-
-          old = '''      const diagnostics = observation.value.diagnostics.map((diagnostic) => ({
-                path: observedWorkspacePath(input.root, diagnostic.path),
-                severity: diagnostic.severity,
-                message: diagnostic.message,
-                range: {
-                  line: diagnostic.range.line,
-                  column: diagnostic.range.column,
-                  endLine: diagnostic.range.endLine,
-                  endColumn: diagnostic.range.endColumn,
-                },
-                source: diagnostic.source ?? null,
-                code: diagnostic.code ?? null,
-              })).sort((left, right) =>
-          '''
-          new = '''      const diagnostics = observation.value.diagnostics.map((diagnostic) => {
-                const path = assertRevisionTrackedPath(
-                  input.service,
-                  observedWorkspacePath(input.root, diagnostic.path),
-                  "CodeIntelligence diagnostic result path",
-                );
-                return {
-                  path,
-                  severity: diagnostic.severity,
-                  message: diagnostic.message,
-                  range: {
-                    line: diagnostic.range.line,
-                    column: diagnostic.range.column,
-                    endLine: diagnostic.range.endLine,
-                    endColumn: diagnostic.range.endColumn,
-                  },
-                  source: diagnostic.source ?? null,
-                  code: diagnostic.code ?? null,
-                };
-              }).sort((left, right) =>
-          '''
-          if old not in source:
-              raise SystemExit("diagnostic result anchor not found")
-          source = source.replace(old, new, 1)
+          source = replace_once(source, old_normalize, new_normalize, 'semantic location normalization')
+          source = replace_once(
+              source,
+              'location: normalizeLocation(input.root, symbol.location),',
+              'location: normalizeLocation(input.root, input.service, symbol.location),',
+              'symbol result coverage',
+          )
+          source = replace_once(
+              source,
+              '.map((location) => normalizeLocation(input.root, location))',
+              '.map((location) => normalizeLocation(input.root, input.service, location))',
+              'reference result coverage',
+          )
+          source = replace_once(
+              source,
+              'path: workspaceRelativePath(input.root, requiredString(record, "path", SEMANTIC_PATH_MAX_CHARS), "path"),',
+              'path: assertRevisionTrackedPath(\n'
+              '          input.service,\n'
+              '          workspaceRelativePath(input.root, requiredString(record, "path", SEMANTIC_PATH_MAX_CHARS), "path"),\n'
+              '          "path",\n'
+              '        ),',
+              'reference input coverage',
+          )
+          source = replace_once(
+              source,
+              ': workspaceRelativePath(input.root, requiredString(record, "path", SEMANTIC_PATH_MAX_CHARS), "path"),',
+              ': assertRevisionTrackedPath(\n'
+              '            input.service,\n'
+              '            workspaceRelativePath(input.root, requiredString(record, "path", SEMANTIC_PATH_MAX_CHARS), "path"),\n'
+              '            "path",\n'
+              '          ),',
+              'diagnostic input coverage',
+          )
+          source = replace_once(
+              source,
+              'path: observedWorkspacePath(input.root, diagnostic.path),',
+              'path: assertRevisionTrackedPath(\n'
+              '          input.service,\n'
+              '          observedWorkspacePath(input.root, diagnostic.path),\n'
+              '          "CodeIntelligence diagnostic result path",\n'
+              '        ),',
+              'diagnostic result coverage',
+          )
           semantic.write_text(source)
           PY
 
-      - name: Apply bounded TypeScript workspace coverage correction
+      - name: Apply bounded workspace-symbol coverage correction
         run: |
           python - <<'PY'
           from pathlib import Path
+          import re
+
           provider = Path("packages/code-intelligence/src/typescript-lsp-provider.ts")
           source = provider.read_text()
           source = source.replace(
@@ -228,127 +175,97 @@ jobs:
               '  private syncedRevision: CodeRevisionToken | undefined;\n  private workspaceCoverageEstablished = false;\n',
               1,
           )
-          old = '''    if (sameRevision(this.syncedRevision, revision) && this.rpc) return { status: "synchronized" };
-              try {
-                await this.restart(options.signal);
-                const seed = await this.findSynchronizationSeed();
-                if (!seed) {
-                  await this.dispose();
-                  return { status: "unsupported", reason: "no TypeScript/JavaScript source file is available to establish provider synchronization" };
-                }
-
-                // typescript-language-server does not create a tsserver project merely from
-                // initialize/workspaceFolders. Open one deterministic workspace source and
-                // await textDocument/documentSymbol. That request reaches tsserver NavTree,
-                // so successful completion is the provider-specific fence proving the freshly
-                // restarted provider has consumed a workspace file after the captured Host
-                // revision. The service still performs the mandatory Host revision/health
-                // recheck after every semantic query before publishing it as current.
-                await this.openFile(path.relative(this.root, seed));
-
-                this.syncedRevision = structuredClone(revision);
-                return { status: "synchronized" };
-              } catch (error) {
-                this.syncedRevision = undefined;
-                return { status: "uncertain", reason: error instanceof Error ? error.message : String(error) };
+          synchronize = '''  async synchronize(revision: CodeRevisionToken, options: { signal?: AbortSignal } = {}): Promise<ProviderSyncResult> {
+            if (sameRevision(this.syncedRevision, revision) && this.rpc && this.workspaceCoverageEstablished) {
+              return { status: "synchronized" };
+            }
+            try {
+              await this.restart(options.signal);
+              const sources = await this.findSynchronizationSources();
+              if (sources.length === 0) {
+                await this.dispose();
+                return { status: "unsupported", reason: "no TypeScript/JavaScript source file is available to establish provider synchronization" };
               }
+
+              // A workspace/symbol result is authoritative only after every eligible,
+              // revision-covered TS/JS source has been loaded into tsserver. Both the
+              // discovery walk and source count are bounded; overflow fails closed.
+              for (const sourcePath of sources) {
+                if (options.signal?.aborted) {
+                  throw options.signal.reason instanceof Error
+                    ? options.signal.reason
+                    : new Error("provider synchronization aborted");
+                }
+                await this.openFile(path.relative(this.root, sourcePath));
+              }
+
+              this.workspaceCoverageEstablished = true;
+              this.syncedRevision = structuredClone(revision);
+              return { status: "synchronized" };
+            } catch (error) {
+              this.syncedRevision = undefined;
+              this.workspaceCoverageEstablished = false;
+              return { status: "uncertain", reason: error instanceof Error ? error.message : String(error) };
+            }
+          }
+
           '''
-          new = '''    if (sameRevision(this.syncedRevision, revision) && this.rpc && this.workspaceCoverageEstablished) {
-                return { status: "synchronized" };
-              }
-              try {
-                await this.restart(options.signal);
-                const sources = await this.findSynchronizationSources();
-                if (sources.length === 0) {
-                  await this.dispose();
-                  return { status: "unsupported", reason: "no TypeScript/JavaScript source file is available to establish provider synchronization" };
-                }
-
-                // Workspace-symbol completeness is only authoritative after every eligible,
-                // revision-covered TS/JS source is loaded into tsserver. The walk and source
-                // count are both bounded; exceeding either bound fails synchronization closed.
-                for (const sourcePath of sources) {
-                  if (options.signal?.aborted) {
-                    throw options.signal.reason instanceof Error
-                      ? options.signal.reason
-                      : new Error("provider synchronization aborted");
-                  }
-                  await this.openFile(path.relative(this.root, sourcePath));
-                }
-
-                this.workspaceCoverageEstablished = true;
-                this.syncedRevision = structuredClone(revision);
-                return { status: "synchronized" };
-              } catch (error) {
-                this.syncedRevision = undefined;
-                this.workspaceCoverageEstablished = false;
-                return { status: "uncertain", reason: error instanceof Error ? error.message : String(error) };
-              }
-          '''
-          if old not in source:
-              raise SystemExit("provider synchronize anchor not found")
-          source = source.replace(old, new, 1)
-          old = 'return { value: { symbols: result.slice(0, limit).map((symbol) => ({ name: symbol.name, kind: String(symbol.kind), location: location(symbol.location) })) } as CodeQueryResult<Q>, complete: result.length <= limit };'
-          new = 'return { value: { symbols: result.slice(0, limit).map((symbol) => ({ name: symbol.name, kind: String(symbol.kind), location: location(symbol.location) })) } as CodeQueryResult<Q>, complete: this.workspaceCoverageEstablished && result.length <= limit };'
-          if old not in source:
-              raise SystemExit("provider symbol completeness anchor not found")
-          source = source.replace(old, new, 1)
+          source, count = re.subn(
+              r'  async synchronize\(revision: CodeRevisionToken, options: \{ signal\?: AbortSignal \} = \{\}\): Promise<ProviderSyncResult> \{.*?\n  \}\n\n(?=  async query)',
+              synchronize,
+              source,
+              count=1,
+              flags=re.S,
+          )
+          if count != 1:
+              raise SystemExit('provider synchronize method not found')
+          old_symbol = 'complete: result.length <= limit'
+          if old_symbol not in source:
+              raise SystemExit('provider symbol completeness anchor not found')
+          source = source.replace(old_symbol, 'complete: this.workspaceCoverageEstablished && result.length <= limit', 1)
           source = source.replace(
               '  async dispose(): Promise<void> {\n    this.syncedRevision = undefined;\n',
               '  async dispose(): Promise<void> {\n    this.syncedRevision = undefined;\n    this.workspaceCoverageEstablished = false;\n',
               1,
           )
-          old = '''  private async findSynchronizationSeed(): Promise<string | undefined> {
-              let visited = 0;
-              const walk = async (directory: string): Promise<string | undefined> => {
-                const children = await readdir(directory, { withFileTypes: true });
-                children.sort((a, b) => a.name.localeCompare(b.name, "en"));
-                for (const child of children) {
-                  if (SOURCE_DISCOVERY_IGNORES.has(child.name)) continue;
-                  visited += 1;
-                  if (visited > MAX_SOURCE_DISCOVERY_ENTRIES) throw new Error(`TypeScript synchronization source discovery exceeds ${MAX_SOURCE_DISCOVERY_ENTRIES} entries`);
-                  const absolute = path.join(directory, child.name);
-                  if (child.isFile() && SOURCE_EXTENSIONS.has(path.extname(child.name).toLowerCase())) return absolute;
-                  if (child.isDirectory()) {
-                    const found = await walk(absolute);
-                    if (found) return found;
-                  }
+          discovery = '''  private async findSynchronizationSources(): Promise<string[]> {
+            let visited = 0;
+            const sources: string[] = [];
+            const walk = async (directory: string): Promise<void> => {
+              const children = await readdir(directory, { withFileTypes: true });
+              children.sort((a, b) => a.name.localeCompare(b.name, "en"));
+              for (const child of children) {
+                if (SOURCE_DISCOVERY_IGNORES.has(child.name)) continue;
+                visited += 1;
+                if (visited > MAX_SOURCE_DISCOVERY_ENTRIES) {
+                  throw new Error(`TypeScript synchronization source discovery exceeds ${MAX_SOURCE_DISCOVERY_ENTRIES} entries`);
                 }
-                return undefined;
-              };
-              return walk(this.root);
-            }
-          '''
-          new = '''  private async findSynchronizationSources(): Promise<string[]> {
-              let visited = 0;
-              const sources: string[] = [];
-              const walk = async (directory: string): Promise<void> => {
-                const children = await readdir(directory, { withFileTypes: true });
-                children.sort((a, b) => a.name.localeCompare(b.name, "en"));
-                for (const child of children) {
-                  if (SOURCE_DISCOVERY_IGNORES.has(child.name)) continue;
-                  visited += 1;
-                  if (visited > MAX_SOURCE_DISCOVERY_ENTRIES) {
-                    throw new Error(`TypeScript synchronization source discovery exceeds ${MAX_SOURCE_DISCOVERY_ENTRIES} entries`);
+                const absolute = path.join(directory, child.name);
+                if (child.isFile() && SOURCE_EXTENSIONS.has(path.extname(child.name).toLowerCase())) {
+                  sources.push(absolute);
+                  if (sources.length > MAX_SYNCHRONIZATION_SOURCES) {
+                    throw new Error(`TypeScript synchronization coverage exceeds ${MAX_SYNCHRONIZATION_SOURCES} source files`);
                   }
-                  const absolute = path.join(directory, child.name);
-                  if (child.isFile() && SOURCE_EXTENSIONS.has(path.extname(child.name).toLowerCase())) {
-                    sources.push(absolute);
-                    if (sources.length > MAX_SYNCHRONIZATION_SOURCES) {
-                      throw new Error(`TypeScript synchronization coverage exceeds ${MAX_SYNCHRONIZATION_SOURCES} source files`);
-                    }
-                    continue;
-                  }
-                  if (child.isDirectory()) await walk(absolute);
+                  continue;
                 }
-              };
-              await walk(this.root);
-              return sources;
-            }
+                if (child.isDirectory()) await walk(absolute);
+              }
+            };
+            await walk(this.root);
+            return sources;
+          }
+
           '''
-          if old not in source:
-              raise SystemExit("provider source discovery anchor not found")
-          provider.write_text(source.replace(old, new, 1))
+          source, count = re.subn(
+              r'  private async findSynchronizationSeed\(\): Promise<string \| undefined> \{.*?\n  \}\n\n(?=  private async openFile)',
+              discovery,
+              source,
+              count=1,
+              flags=re.S,
+          )
+          if count != 1:
+              raise SystemExit('provider source discovery method not found')
+          provider.write_text(source)
           PY
 
       - name: Add review regressions
@@ -356,39 +273,32 @@ jobs:
           python - <<'PY'
           from pathlib import Path
 
-          test = Path("packages/coding-agent/src/semantic-planning-read.test.ts")
-          source = test.read_text()
+          semantic_test = Path("packages/coding-agent/src/semantic-planning-read.test.ts")
+          source = semantic_test.read_text()
+          source = source.replace('  referenceComplete: boolean;\n', '  referenceComplete: boolean;\n  referenceResultPath?: string;\n', 1)
           source = source.replace(
-              '  referenceComplete: boolean;\n',
-              '  referenceComplete: boolean;\n  referenceResultPath?: string;\n',
+              'path: join(root, "src", "use-b.ts"),',
+              'path: state.referenceResultPath ?? join(root, "src", "use-b.ts"),',
               1,
           )
           source = source.replace(
-              '                path: join(root, "src", "use-b.ts"),',
-              '                path: state.referenceResultPath ?? join(root, "src", "use-b.ts"),',
+              '  const service = {\n    async query(request: SemanticPlanningQuery) {',
+              '  const service = {\n'
+              '    isRevisionTrackedPath(workspaceRelativePath: string) {\n'
+              '      return !workspaceRelativePath.split(/[\\\\/]/).some((segment) =>\n'
+              '        [".git", "node_modules", ".alcode", "dist", "coverage"].includes(segment));\n'
+              '    },\n'
+              '    async query(request: SemanticPlanningQuery) {',
               1,
           )
-          anchor = '''  const service = {
-              async query(request: SemanticPlanningQuery) {
-          '''
-          replacement = '''  const service = {
-              isRevisionTrackedPath(workspaceRelativePath: string) {
-                return !workspaceRelativePath.split(/[\\\\/]/).some((segment) =>
-                  [".git", "node_modules", ".alcode", "dist", "coverage"].includes(segment));
-              },
-              async query(request: SemanticPlanningQuery) {
-          '''
-          if anchor not in source:
-              raise SystemExit("semantic fake service anchor not found")
-          source = source.replace(anchor, replacement, 1)
           anchor = '''  it("rejects semantic arguments and results that escape the workspace", async () => {
-              const { registry } = await fixture();
-              await expect(registry.read("code.references", 1, {
-                path: "../outside.ts",
-                line: 0,
-                column: 0,
-              })).rejects.toThrow(/escapes workspace root/);
-            });
+            const { registry } = await fixture();
+            await expect(registry.read("code.references", 1, {
+              path: "../outside.ts",
+              line: 0,
+              column: 0,
+            })).rejects.toThrow(/escapes workspace root/);
+          });
           '''
           addition = anchor + '''
             it("rejects semantic evidence outside revision-tracked workspace coverage", async () => {
@@ -412,32 +322,31 @@ jobs:
             });
           '''
           if anchor not in source:
-              raise SystemExit("semantic workspace escape test anchor not found")
-          test.write_text(source.replace(anchor, addition, 1))
+              raise SystemExit('semantic test insertion anchor not found')
+          semantic_test.write_text(source.replace(anchor, addition, 1))
 
           ci_test = Path("packages/code-intelligence/src/code-intelligence.test.ts")
           source = ci_test.read_text()
-          anchor = '''describe("CodeIntelligence freshness", () => {
-          '''
+          anchor = 'describe("CodeIntelligence freshness", () => {\n'
           addition = anchor + '''  it("exposes the exact default revision-covered path policy", async () => {
-              const root = await tempRoot();
-              const tracker = new WorkspaceRevisionTracker({ root });
-              expect(tracker.isRevisionTrackedPath("src/a.ts")).toBe(true);
-              expect(tracker.isRevisionTrackedPath("packages/app/src/a.ts")).toBe(true);
-              for (const pathValue of [
-                "dist/a.js",
-                "packages/app/node_modules/pkg/index.d.ts",
-                ".alcode/state.json",
-                "coverage/report.json",
-                ".git/index",
-              ]) {
-                expect(tracker.isRevisionTrackedPath(pathValue)).toBe(false);
-              }
-            });
+            const root = await tempRoot();
+            const tracker = new WorkspaceRevisionTracker({ root });
+            expect(tracker.isRevisionTrackedPath("src/a.ts")).toBe(true);
+            expect(tracker.isRevisionTrackedPath("packages/app/src/a.ts")).toBe(true);
+            for (const pathValue of [
+              "dist/a.js",
+              "packages/app/node_modules/pkg/index.d.ts",
+              ".alcode/state.json",
+              "coverage/report.json",
+              ".git/index",
+            ]) {
+              expect(tracker.isRevisionTrackedPath(pathValue)).toBe(false);
+            }
+          });
 
           '''
           if anchor not in source:
-              raise SystemExit("code intelligence describe anchor not found")
+              raise SystemExit('code intelligence test insertion anchor not found')
           ci_test.write_text(source.replace(anchor, addition, 1))
           PY
 
@@ -510,17 +419,20 @@ jobs:
               if (message.method === "initialize") result = {};
               else if (message.method === "textDocument/documentSymbol") result = [];
               else if (message.method === "workspace/symbol") {
-                result = [...this.opened].sort().map((uri) => ({
-                  name: path.basename(fileURLToPath(uri), path.extname(fileURLToPath(uri))),
-                  kind: 12,
-                  location: {
-                    uri,
-                    range: {
-                      start: { line: 0, character: 0 },
-                      end: { line: 0, character: 1 },
+                result = [...this.opened].sort().map((uri) => {
+                  const file = fileURLToPath(uri);
+                  return {
+                    name: path.basename(file, path.extname(file)),
+                    kind: 12,
+                    location: {
+                      uri,
+                      range: {
+                        start: { line: 0, character: 0 },
+                        end: { line: 0, character: 1 },
+                      },
                     },
-                  },
-                }));
+                  };
+                });
               }
               this.respond(message.id, result);
             }
