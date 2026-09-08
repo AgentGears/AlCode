@@ -1,88 +1,95 @@
-name: P-02 Semantic Retry Diagnostic
+name: P-02 Verifier Patch Transport
 
 "on":
   push:
     branches:
       - feat/p02-semantic-planning-v1
-  pull_request:
-    paths:
-      - "packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts"
-      - ".github/workflows/p02-semantic-retry-diagnostic.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  p02-semantic-retry:
+  patch-verifier-semantics:
+    if: github.event.head_commit.message != 'fix(p02): preserve negative verifier measurement completion'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
         with:
-          version: 10.13.1
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22.17.0
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - name: Shorten focused timeout and expose verifier settlement throws
+          ref: feat/p02-semantic-planning-v1
+          fetch-depth: 0
+      - name: Apply verifier completion semantics patch
         run: |
           python - <<'PY'
           from pathlib import Path
 
-          test_path = Path("packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts")
-          source = test_path.read_text()
-          source = source.replace("      timeout: 120_000,", "      timeout: 20_000,", 1)
-          old = "    expect(result.error).toBeUndefined();"
-          new = "\n".join([
-              "    expect(",
-              "      result.error,",
-              "      `Subprocess error: ${String(result.error)}\\nSTDERR:\\n${result.stderr}\\nSTDOUT:\\n${result.stdout}\\nDurable trace:\\n${diagnosticTrace(events).map((entry) => JSON.stringify(entry)).join(\"\\n\")}` ,",
-              "    ).toBeUndefined();",
-          ])
-          if old not in source:
-              raise SystemExit("diagnostic assertion insertion point not found")
-          test_path.write_text(source.replace(old, new, 1))
+          def replace_once(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              source = target.read_text()
+              if old not in source:
+                  raise SystemExit(f"patch anchor not found in {path}: {old[:100]!r}")
+              target.write_text(source.replace(old, new, 1))
 
-          broker_path = Path("packages/host-runtime/src/capability-broker.ts")
-          broker = broker_path.read_text()
-          old_eval = "    const verification = await this.cognition.evaluateVerification(request.sessionId as string, verificationPlan.match, resultData);"
-          new_eval = "\n".join([
-              "    const verification = await (async () => {",
-              "      try {",
-              "        return await this.cognition.evaluateVerification(request.sessionId as string, verificationPlan.match, resultData);",
-              "      } catch (error) {",
-              "        console.error(\"[p02-diagnostic] cognition.evaluateVerification failed\", error);",
-              "        throw error;",
-              "      }",
-              "    })();",
-          ])
-          if old_eval not in broker:
-              raise SystemExit("cognition diagnostic insertion point not found")
-          broker = broker.replace(old_eval, new_eval, 1)
+          broker = "packages/host-runtime/src/capability-broker.ts"
+          replace_once(
+              broker,
+              "  /** Host-only stable Program verification provenance; never Agent-authored. */\n  programVerificationInvocation?: HostProgramVerificationInvocationV1;\n  signal?: AbortSignal;",
+              "  /** Host-only stable Program verification provenance; never Agent-authored. */\n  programVerificationInvocation?: HostProgramVerificationInvocationV1;\n  /** Host-only execution-completion policy selected by the admitted verifier spec. */\n  programVerificationOperationCompletionSemantics?: \"numeric_exit_is_completed\";\n  signal?: AbortSignal;",
+          )
+          replace_once(
+              broker,
+              "    is_failure: outcome !== \"succeeded\",",
+              "    is_failure: typeof execution.exitCode === \"number\"\n      ? execution.exitCode !== 0\n      : outcome !== \"succeeded\",",
+          )
+          replace_once(
+              broker,
+              "function workspaceAccessClassOf(capability: HostCapability): WorkspaceAccessClassV1 {",
+              "function programVerificationOperationOutcome(\n  request: CapabilityBrokerRequest,\n  execution: HostCapabilityResult,\n  rawOutcome: ExecutionOutcome,\n): ExecutionOutcome {\n  if (\n    request.programVerificationInvocation?.kind === \"operation_result\"\n    && request.programVerificationOperationCompletionSemantics === \"numeric_exit_is_completed\"\n    && rawOutcome === \"failed\"\n    && typeof execution.exitCode === \"number\"\n  ) {\n    return \"succeeded\";\n  }\n  return rawOutcome;\n}\n\nfunction workspaceAccessClassOf(capability: HostCapability): WorkspaceAccessClassV1 {",
+          )
+          replace_once(
+              broker,
+              "          ...(request.programVerificationInvocation !== undefined\n            ? { programVerificationInvocation: freezeCanonical(request.programVerificationInvocation) }\n            : {}),",
+              "          ...(request.programVerificationInvocation !== undefined\n            ? { programVerificationInvocation: freezeCanonical(request.programVerificationInvocation) }\n            : {}),\n          ...(request.programVerificationOperationCompletionSemantics !== undefined\n            ? { programVerificationOperationCompletionSemantics: request.programVerificationOperationCompletionSemantics }\n            : {}),",
+          )
+          replace_once(
+              broker,
+              "      execution = await capability.execute(frozenArgs, context);\n      outcome = execution.outcome ?? \"succeeded\";",
+              "      execution = await capability.execute(frozenArgs, context);\n      const rawOutcome = execution.outcome ?? \"succeeded\";\n      outcome = programVerificationOperationOutcome(request, execution, rawOutcome);",
+          )
 
-          old_settle = """      await this.programOperationAuthority.settleProgramMutation({
-        sessionId: request.sessionId,
-        operationId: operationId as string,
-        program,
-        quiescenceProven: validatedQuiescenceProof !== undefined,
-        buildTerminalDrafts: terminalDraftsForHead,
-      });"""
-          new_settle = """      try {
-        await this.programOperationAuthority.settleProgramMutation({
-          sessionId: request.sessionId,
-          operationId: operationId as string,
-          program,
-          quiescenceProven: validatedQuiescenceProof !== undefined,
-          buildTerminalDrafts: terminalDraftsForHead,
-        });
-      } catch (error) {
-        console.error("[p02-diagnostic] settleProgramMutation failed", error);
-        throw error;
-      }"""
-          if old_settle not in broker:
-              raise SystemExit("settlement diagnostic insertion point not found")
-          broker_path.write_text(broker.replace(old_settle, new_settle, 1))
+          verification = "packages/host-runtime/src/program-verification.ts"
+          replace_once(
+              verification,
+              "  workspaceAccessClass: WorkspaceAccessClassV1;\n  isSuccessful(result: CapabilityBrokerResult): boolean;",
+              "  workspaceAccessClass: WorkspaceAccessClassV1;\n  /** A numeric process exit completed the measurement; the Host predicate still decides satisfaction. */\n  operationCompletionSemantics?: \"numeric_exit_is_completed\";\n  isSuccessful(result: CapabilityBrokerResult): boolean;",
+          )
+          replace_once(
+              verification,
+              "      program: prepared.attempt,\n      programVerificationInvocation: invocation,\n    });",
+              "      program: prepared.attempt,\n      programVerificationInvocation: invocation,\n      ...(prepared.spec.operationCompletionSemantics !== undefined\n        ? { programVerificationOperationCompletionSemantics: prepared.spec.operationCompletionSemantics }\n        : {}),\n    });",
+          )
+
+          profile = "packages/coding-agent/src/verification-profile.ts"
+          replace_once(
+              profile,
+              "  const operationSpecs = new HostVerificationOperationRegistryV1([\n    { specId: COMMAND_EXIT_ZERO_SPEC_ID, specVersion: COMMAND_EXIT_ZERO_SPEC_VERSION, ...exitZero },\n    { specId: PACKAGE_TYPECHECK_SPEC_ID, specVersion: PACKAGE_TYPECHECK_SPEC_VERSION, ...exitZero },\n    { specId: PACKAGE_LINT_SPEC_ID, specVersion: PACKAGE_LINT_SPEC_VERSION, ...exitZero },\n    { specId: TARGETED_PACKAGE_TEST_SPEC_ID, specVersion: TARGETED_PACKAGE_TEST_SPEC_VERSION, ...exitZero },\n  ]);",
+              "  const numericExitVerifier = {\n    ...exitZero,\n    operationCompletionSemantics: \"numeric_exit_is_completed\" as const,\n  };\n  const operationSpecs = new HostVerificationOperationRegistryV1([\n    { specId: COMMAND_EXIT_ZERO_SPEC_ID, specVersion: COMMAND_EXIT_ZERO_SPEC_VERSION, ...exitZero },\n    { specId: PACKAGE_TYPECHECK_SPEC_ID, specVersion: PACKAGE_TYPECHECK_SPEC_VERSION, ...numericExitVerifier },\n    { specId: PACKAGE_LINT_SPEC_ID, specVersion: PACKAGE_LINT_SPEC_VERSION, ...numericExitVerifier },\n    { specId: TARGETED_PACKAGE_TEST_SPEC_ID, specVersion: TARGETED_PACKAGE_TEST_SPEC_VERSION, ...numericExitVerifier },\n  ]);",
+          )
+
+          test = "packages/coding-agent/src/verification-profile.test.ts"
+          replace_once(
+              test,
+              "    expect(spec.workspaceAccessClass).toBe(\"may_write\");\n    expect(spec.isSuccessful({ outcome: \"succeeded\", result: { details: { exitCode: 0 } } })).toBe(true);",
+              "    expect(spec.workspaceAccessClass).toBe(\"may_write\");\n    expect(spec.operationCompletionSemantics).toBeUndefined();\n    for (const typedSpecId of [PACKAGE_TYPECHECK_SPEC_ID, PACKAGE_LINT_SPEC_ID, TARGETED_PACKAGE_TEST_SPEC_ID]) {\n      expect(profile.operationSpecs.resolve(typedSpecId, 1).operationCompletionSemantics)\n        .toBe(\"numeric_exit_is_completed\");\n    }\n    expect(spec.isSuccessful({ outcome: \"succeeded\", result: { details: { exitCode: 0 } } })).toBe(true);",
+          )
           PY
-      - name: Run focused P-02 semantic retry vertical
-        run: npx vitest run packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts --reporter=verbose
+          git diff --check
+      - name: Commit verifier semantics
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/host-runtime/src/capability-broker.ts \
+                  packages/host-runtime/src/program-verification.ts \
+                  packages/coding-agent/src/verification-profile.ts \
+                  packages/coding-agent/src/verification-profile.test.ts
+          git commit -m "fix(p02): preserve negative verifier measurement completion"
+          git push origin HEAD:feat/p02-semantic-planning-v1
