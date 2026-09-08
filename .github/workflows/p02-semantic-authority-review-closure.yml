@@ -29,6 +29,7 @@ jobs:
       - name: Apply semantic authority corrections and regressions
         run: |
           python scripts/p02-semantic-authority-review-closure.py
+          python scripts/p02-semantic-symbol-cache-correction.py
           python scripts/p02-semantic-authority-host-bridge.py
 
       - name: Typecheck affected packages
@@ -58,7 +59,9 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git rm \
             .github/workflows/p02-semantic-authority-review-closure.yml \
+            .github/workflows/p02-semantic-authority-stale-diagnostic.yml \
             scripts/p02-semantic-authority-review-closure.py \
+            scripts/p02-semantic-symbol-cache-correction.py \
             scripts/p02-semantic-authority-host-bridge.py
           git add \
             packages/code-intelligence/src/tracker.ts \
