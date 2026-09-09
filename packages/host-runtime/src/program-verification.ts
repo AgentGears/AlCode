@@ -45,6 +45,8 @@ export interface HostVerificationOperationSpecV1 {
   specVersion: number;
   capabilityName: string;
   workspaceAccessClass: WorkspaceAccessClassV1;
+  /** A numeric process exit completed the measurement; the Host predicate still decides satisfaction. */
+  operationCompletionSemantics?: "numeric_exit_is_completed";
   isSuccessful(result: CapabilityBrokerResult): boolean;
   extractOutput?(result: CapabilityBrokerResult, outputChannel: string): Uint8Array | string | undefined;
 }
@@ -240,7 +242,8 @@ function requireOperationSafety(
     throw new ProgramVerificationControlError("Host verification operation is not terminal-successful");
   }
   if (expectedAccess === "may_write") {
-    if (!hasQuiescence(events, operationId) || operation.effectStatus !== "confirmed" ||
+    if (!hasQuiescence(events, operationId) ||
+        (operation.effectStatus !== "confirmed" && operation.effectStatus !== "absent") ||
         (operation.reconciliationStatus !== "not_required" && operation.reconciliationStatus !== "resolved")) {
       throw new ProgramVerificationControlError("Mutating Host verification operation is not quiescent/effect-certain");
     }
@@ -312,6 +315,9 @@ export class ProgramVerificationServiceV1 {
       args: prepared.args,
       program: prepared.attempt,
       programVerificationInvocation: invocation,
+      ...(prepared.spec.operationCompletionSemantics !== undefined
+        ? { programVerificationOperationCompletionSemantics: prepared.spec.operationCompletionSemantics }
+        : {}),
     });
     const operationId = result.operationId ? String(result.operationId) : undefined;
     if (result.outcome !== "succeeded" || operationId === undefined || !prepared.spec.isSuccessful(result)) {

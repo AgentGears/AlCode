@@ -346,6 +346,36 @@ describe("revision algebra and atomic semantic transitions", () => {
     expect(next.workItems[0]!.lifecycle).toBe("in_progress");
   });
 
+  it("interrupts awaiting-verification work back to pending for fresh Attempt replacement", () => {
+    let program = state();
+    const executionBase = baseExecutionBase();
+    program = applyProgramTransition(program, {
+      kind: "attempt.issue",
+      expectedProgramRevision: program.revision,
+      attempt: {
+        programAttemptId: asProgramAttemptId("attempt-awaiting-verification"),
+        workItemId: workA,
+        sessionId: program.attachedSessionIds[0]!,
+        agentGeneration: 1,
+        initialExecutionBase: executionBase,
+        expectedExecutionBase: executionBase,
+      },
+    });
+    program = applyProgramTransition(program, {
+      kind: "work.lifecycle.set",
+      expectedProgramRevision: program.revision,
+      workItemId: workA,
+      lifecycle: "awaiting_verification",
+    });
+    const interrupted = applyProgramTransition(program, {
+      kind: "attempt.interrupt",
+      expectedProgramRevision: program.revision,
+      programAttemptId: "attempt-awaiting-verification",
+    });
+    expect(interrupted.activeAttempt).toBeNull();
+    expect(interrupted.workItems[0]!.lifecycle).toBe("pending");
+  });
+
   it("records mismatch + interrupts Attempt + invalidates multiple verification generations in one revision", () => {
     let program = state();
     const accepted = baseExecutionBase(4, "O4");

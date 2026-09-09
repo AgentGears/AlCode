@@ -497,9 +497,32 @@ export class ProgramAdaptiveRootOperationAuthorityV2 implements ProgramRootOpera
           requested,
           terminalDrafts,
         );
-        const settlementDrafts: EventDraft<string, unknown>[] = [...terminalDrafts];
         const outcome = String(record(completed.payload).outcome ?? "failed");
-        const effectConfirmed = outcome === "succeeded";
+        const requestedPayload = record(requested.payload);
+        const currentAttemptForMeasurement = baseState.lifecycle === "active" ? baseState.activeAttempt : null;
+        const measurementEffectAbsent =
+          requestedPayload.programVerificationOperationCompletionSemantics === "numeric_exit_is_completed" &&
+          input.quiescenceProven &&
+          quiesced !== undefined &&
+          postObservation?.status === "complete" &&
+          baseState.revision === input.program.expectedProgramRevision &&
+          currentAttemptForMeasurement !== null &&
+          String(currentAttemptForMeasurement.programAttemptId) === input.program.programAttemptId &&
+          String(currentAttemptForMeasurement.sessionId) === String(input.sessionId) &&
+          currentAttemptForMeasurement.agentGeneration === input.program.agentGeneration &&
+          sameBase(
+            currentAttemptForMeasurement.expectedExecutionBase,
+            effectiveObservedBase(events, postObservation.base),
+          );
+        if (measurementEffectAbsent) {
+          const completedIndex = terminalDrafts.indexOf(completed);
+          terminalDrafts[completedIndex] = {
+            ...completed,
+            payload: { ...record(completed.payload), toolDeclaredEffect: "absent" },
+          };
+        }
+        const settlementDrafts: EventDraft<string, unknown>[] = [...terminalDrafts];
+        const effectConfirmed = outcome === "succeeded" && !measurementEffectAbsent;
         let nextState: ProgramState | null = baseState;
 
         if (effectConfirmed) {
@@ -555,7 +578,7 @@ export class ProgramAdaptiveRootOperationAuthorityV2 implements ProgramRootOpera
               }
             }
           }
-        } else if (baseState.lifecycle === "active") {
+        } else if (!measurementEffectAbsent && baseState.lifecycle === "active") {
           nextState = applyProgramTransition(baseState, {
             kind: "execution_base.unavailable",
             expectedProgramRevision: baseState.revision,

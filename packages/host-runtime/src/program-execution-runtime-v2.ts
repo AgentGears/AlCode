@@ -92,6 +92,15 @@ function progressFailure(
   };
 }
 
+function terminateAgentBestEffort(connection: AgentConnection): void {
+  try {
+    connection.terminate();
+  } catch {
+    // Adaptive protocol callbacks are fire-and-forget. Process-signalling
+    // failures must not escape the Host callback after canonical truth is durable.
+  }
+}
+
 export interface ProgramExecutionRuntimeOptionsV2 {
   /**
    * The already-composed production V1 runtime is the compatibility and
@@ -174,7 +183,7 @@ export class ProgramExecutionRuntimeV2 {
       // Terminal Program/session truth is already durable. Ensure a failed
       // notification cannot leave the disposable Agent process orphaned.
     } finally {
-      connection.terminate();
+      terminateAgentBestEffort(connection);
     }
   }
 
@@ -341,7 +350,7 @@ export class ProgramExecutionRuntimeV2 {
                   // delivered to the still-current generation, fail that process
                   // closed so normal replacement/recovery can replay the Attempt.
                   if (this.agent.isCurrentConnection(sessionId, connection.generationId)) {
-                    connection.terminate();
+                    terminateAgentBestEffort(connection);
                   }
                 }
               }
@@ -383,7 +392,7 @@ export class ProgramExecutionRuntimeV2 {
           }
           if (message.type === "agent.idle" && message.sessionId === sessionId) {
             if (this.agent.isCurrentConnection(sessionId, connection.generationId)) {
-              connection.terminate();
+              terminateAgentBestEffort(connection);
             }
           }
         }

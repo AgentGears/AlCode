@@ -121,16 +121,28 @@ describe("A1 adaptive Program runtime V2 authority composition", () => {
   it("fails the disposable generation closed when a canonical successor directive cannot be delivered", () => {
     expect(source).toContain("A successor is already canonical.");
     expect(source).toContain("if (this.agent.isCurrentConnection(sessionId, connection.generationId))");
-    expect(source).toContain("connection.terminate();");
+    expect(source).toContain("terminateAgentBestEffort(connection);");
     expect(source).toContain("normal replacement/recovery can replay the Attempt");
   });
 
   it("terminates the disposable Agent even when terminal shutdown notification fails", () => {
     expect(source).toContain("Terminal Program/session truth is already durable.");
     const helper = source.indexOf("private async finalizeAdaptiveTerminal(");
-    const finalizer = source.indexOf("finally {\n      connection.terminate();\n    }", helper);
+    const finalizer = source.indexOf("finally {\n      terminateAgentBestEffort(connection);\n    }", helper);
     expect(helper).toBeGreaterThan(-1);
     expect(finalizer).toBeGreaterThan(helper);
+  });
+
+
+  it("contains OS process-signalling failures inside adaptive fire-and-forget callbacks", () => {
+    const helper = source.indexOf("function terminateAgentBestEffort(connection: AgentConnection): void");
+    const signal = source.indexOf("connection.terminate();", helper);
+    const catcher = source.indexOf("} catch {", signal);
+    expect(helper).toBeGreaterThan(-1);
+    expect(signal).toBeGreaterThan(helper);
+    expect(catcher).toBeGreaterThan(signal);
+    expect(source.match(/terminateAgentBestEffort\(connection\);/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(source).toContain("failures must not escape the Host callback");
   });
 
   it("cleans adaptive generation state on displacement, explicit detach, and process exit", () => {

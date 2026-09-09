@@ -303,6 +303,60 @@ function adaptiveTransitionDraft(
   };
 }
 
+interface AdaptiveVerificationFailureInputV2 {
+  obligation?: VerificationObligation;
+  reason: string;
+  sourceOperationId?: string;
+}
+
+function adaptiveVerificationFailurePayloadV2(
+  events: readonly PersistedDomainEvent<string, unknown>[],
+  programAttemptId: string,
+  workItemId: string,
+  failure: AdaptiveVerificationFailureInputV2,
+) {
+  const obligation = failure.obligation;
+  const verifier = obligation === undefined
+    ? undefined
+    : obligation.predicate.kind === "operation_result"
+      ? {
+          predicateKind: obligation.predicate.kind,
+          specId: obligation.predicate.specId,
+          specVersion: obligation.predicate.specVersion,
+        }
+      : { predicateKind: obligation.predicate.kind };
+  const evidence = failure.sourceOperationId === undefined
+    ? undefined
+    : events.find((event) => event.type === "evidence.recorded"
+        && String(event.operationId ?? record(event.payload).operationId ?? "") === failure.sourceOperationId);
+  const evidencePayload = evidence === undefined ? undefined : record(evidence.payload);
+  const operation = failure.sourceOperationId === undefined
+    ? undefined
+    : {
+        operationId: failure.sourceOperationId,
+        ...(typeof evidencePayload?.outcome === "string" ? { outcome: evidencePayload.outcome } : {}),
+        ...((typeof evidencePayload?.exitCode === "number" || evidencePayload?.exitCode === null)
+          ? { exitCode: evidencePayload.exitCode }
+          : {}),
+        ...(typeof evidencePayload?.verificationCommand === "string"
+          ? { verificationCommand: evidencePayload.verificationCommand }
+          : {}),
+      };
+  const details = {
+    kind: "host_verification_failure_v1" as const,
+    ...(verifier !== undefined ? { verifier } : {}),
+    ...(operation !== undefined ? { operation } : {}),
+  };
+  return {
+    programAttemptId,
+    workItemId,
+    ...(obligation !== undefined ? { verificationObligationId: String(obligation.obligationId) } : {}),
+    reason: JSON.stringify({ ...details, summary: failure.reason }),
+    ...(failure.sourceOperationId !== undefined ? { sourceOperationId: failure.sourceOperationId } : {}),
+    details,
+  };
+}
+
 export type ProgramAdaptiveVerificationDriveResultV2 =
   | { status: "not_program" }
   | { status: "not_ready" }
@@ -376,7 +430,16 @@ export class ProgramAdaptiveVerificationControlV2 {
             sessionId: sessionId as SessionId,
           });
           if (produced.status !== "bound") {
-            await this.returnCurrentWorkToPending(programStateId, sessionId as SessionId, String(currentAttempt.programAttemptId));
+            await this.returnCurrentWorkToPending(
+              programStateId,
+              sessionId as SessionId,
+              String(currentAttempt.programAttemptId),
+              {
+                obligation: producerArtifact,
+                reason: produced.reason,
+                ...(produced.operationId !== undefined ? { sourceOperationId: produced.operationId } : {}),
+              },
+            );
             return { status: "advanced" };
           }
           continue;
@@ -424,7 +487,16 @@ export class ProgramAdaptiveVerificationControlV2 {
                 sessionId: sessionId as SessionId,
               });
               if (produced.status !== "bound") {
-                await this.returnCurrentWorkToPending(programStateId, sessionId as SessionId, String(currentAttempt.programAttemptId));
+                await this.returnCurrentWorkToPending(
+                  programStateId,
+                  sessionId as SessionId,
+                  String(currentAttempt.programAttemptId),
+                  {
+                    obligation: pending,
+                    reason: produced.reason,
+                    ...(produced.operationId !== undefined ? { sourceOperationId: produced.operationId } : {}),
+                  },
+                );
                 return { status: "advanced" };
               }
               state = produced.state;
@@ -448,11 +520,33 @@ export class ProgramAdaptiveVerificationControlV2 {
       }
 
       if (result.status === "satisfied") continue;
-      await this.returnCurrentWorkToPending(programStateId, sessionId as SessionId, String(currentAttempt.programAttemptId));
+      // A verifier failure is authoritative only when the Host actually admitted
+      // an Operation. Admission denials/staleness have no verifier evidence and
+      // must not retire the current Attempt or fabricate retry facts.
+      if (result.status === "not_satisfied" && result.operationId === undefined) {
+        return { status: "stale" };
+      }
+      await this.returnCurrentWorkToPending(
+        programStateId,
+        sessionId as SessionId,
+        String(currentAttempt.programAttemptId),
+        {
+          obligation: pending,
+          reason: result.status === "not_satisfied"
+            ? result.reason
+            : "Verification subject generation changed before satisfaction",
+          ...(result.operationId !== undefined ? { sourceOperationId: result.operationId } : {}),
+        },
+      );
       return { status: "advanced" };
     }
 
-    await this.returnCurrentWorkToPending(programStateId, sessionId as SessionId, String(attempt.programAttemptId));
+    await this.returnCurrentWorkToPending(
+      programStateId,
+      sessionId as SessionId,
+      String(attempt.programAttemptId),
+      { reason: "Host verification exceeded its bounded drive passes without satisfaction" },
+    );
     return { status: "advanced" };
   }
 
@@ -507,9 +601,11 @@ export class ProgramAdaptiveVerificationControlV2 {
     programStateId: string,
     sessionId: SessionId,
     programAttemptId: string,
+    failure: AdaptiveVerificationFailureInputV2,
   ): Promise<void> {
     await this.options.admission.enqueue(async () => {
-      const state = latestProgramState(await replayAll(this.options.store), programStateId);
+      const events = await replayAll(this.options.store);
+      const state = latestProgramState(events, programStateId);
       if (state.lifecycle !== "active" || state.activeAttempt === null
           || String(state.activeAttempt.programAttemptId) !== programAttemptId) return;
       const work = currentWork(state);
@@ -525,25 +621,79 @@ export class ProgramAdaptiveVerificationControlV2 {
         workItemId: work.workItemId,
         lifecycle: "pending",
       });
-      const drafts = [
+      const failurePayload = adaptiveVerificationFailurePayloadV2(
+        events,
+        programAttemptId,
+        String(work.workItemId),
+        failure,
+      );
+      const failureDraft: EventDraft<string, unknown> = {
+        eventId: mkEventId(),
+        idempotencyKey: `program.verification.failed:${programAttemptId}`,
+        correlationId: failure.sourceOperationId ?? programAttemptId,
+        workspaceId: asWorkspaceId(this.options.store.workspaceId),
+        sessionId,
+        programStateId: asEventProgramStateId(programStateId),
+        occurredAt: new Date().toISOString(),
+        type: "program.verification.failed",
+        payload: failurePayload,
+        payloadSchemaVersion: 1,
+        producer: { kind: "runtime", component: ADAPTIVE_VERIFICATION_COMPONENT },
+      };
+      const drafts: EventDraft<string, unknown>[] = [
+        failureDraft,
         adaptiveTransitionDraft(this.options.store, sessionId, retired, "attempt.interrupt:verification_failed", programAttemptId),
       ];
       if (pending !== retired) {
         drafts.push(adaptiveTransitionDraft(this.options.store, sessionId, pending, "work.lifecycle.set:pending", programAttemptId));
       }
-      await this.options.store.append(drafts);
+      const persisted = await this.options.store.append(drafts);
+      if (persisted.length !== drafts.length) {
+        throw new ProgramVerificationControlError("Adaptive verification failure/retry admission was not atomic");
+      }
     });
   }
 }
 
 export class ProgramAdaptiveVerificationSchedulerV2 implements ProgramAdaptiveScheduleControlPortV2 {
+  private readonly verificationDriveBySession = new Map<
+    string,
+    Promise<ProgramAdaptiveVerificationDriveResultV2>
+  >();
+
   constructor(
     private readonly verification: ProgramAdaptiveVerificationControlV2,
     private readonly delegate: ProgramAdaptiveScheduleControlPortV2,
   ) {}
 
+  private async driveVerification(
+    sessionId: string,
+  ): Promise<ProgramAdaptiveVerificationDriveResultV2> {
+    const existing = this.verificationDriveBySession.get(sessionId);
+    if (existing !== undefined) return existing;
+
+    const pending = this.verification.drive(sessionId);
+    this.verificationDriveBySession.set(sessionId, pending);
+    try {
+      return await pending;
+    } finally {
+      if (this.verificationDriveBySession.get(sessionId) === pending) {
+        this.verificationDriveBySession.delete(sessionId);
+      }
+    }
+  }
+
   async dispatchNext(sessionId: string): Promise<ProgramAdaptiveScheduleResultV2> {
-    await this.verification.drive(sessionId);
+    // A concurrent caller must not wait for an in-flight Host verifier while it
+    // may already own the Workspace coordinator. The verifier can require that
+    // same coordinator to settle its Operation, creating a lock/wait cycle.
+    // Preserve single-flight execution, but let followers observe canonical
+    // semantic state immediately; an active verification Attempt projects as
+    // already_started and cannot admit a successor.
+    if (this.verificationDriveBySession.has(sessionId)) {
+      return this.delegate.dispatchNext(sessionId);
+    }
+    await this.driveVerification(sessionId);
     return this.delegate.dispatchNext(sessionId);
   }
 }

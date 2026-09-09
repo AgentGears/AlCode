@@ -13,6 +13,22 @@ async function tempRoot(): Promise<string> {
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
 
 describe("CodeIntelligence freshness", () => {
+  it("exposes the exact default revision-covered path policy", async () => {
+    const root = await tempRoot();
+    const tracker = new WorkspaceRevisionTracker({ root });
+    expect(tracker.isRevisionTrackedPath("src/a.ts")).toBe(true);
+    expect(tracker.isRevisionTrackedPath("packages/app/src/a.ts")).toBe(true);
+    for (const pathValue of [
+      "dist/a.js",
+      "packages/app/node_modules/pkg/index.d.ts",
+      ".alcode/state.json",
+      "coverage/report.json",
+      ".git/index",
+    ]) {
+      expect(tracker.isRevisionTrackedPath(pathValue)).toBe(false);
+    }
+  });
+
   it("forces HEALTHY → UNCERTAIN → REBASELINING → HEALTHY recovery", async () => {
     const root = await tempRoot();
     await writeFile(path.join(root, "a.ts"), "export const a = 1;\n");

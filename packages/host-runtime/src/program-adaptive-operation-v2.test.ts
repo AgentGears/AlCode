@@ -83,7 +83,9 @@ function raw(): ProgramState {
   };
 }
 
-function semantic(satisfactionState: "pending" | "active" = "pending"): ProgramSemanticStateV1 {
+function semantic(
+  satisfactionState: "pending" | "active" | "awaiting_verification" = "pending",
+): ProgramSemanticStateV1 {
   return {
     programStateId,
     currentRevision: {
@@ -325,6 +327,172 @@ describe("A1 adaptive Program operation authority", () => {
     expect((transition!.payload as { state: ProgramState }).state.activeAttempt).toBeNull();
     expect((transition!.payload as { state: ProgramState }).state.executionBaseUnavailable).toBe(true);
     expect(result.state?.activeAttempt).toBeNull();
+  });
+
+  it("persists a failed quiescent retained verifier before marking the execution base unavailable", async () => {
+    const awaitingRaw = raw();
+    const awaitingCreated = {
+      ...programCreated(),
+      payload: {
+        state: {
+          ...awaitingRaw,
+          workItems: [{ ...awaitingRaw.workItems[0]!, lifecycle: "awaiting_verification" }],
+        },
+      },
+    } as unknown as PersistedDomainEvent<string, unknown>;
+    const fixture = fakeStore([awaitingCreated, requestedEvent()]);
+    const authority = service(fixture, async () => ({
+      programStateRevision: 9,
+      semanticState: semantic("awaiting_verification"),
+      activeAttempt: {
+        programAttemptId: attemptId,
+        workItemId: workId,
+        workItemGeneration: 2,
+        directDependencies: [],
+        workAuthorityEnvelope: envelope(),
+      },
+      lifecycle: "active",
+      attachedSessionIds: [String(sessionId)],
+    }));
+
+    const result = await authority.settleProgramMutation({
+      sessionId: sessionId as never,
+      operationId,
+      program: operationalContext,
+      quiescenceProven: true,
+      buildTerminalDrafts: () => [{
+        eventId: "failed-completed-event" as never,
+        workspaceId: workspaceId as never,
+        sessionId: sessionId as never,
+        operationId: operationId as never,
+        programStateId: programStateId as never,
+        occurredAt: "2026-08-27T00:00:03.000Z",
+        type: "operation.completed",
+        payload: { operationId, outcome: "failed", workspaceAccessClass: "may_write" },
+        payloadSchemaVersion: 1,
+        producer: { kind: "runtime", component: "test" },
+      }, {
+        eventId: "failed-quiesced-event" as never,
+        workspaceId: workspaceId as never,
+        sessionId: sessionId as never,
+        operationId: operationId as never,
+        programStateId: programStateId as never,
+        occurredAt: "2026-08-27T00:00:03.000Z",
+        type: "operation.mutation_quiesced",
+        payload: {
+          operationId,
+          containment: "operation_scoped_containment",
+          containmentInstanceId: "scope-1",
+          proofContractId: "host-capability-promise-v1",
+          proofContractVersion: 1,
+          proofKind: "operation_containment_ended",
+          proofEvidenceDigest: "failed-proof-digest",
+        },
+        payloadSchemaVersion: 1,
+        producer: { kind: "runtime", component: "test" },
+      }],
+    });
+
+    expect(fixture.events.some((event) => event.type === "operation.completed")).toBe(true);
+    expect(fixture.events.some((event) => event.type === "operation.mutation_quiesced")).toBe(true);
+    expect(fixture.events.some((event) => event.type === "workspace.effect_generation.advanced")).toBe(false);
+    const transition = fixture.events.find((event) =>
+      event.type === "program.transitioned"
+      && event.producer.kind === "runtime"
+      && event.producer.component === "program-adaptive-settlement-v2");
+    expect(transition).toBeDefined();
+    const state = (transition!.payload as { state: ProgramState }).state;
+    expect(state.activeAttempt).toBeNull();
+    expect(state.executionBaseUnavailable).toBe(true);
+    expect(state.workItems[0]?.lifecycle).toBe("awaiting_verification");
+    expect(result.state?.executionBaseUnavailable).toBe(true);
+  });
+
+  it("certifies an unchanged numeric-exit Host verifier as effect-absent without invalidating its Attempt", async () => {
+    const awaitingRaw = raw();
+    const awaitingCreated = {
+      ...programCreated(),
+      payload: {
+        state: {
+          ...awaitingRaw,
+          workItems: [{ ...awaitingRaw.workItems[0]!, lifecycle: "awaiting_verification" }],
+        },
+      },
+    } as unknown as PersistedDomainEvent<string, unknown>;
+    const verifierRequested = {
+      ...requestedEvent(),
+      payload: {
+        ...(requestedEvent().payload as Record<string, unknown>),
+        programVerificationOperationCompletionSemantics: "numeric_exit_is_completed",
+      },
+    } as unknown as PersistedDomainEvent<string, unknown>;
+    const fixture = fakeStore([awaitingCreated, verifierRequested]);
+    const authority = service(fixture, async () => ({
+      programStateRevision: 9,
+      semanticState: semantic("awaiting_verification"),
+      activeAttempt: {
+        programAttemptId: attemptId,
+        workItemId: workId,
+        workItemGeneration: 2,
+        directDependencies: [],
+        workAuthorityEnvelope: envelope(),
+      },
+      lifecycle: "active",
+      attachedSessionIds: [String(sessionId)],
+    }));
+
+    const result = await authority.settleProgramMutation({
+      sessionId: sessionId as never,
+      operationId,
+      program: { ...operationalContext, expectedProgramRevision: 9 },
+      quiescenceProven: true,
+      buildTerminalDrafts: () => [{
+        eventId: "measurement-completed-event" as never,
+        workspaceId: workspaceId as never,
+        sessionId: sessionId as never,
+        operationId: operationId as never,
+        programStateId: programStateId as never,
+        occurredAt: "2026-08-27T00:00:04.000Z",
+        type: "operation.completed",
+        payload: { operationId, outcome: "succeeded", workspaceAccessClass: "may_write" },
+        payloadSchemaVersion: 1,
+        producer: { kind: "runtime", component: "test" },
+      }, {
+        eventId: "measurement-quiesced-event" as never,
+        workspaceId: workspaceId as never,
+        sessionId: sessionId as never,
+        operationId: operationId as never,
+        programStateId: programStateId as never,
+        occurredAt: "2026-08-27T00:00:04.000Z",
+        type: "operation.mutation_quiesced",
+        payload: {
+          operationId,
+          containment: "operation_scoped_containment",
+          containmentInstanceId: "scope-1",
+          proofContractId: "host-capability-promise-v1",
+          proofContractVersion: 1,
+          proofKind: "operation_containment_ended",
+          proofEvidenceDigest: "measurement-proof-digest",
+        },
+        payloadSchemaVersion: 1,
+        producer: { kind: "runtime", component: "test" },
+      }],
+    });
+
+    const completed = fixture.events.find((event) => event.type === "operation.completed");
+    expect(completed?.payload).toMatchObject({
+      operationId,
+      outcome: "succeeded",
+      toolDeclaredEffect: "absent",
+    });
+    expect(fixture.events.some((event) => event.type === "workspace.effect_generation.advanced")).toBe(false);
+    expect(fixture.events.some((event) =>
+      event.type === "program.transitioned"
+      && event.producer.kind === "runtime"
+      && event.producer.component === "program-adaptive-settlement-v2")).toBe(false);
+    expect(result.state?.activeAttempt?.programAttemptId).toBe(attemptId);
+    expect(result.state?.executionBaseUnavailable).toBe(false);
+    expect(result.state?.acceptedExecutionBase).toEqual(base());
   });
 
   it("rejects settlement from a Session that did not request the admitted mutation", async () => {

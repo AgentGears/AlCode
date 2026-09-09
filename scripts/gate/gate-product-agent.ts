@@ -43,9 +43,11 @@ checks.push(check(
   () => vitest(
     "packages/coding-agent/src/agent-protocol-planning-read.test.ts",
     "packages/coding-agent/src/planning-read-catalog.test.ts",
+    "packages/coding-agent/src/planning-read-catalog.semantic.test.ts",
+    "packages/coding-agent/src/semantic-planning-read.test.ts",
     "packages/host-runtime/src/planning-catalog.test.ts",
   ),
-  "planning uses the privileged semantic client plus exact bounded Host catalog/tracked observations and recheckable identities",
+  "planning uses the privileged semantic client plus exact bounded Host catalog/tracked observations and recheckable identities, including current CodeIntelligence symbol/reference/diagnostic projections",
 ));
 
 checks.push(check(
@@ -82,6 +84,12 @@ checks.push(check(
   "product-agent.ac08.retry",
   () => vitest("packages/host-runtime/src/program-retry-context.p01.test.ts"),
   "the passed Phase 1.1 retry scenario proves negative verification retires the old Attempt and dispatches a fresh retry; the P-01-specific proof independently verifies bounded Host-owned failed-verification context",
+));
+
+checks.push(check(
+  "product-agent.p02.semantic-verifier-retry",
+  () => vitest("packages/coding-agent/src/cli-p02-semantic-retry.integration.test.ts"),
+  "the authorized P-02 vertical proves semantic planning, a typed Host verifier negative result, bounded failure evidence, fresh ProgramAttempt retry, fresh semantic observation, corrective execution, verifier success, and Host Completion",
 ));
 
 checks.push(check(
@@ -154,6 +162,7 @@ const receipt = buildReceipt({
     { name: "P-01 frozen AC-P01-01 through AC-P01-12" },
     { name: "Phase 1.1 closed gate" },
     { name: "relevant S-01 authority/lifecycle proofs" },
+    { name: "authorized P-02 Semantic Planning + Verification Quality vertical" },
   ],
   checks,
 });

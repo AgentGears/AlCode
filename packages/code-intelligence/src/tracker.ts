@@ -52,6 +52,10 @@ export class WorkspaceRevisionTracker {
     };
   }
 
+  isRevisionTrackedPath(workspaceRelativePath: string): boolean {
+    return !this.isIgnored(workspaceRelativePath.replace(/\\/g, "/"));
+  }
+
   onChange(listener: (snapshot: TrackerSnapshot) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);

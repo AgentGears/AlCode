@@ -751,7 +751,29 @@ export class ProgramDispatchServiceV1 {
         }
 
         const outcome = String(record(completed.payload).outcome ?? "failed");
-        const effectConfirmed = outcome === "succeeded";
+        const currentAttemptForMeasurement = state.lifecycle === "active" ? state.activeAttempt : null;
+        const measurementEffectAbsent =
+          requestedPayload.programVerificationOperationCompletionSemantics === "numeric_exit_is_completed" &&
+          input.quiescenceProven &&
+          quiesced !== undefined &&
+          postObservation?.status === "complete" &&
+          state.revision === input.program.expectedProgramRevision &&
+          currentAttemptForMeasurement !== null &&
+          String(currentAttemptForMeasurement.programAttemptId) === programAttemptId &&
+          String(currentAttemptForMeasurement.sessionId) === sessionId &&
+          currentAttemptForMeasurement.agentGeneration === input.program.agentGeneration &&
+          sameBase(
+            currentAttemptForMeasurement.expectedExecutionBase,
+            effectiveObservedBase(events, postObservation.base),
+          );
+        if (measurementEffectAbsent) {
+          const completedIndex = terminalDrafts.indexOf(completed);
+          terminalDrafts[completedIndex] = {
+            ...completed,
+            payload: { ...record(completed.payload), toolDeclaredEffect: "absent" },
+          };
+        }
+        const effectConfirmed = outcome === "succeeded" && !measurementEffectAbsent;
         const settlementDrafts: EventDraft<string, unknown>[] = [...terminalDrafts];
         let nextState: ProgramState | null = state;
 
@@ -829,7 +851,7 @@ export class ProgramDispatchServiceV1 {
               }
             }
           }
-        } else if (state.lifecycle === "active") {
+        } else if (!measurementEffectAbsent && state.lifecycle === "active") {
           // A failed may_write has indeterminate effect certainty. Whether or not
           // quiescence is proven, no trusted execution base may be adopted.
           nextState = applyProgramTransition(state, {

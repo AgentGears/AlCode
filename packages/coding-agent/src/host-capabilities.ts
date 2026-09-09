@@ -21,7 +21,7 @@ import { createWriteTool } from "./tools/write.ts";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyAgentTool = AgentTool<any, any>;
 
-const OPERATION_SCOPED_PROOF_CONTRACT_ID = "coding-agent-owned-tool-promise-v1";
+const OPERATION_SCOPED_PROOF_CONTRACT_ID = "host-capability-promise-v1";
 const OPERATION_SCOPED_PROOF_CONTRACT_VERSION = 1;
 
 function extractNumber(details: unknown, key: string): number | null | undefined {

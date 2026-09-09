@@ -27,7 +27,7 @@ import {
 import { openLockedWorkspaceStore, type LockedWorkspaceStore } from "@alcode/storage";
 import { CanonicalAdmissionQueue } from "./admission-queue.ts";
 import { CognitionGateway } from "./cognition-gateway.ts";
-import { CapabilityBroker, type HostCapability } from "./capability-broker.ts";
+import { CapabilityBroker, type CapabilityBrokerResult, type HostCapability } from "./capability-broker.ts";
 import { HostArtifactStore } from "./artifact-store.ts";
 import { DefaultHostPolicy } from "./policy.ts";
 import { planningCanonicalDigest } from "./planning-read.ts";
@@ -76,6 +76,8 @@ async function latestState(store: LockedWorkspaceStore, programStateId: string):
 async function setup(
   makeCapability: (observations: ObservationSource) => HostCapability,
   verificationKind: "operation" | "path" | "artifact" = "operation",
+  operationCompletionSemantics?: "numeric_exit_is_completed",
+  operationSuccess?: (result: CapabilityBrokerResult) => boolean,
 ) {
   const dir = mkdtempSync(join(tmpdir(), "alcode-program-verification-"));
   dirs.push(dir);
@@ -150,7 +152,8 @@ async function setup(
   const registry = new HostVerificationOperationRegistryV1([{
     specId: "verify-spec", specVersion: 1, capabilityName: capability.name,
     workspaceAccessClass: capability.workspaceAccessClass ?? (capability.isReadOnly ? "read_only" : "may_write"),
-    isSuccessful: (result) => result.outcome === "succeeded" && typeof result.result === "string",
+    ...(operationCompletionSemantics !== undefined ? { operationCompletionSemantics } : {}),
+    isSuccessful: operationSuccess ?? ((result) => result.outcome === "succeeded" && typeof result.result === "string"),
     extractOutput: (result, channel) => channel === "stdout" && typeof result.result === "string" ? result.result : undefined,
   }]);
   const pathObservations = new PathObservationSource(observations);
@@ -185,6 +188,65 @@ describeLocked("Program operation_result verification", () => {
     });
   });
 
+  it("allows a quiescent typed verifier to certify the unchanged execution base without inventing a mutation", async () => {
+    const f = await setup(() => ({
+      name: "verify", workspaceAccessClass: "may_write",
+      quiescence: { containmentKind: "operation_scoped_containment", proofContractId: "host-capability-promise-v1", proofContractVersion: 1 },
+      async execute(_args, context) {
+        const containmentInstanceId = context.quiescenceContract!.containmentInstanceId;
+        return {
+          result: "verified", outcome: "succeeded",
+          quiescenceProof: {
+            containmentInstanceId, proofContractId: "host-capability-promise-v1", proofContractVersion: 1,
+            proofKind: "operation_containment_ended", evidence: { kind: "operation_scope_ended", containmentInstanceId },
+          },
+        };
+      },
+    }), "operation", "numeric_exit_is_completed");
+    const result = await f.service.satisfyOperationResult({
+      programStateId: String(f.initial.programStateId), expectedProgramRevision: f.withAttempt.revision,
+      verificationObligationId: String(f.obligationId), sessionId: f.sessionId,
+    });
+    expect(result.status).toBe("satisfied");
+    const state = await latestState(f.locked, String(f.initial.programStateId));
+    expect(isVerificationCurrent(state.verification[0]!)).toBe(true);
+    const events = [] as Array<{ type: string; payload: unknown }>;
+    for await (const event of f.locked.store.replay()) events.push({ type: event.type, payload: event.payload });
+    const completed = events.find((event) => event.type === "operation.completed")!;
+    expect((completed.payload as Record<string, unknown>).toolDeclaredEffect).toBe("absent");
+    expect(events.some((event) => event.type === "workspace.effect_generation.advanced")).toBe(false);
+  });
+
+  it("keeps a negative typed verifier measurement terminal and effect-absent so retry can remain authoritative", async () => {
+    const f = await setup(() => ({
+      name: "verify", workspaceAccessClass: "may_write",
+      quiescence: { containmentKind: "operation_scoped_containment", proofContractId: "host-capability-promise-v1", proofContractVersion: 1 },
+      async execute(_args, context) {
+        const containmentInstanceId = context.quiescenceContract!.containmentInstanceId;
+        return {
+          result: { details: { exitCode: 1 } }, outcome: "failed", exitCode: 1,
+          quiescenceProof: {
+            containmentInstanceId, proofContractId: "host-capability-promise-v1", proofContractVersion: 1,
+            proofKind: "operation_containment_ended", evidence: { kind: "operation_scope_ended", containmentInstanceId },
+          },
+        };
+      },
+    }), "operation", "numeric_exit_is_completed", () => false);
+    const result = await f.service.satisfyOperationResult({
+      programStateId: String(f.initial.programStateId), expectedProgramRevision: f.withAttempt.revision,
+      verificationObligationId: String(f.obligationId), sessionId: f.sessionId,
+    });
+    expect(result.status).toBe("not_satisfied");
+    const events = [] as Array<{ type: string; payload: unknown }>;
+    for await (const event of f.locked.store.replay()) events.push({ type: event.type, payload: event.payload });
+    const completed = events.find((event) => event.type === "operation.completed")!;
+    expect(completed.payload).toMatchObject({ outcome: "succeeded", toolDeclaredEffect: "absent" });
+    expect(events.some((event) => event.type === "workspace.effect_generation.advanced")).toBe(false);
+    const state = await latestState(f.locked, String(f.initial.programStateId));
+    expect(state.revision).toBe(f.withAttempt.revision);
+    expect(state.activeAttempt?.programAttemptId).toBe(f.withAttempt.activeAttempt?.programAttemptId);
+  });
+
   it("does not let a mutating verifier self-certify the generation its unknown impact invalidates", async () => {
     const f = await setup((observations) => ({
       name: "verify", workspaceAccessClass: "may_write",
@@ -200,7 +262,7 @@ describeLocked("Program operation_result verification", () => {
           },
         };
       },
-    }));
+    }), "operation", "numeric_exit_is_completed");
     const result = await f.service.satisfyOperationResult({
       programStateId: String(f.initial.programStateId), expectedProgramRevision: f.withAttempt.revision,
       verificationObligationId: String(f.obligationId), sessionId: f.sessionId,

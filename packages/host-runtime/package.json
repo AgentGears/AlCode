@@ -17,6 +17,10 @@
     "./adaptive-production-v1": {
       "types": "./src/program-adaptive-production-entry-v1.ts",
       "import": "./src/program-adaptive-production-entry-v1.ts"
+    },
+    "./code-intelligence": {
+      "types": "./src/code-intelligence.ts",
+      "import": "./src/code-intelligence.ts"
     }
   },
   "scripts": {

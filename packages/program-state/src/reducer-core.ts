@@ -250,7 +250,9 @@ export function applyProgramTransition(
       const index = findWorkIndex(state, attempt.workItemId);
       const work = state.workItems[index]!;
       const workItems = [...state.workItems];
-      if (work.lifecycle === "in_progress") workItems[index] = { ...work, lifecycle: "pending" };
+      if (work.lifecycle === "in_progress" || work.lifecycle === "awaiting_verification") {
+        workItems[index] = { ...work, lifecycle: "pending" };
+      }
       return finalize(state, { ...state, workItems, activeAttempt: null });
     }
 

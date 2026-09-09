@@ -154,6 +154,8 @@ export interface CapabilityBrokerRequest {
   program?: ProgramCapabilityOperationContextV1;
   /** Host-only stable Program verification provenance; never Agent-authored. */
   programVerificationInvocation?: HostProgramVerificationInvocationV1;
+  /** Host-only execution-completion policy selected by the admitted verifier spec. */
+  programVerificationOperationCompletionSemantics?: "numeric_exit_is_completed";
   signal?: AbortSignal;
 }
 
@@ -246,12 +248,30 @@ function verificationResultData(execution: HostCapabilityResult, outcome: Execut
   const stderr = execution.stderr ?? "";
   return {
     exit_code: execution.exitCode ?? null,
-    is_failure: outcome !== "succeeded",
+    is_failure: typeof execution.exitCode === "number"
+      ? execution.exitCode !== 0
+      : outcome !== "succeeded",
     stdout,
     stderr,
     stdout_digest: canonicalDigestOf(stdout),
     stderr_digest: canonicalDigestOf(stderr),
   };
+}
+
+function programVerificationOperationOutcome(
+  request: CapabilityBrokerRequest,
+  execution: HostCapabilityResult,
+  rawOutcome: ExecutionOutcome,
+): ExecutionOutcome {
+  if (
+    request.programVerificationInvocation?.kind === "operation_result"
+    && request.programVerificationOperationCompletionSemantics === "numeric_exit_is_completed"
+    && rawOutcome === "failed"
+    && typeof execution.exitCode === "number"
+  ) {
+    return "succeeded";
+  }
+  return rawOutcome;
 }
 
 function workspaceAccessClassOf(capability: HostCapability): WorkspaceAccessClassV1 {
@@ -583,6 +603,9 @@ export class CapabilityBroker {
           ...(request.programVerificationInvocation !== undefined
             ? { programVerificationInvocation: freezeCanonical(request.programVerificationInvocation) }
             : {}),
+          ...(request.programVerificationOperationCompletionSemantics !== undefined
+            ? { programVerificationOperationCompletionSemantics: request.programVerificationOperationCompletionSemantics }
+            : {}),
         },
         payloadSchemaVersion: 1, producer: { kind: "runtime", component: "host-capability-broker" },
       },
@@ -699,7 +722,8 @@ export class CapabilityBroker {
         ...(quiescenceContract !== undefined ? { quiescenceContract } : {}),
       };
       execution = await capability.execute(frozenArgs, context);
-      outcome = execution.outcome ?? "succeeded";
+      const rawOutcome = execution.outcome ?? "succeeded";
+      outcome = programVerificationOperationOutcome(request, execution, rawOutcome);
     } catch (error) {
       outcome = "failed";
       execution = { result: { error: error instanceof Error ? error.message : String(error) }, outcome };
