@@ -35,6 +35,8 @@ export interface CodeModeDispatchCallV1 {
   toolName: string;
   args: unknown;
   subcallIndex: number;
+  /** Bounded local wait signal; abort never fabricates Host Operation/effect truth. */
+  signal: AbortSignal;
 }
 
 export type CodeModeDispatchV1 = (call: CodeModeDispatchCallV1) => Promise<unknown>;
@@ -173,6 +175,7 @@ export async function runCodeModeV1WithLimitsForTest(
   let maxConcurrent = 0;
   const queue: DispatchTask[] = [];
   const inFlight = new Set<Promise<void>>();
+  const dispatchController = new AbortController();
 
   const post = (message: unknown): void => {
     if (workerExited) return;
@@ -224,9 +227,11 @@ export async function runCodeModeV1WithLimitsForTest(
       drainingAcceptedQueue = false;
       queue.length = 0;
       clearControls();
+      const failure = new CodeModeV1Error(code, boundedText(message, limits.diagnosticBytes));
+      if (!dispatchController.signal.aborted) dispatchController.abort(failure);
       await stopWorker(false);
       await drainIssued();
-      reject(new CodeModeV1Error(code, boundedText(message, limits.diagnosticBytes)));
+      reject(failure);
     };
 
     const settleFromWorker = async (message: WorkerSettledMessage): Promise<void> => {
@@ -294,6 +299,7 @@ export async function runCodeModeV1WithLimitsForTest(
           toolName: message.toolName,
           args,
           subcallIndex: message.subcallIndex,
+          signal: dispatchController.signal,
         });
         const projected = jsonProjection(result);
         if (projected.bytes > limits.toolResultBytes) {

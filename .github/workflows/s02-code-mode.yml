@@ -1,0 +1,86 @@
+name: S02 Code Mode
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/agent-protocol/src/local-orchestration-v1.ts'
+      - 'packages/agent-protocol/src/messages.ts'
+      - 'packages/agent-protocol/src/validation.ts'
+      - 'packages/agent-protocol/src/protocol.test.ts'
+      - 'packages/agent-protocol/src/index.ts'
+      - 'packages/code-mode/**'
+      - 'extensions/cognition/src/host-client.ts'
+      - 'extensions/cognition/src/proxy-tools.ts'
+      - 'extensions/cognition/package.json'
+      - 'extensions/cognition/tsconfig.json'
+      - 'packages/coding-agent/src/agent-worker.ts'
+      - 'packages/coding-agent/src/agent-protocol-bridge.ts'
+      - 'packages/coding-agent/src/agent-protocol-bridge.test.ts'
+      - 'packages/coding-agent/src/inference-runtime.ts'
+      - 'packages/coding-agent/src/inference-runtime-s02-3.test.ts'
+      - 'packages/coding-agent/src/inference-runtime-s02-4*.test.ts'
+      - 'packages/coding-agent/src/cli-s02-code-mode.integration.test.ts'
+      - 'packages/coding-agent/package.json'
+      - 'packages/host-runtime/src/local-orchestration-catalog-v1.ts'
+      - 'packages/host-runtime/src/local-orchestration-catalog-v1.test.ts'
+      - 'packages/host-runtime/src/program-execution-runtime-v2.ts'
+      - 'packages/host-runtime/src/program-execution-runtime-v2.test.ts'
+      - 'packages/host-runtime/src/program-agent-s02-4.test.ts'
+      - 'packages/host-runtime/src/program-adaptive-operation-s02-4*.test.ts'
+      - 'scripts/gate/gate-s02-code-mode.ts'
+      - 'docs/s02-programattempt-local-orchestration-plan.md'
+      - 'docs/s02-code-mode-as-built.md'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/s02-code-mode.yml'
+  pull_request:
+    paths:
+      - 'packages/agent-protocol/src/local-orchestration-v1.ts'
+      - 'packages/agent-protocol/src/messages.ts'
+      - 'packages/agent-protocol/src/validation.ts'
+      - 'packages/agent-protocol/src/protocol.test.ts'
+      - 'packages/agent-protocol/src/index.ts'
+      - 'packages/code-mode/**'
+      - 'extensions/cognition/src/host-client.ts'
+      - 'extensions/cognition/src/proxy-tools.ts'
+      - 'extensions/cognition/package.json'
+      - 'extensions/cognition/tsconfig.json'
+      - 'packages/coding-agent/src/agent-worker.ts'
+      - 'packages/coding-agent/src/agent-protocol-bridge.ts'
+      - 'packages/coding-agent/src/agent-protocol-bridge.test.ts'
+      - 'packages/coding-agent/src/inference-runtime.ts'
+      - 'packages/coding-agent/src/inference-runtime-s02-3.test.ts'
+      - 'packages/coding-agent/src/inference-runtime-s02-4*.test.ts'
+      - 'packages/coding-agent/src/cli-s02-code-mode.integration.test.ts'
+      - 'packages/coding-agent/package.json'
+      - 'packages/host-runtime/src/local-orchestration-catalog-v1.ts'
+      - 'packages/host-runtime/src/local-orchestration-catalog-v1.test.ts'
+      - 'packages/host-runtime/src/program-execution-runtime-v2.ts'
+      - 'packages/host-runtime/src/program-execution-runtime-v2.test.ts'
+      - 'packages/host-runtime/src/program-agent-s02-4.test.ts'
+      - 'packages/host-runtime/src/program-adaptive-operation-s02-4*.test.ts'
+      - 'scripts/gate/gate-s02-code-mode.ts'
+      - 'docs/s02-programattempt-local-orchestration-plan.md'
+      - 'docs/s02-code-mode-as-built.md'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/s02-code-mode.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10.13.1 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.17.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run frozen S02 Code Mode gate
+        run: pnpm gate:s02-code-mode

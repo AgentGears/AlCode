@@ -181,7 +181,7 @@ Definitions:
 - **active local compute** counts local VM execution time and excludes time spent awaiting Host capability responses;
 - **orchestration wall time** bounds the period in which the local program may schedule new work;
 - when wall/compute/call limits expire, no new tool sub-dispatch may be admitted;
-- already-issued Host capability requests drain under their own existing bounded Operation/capability contracts even if that drain extends beyond the local orchestration wall budget;
+- already-issued Host capability requests are retained while live, but cancellation or orchestration-wall expiry must abort the Agent-side pending wait before inference-scope disposal can hang indefinitely; abandoning that wait never fabricates Host terminal/effect truth—already-admitted Operations remain Host-owned and unresolved mutation/quiescence truth continues to hold the existing writer/recovery barriers;
 - concurrency above four is locally queued, not silently executed beyond the bound; total calls above sixteen fail deterministically;
 - oversized source/input/final-result values fail before the relevant action; oversized tool-result projection fails that local subcall rather than fabricating a partial successful value;
 - no retry loop may reset these counters inside one `run_code` invocation.
@@ -250,9 +250,10 @@ On Agent-run cancellation, local compute timeout, orchestration wall timeout, so
 1. stop accepting/scheduling new local subcalls;
 2. signal/terminate the local VM computation;
 3. retain references to every Host capability request already issued;
-4. await those issued requests to their bounded response/terminal outcome;
-5. settle the outer `run_code` Agent tool result with a bounded deterministic error/result summary;
-6. dispose the inference scope normally.
+4. boundedly terminate the Agent-side wait for any issued request that has not returned by cancellation/orchestration-wall expiry, so local drain and inference-scope disposal cannot remain live indefinitely;
+5. treat an abandoned Agent-side wait as no environmental conclusion: any already-admitted Host Operation remains independently settleable/reconcilable, and unresolved mutation/quiescence truth retains the existing writer/recovery barriers;
+6. settle the outer `run_code` Agent tool result with a bounded deterministic error/result summary;
+7. dispose the inference scope normally.
 
 If the entire Agent process is terminated, the local worker dies with it. Already-admitted Host Operations remain Host-owned and are recovered/reconciled by the existing runtime. No local VM state is reconstructed in the replacement Agent.
 
@@ -337,7 +338,7 @@ Source, heap, stack, compute, wall, tool-call count, concurrency, per-call input
 
 ### AC-S02-09 — Cancellation and drain
 
-Cancellation/timeout/runtime failure stops new local sub-dispatch, terminates local computation, drains already-issued Host capability requests, and leaves no live local worker after `run_code` settlement or Agent-run disposal.
+Cancellation/timeout/runtime failure stops new local sub-dispatch, terminates local computation, boundedly drains or aborts Agent-side waits for already-issued Host capability requests, preserves independent Host Operation/effect uncertainty for any request that may already be admitted, and leaves no live local worker or inference-scope admission after `run_code` settlement or Agent-run disposal.
 
 ### AC-S02-10 — Disposable lifecycle
 
@@ -417,7 +418,7 @@ Attempt `process`, environment access, filesystem/module import, child process, 
 
 ### Scenario M — cancellation with in-flight calls
 
-Cancel the Agent run while one or more Host calls are issued. New calls stop, local compute terminates, issued requests drain to bounded responses, and inference-scope disposal completes without leaked worker state.
+Cancel the Agent run while one or more Host calls are issued. New calls stop, local compute terminates, the Agent-side waits are boundedly drained/aborted, inference-scope disposal completes without leaked worker state, and any already-admitted Host Operation remains independently settleable/reconcilable without fabricated effect absence.
 
 ### Scenario N — Agent replacement mid-cell
 
@@ -477,7 +478,7 @@ Scope:
 - route every worker call through the captured peer `AgentTool.execute(...)`;
 - preserve captured ProgramAttemptAuthorityV2 and dynamic binding revisions automatically through those proxies;
 - enforce unique subcall identities and concurrency/call-count bounds;
-- drain issued requests before local-tool settlement.
+- bound issued-request drain through the local dispatch signal before local-tool/inference-scope settlement while preserving independent Host Operation/effect truth.
 
 No new direct AgentProtocolClient capability-construction path is allowed.
 

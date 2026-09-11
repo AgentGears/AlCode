@@ -153,7 +153,7 @@ function createRunCodeTool(input: {
             code: rawInput.code,
             toolNames: peerNames,
             signal: localSignal,
-            dispatch: async ({ toolName, args, subcallIndex }) => {
+            dispatch: async ({ toolName, args, subcallIndex, signal }) => {
               if (input.programAttemptAuthorityLost()) {
                 throw new Error("ProgramAttempt authority is stale; later local sub-dispatches are blocked");
               }
@@ -163,6 +163,7 @@ function createRunCodeTool(input: {
               }
               const subcallContext: ToolExecutionContext = {
                 ...context,
+                signal,
                 toolCallId: `${rootToolCallId}:local:${subcallIndex}`,
               };
               const peerResult = await peer.execute(args as Record<string, unknown>, subcallContext);

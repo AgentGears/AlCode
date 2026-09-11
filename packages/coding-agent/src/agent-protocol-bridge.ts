@@ -218,6 +218,7 @@ class AgentProtocolBridge implements AgentProtocolClient {
         && message.sessionId === request.sessionId
         && message.toolCallId === request.toolCallId
         && message.toolName === request.toolName,
+      request.signal !== undefined ? { signal: request.signal } : {},
     );
   }
 
