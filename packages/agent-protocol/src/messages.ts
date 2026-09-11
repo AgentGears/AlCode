@@ -35,7 +35,8 @@ export interface ModelToolDefinition {
 
 export type CapabilityBinding =
   | { kind: "static" }
-  | { kind: "dynamic"; revision: string };
+  | { kind: "dynamic"; revision: string }
+  | { kind: "agent_local_code_mode_v1" };
 
 export interface AuthorizedToolDescriptor {
   definition: ModelToolDefinition;

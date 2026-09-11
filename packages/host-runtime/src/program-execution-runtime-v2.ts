@@ -1,6 +1,7 @@
 import {
   DYNAMIC_CAPABILITY_BINDING_CAPABILITY,
   GRAPH_CONTEXT_CAPABILITY,
+  LOCAL_ORCHESTRATION_CAPABILITY,
   PROGRAM_EXECUTION_V2_CAPABILITY,
   PROGRAM_EXECUTION_V2_MESSAGE_VERSION,
   PROGRAM_STATE_V2_CAPABILITY,
@@ -35,6 +36,7 @@ import {
 } from "./program-agent-v2.ts";
 import type { ProgramExecutionRuntimeV1 } from "./program-execution-runtime.ts";
 import type { HostSessionHandle } from "./session-manager.ts";
+import { appendRunCodeDescriptorV1, shouldAdvertiseRunCodeV1 } from "./local-orchestration-catalog-v1.ts";
 
 function cognitionDescriptors(): AuthorizedToolDescriptor[] {
   return [...COGNITION_TOOL_NAMES]
@@ -137,11 +139,18 @@ export class ProgramExecutionRuntimeV2 {
     this.agent = new ProgramAgentServiceV2(options.adaptive);
   }
 
-  private toolCatalog(includeDynamic: boolean): InferenceToolCatalog {
-    const tools = [...cognitionDescriptors(), ...this.host.capabilityBroker.describeCapabilities(includeDynamic)]
-      .sort((left, right) => left.definition.name < right.definition.name
-        ? -1
-        : left.definition.name > right.definition.name ? 1 : 0);
+  private toolCatalog(
+    includeDynamic: boolean,
+    includeLocalOrchestration: boolean,
+    reserveLocalOrchestrationName: boolean,
+  ): InferenceToolCatalog {
+    const tools = appendRunCodeDescriptorV1(
+      [...cognitionDescriptors(), ...this.host.capabilityBroker.describeCapabilities(includeDynamic)],
+      includeLocalOrchestration,
+      reserveLocalOrchestrationName,
+    ).sort((left, right) => left.definition.name < right.definition.name
+      ? -1
+      : left.definition.name > right.definition.name ? 1 : 0);
     for (let index = 1; index < tools.length; index++) {
       if (tools[index - 1]?.definition.name === tools[index]?.definition.name) {
         throw new Error(`duplicate effective capability: ${tools[index]!.definition.name}`);
@@ -260,7 +269,17 @@ export class ProgramExecutionRuntimeV2 {
             const cacheKey = `${connection.generationId}:${message.requestId}`;
             let update = this.contextCache.get(cacheKey);
             if (update === undefined) {
-              const toolCatalog = this.toolCatalog(includeDynamic);
+              const programAttempt = await this.agent.currentAttemptProjection(sessionId, connection.generationId);
+              const localOrchestrationNegotiated = capabilities.includes(LOCAL_ORCHESTRATION_CAPABILITY);
+              const runCodeAuthorized = shouldAdvertiseRunCodeV1(
+                capabilities,
+                programAttempt?.work.satisfactionState,
+              );
+              const toolCatalog = this.toolCatalog(
+                includeDynamic,
+                runCodeAuthorized,
+                localOrchestrationNegotiated,
+              );
               const refreshed = await this.host.contextService.refresh({
                 requestId: message.requestId,
                 sessionId,
@@ -268,17 +287,18 @@ export class ProgramExecutionRuntimeV2 {
                 toolDefinitions: toolCatalog.tools.map((tool) => tool.definition),
                 graphCapable: graphContext,
               });
-              update = await this.agent.enrichContextUpdate(
-                {
-                  ...refreshed,
-                  ...(includeDynamic ? { toolCatalog } : {}),
-                },
-                sessionId,
-                connection.generationId,
-              );
-              this.contextCache.set(cacheKey, update);
+              const { programAttempt: _legacyProgramAttempt, ...refreshedWithoutProgramAttempt } = refreshed;
+              const nextUpdate: ContextUpdateV2 = {
+                ...refreshedWithoutProgramAttempt,
+                ...((includeDynamic || localOrchestrationNegotiated) ? { toolCatalog } : {}),
+                ...(programAttempt !== undefined ? { programAttempt } : {}),
+              };
+              update = nextUpdate;
+              this.contextCache.set(cacheKey, nextUpdate);
             }
-            try { await adaptiveTransport.send(update); } catch {}
+            const currentUpdate = update;
+            if (currentUpdate === undefined) throw new Error("Adaptive context update was not produced");
+            try { await adaptiveTransport.send(currentUpdate); } catch {}
             return;
           }
 
