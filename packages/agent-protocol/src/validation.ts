@@ -11,6 +11,10 @@ import {
   type AgentToHostMessage,
   type HostToAgentMessage,
 } from "./messages.ts";
+import {
+  AGENT_LOCAL_CODE_MODE_BINDING_KIND,
+  RUN_CODE_TOOL_DEFINITION,
+} from "./local-orchestration-v1.ts";
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -116,17 +120,34 @@ function isModelToolDefinition(value: unknown): boolean {
 function isCapabilityBinding(value: unknown): boolean {
   if (!isObject(value)) return false;
   if (value.kind === "static") return true;
+  if (value.kind === AGENT_LOCAL_CODE_MODE_BINDING_KIND) return hasOnlyKeys(value, ["kind"]);
   return value.kind === "dynamic" && hasString(value, "revision");
+}
+
+function isCanonicalRunCodeDescriptor(value: Record<string, unknown>): boolean {
+  if (!hasOnlyKeys(value, ["definition", "binding", "isReadOnly"])
+      || value.isReadOnly !== false
+      || !isObject(value.binding)
+      || value.binding.kind !== AGENT_LOCAL_CODE_MODE_BINDING_KIND
+      || !hasOnlyKeys(value.binding, ["kind"])) return false;
+  try {
+    return JSON.stringify(value.definition) === JSON.stringify(RUN_CODE_TOOL_DEFINITION);
+  } catch {
+    return false;
+  }
 }
 
 function isInferenceToolCatalog(value: unknown): boolean {
   return isObject(value)
     && hasString(value, "digest")
     && Array.isArray(value.tools)
-    && value.tools.every((tool) => isObject(tool)
-      && isModelToolDefinition(tool.definition)
-      && isCapabilityBinding(tool.binding)
-      && (tool.isReadOnly === undefined || typeof tool.isReadOnly === "boolean"));
+    && value.tools.every((tool) => {
+      if (!isObject(tool) || !isModelToolDefinition(tool.definition) || !isCapabilityBinding(tool.binding)) return false;
+      if (isObject(tool.binding) && tool.binding.kind === AGENT_LOCAL_CODE_MODE_BINDING_KIND) {
+        return isCanonicalRunCodeDescriptor(tool);
+      }
+      return tool.isReadOnly === undefined || typeof tool.isReadOnly === "boolean";
+    });
 }
 
 function isProgramAttemptProjection(value: unknown): boolean {

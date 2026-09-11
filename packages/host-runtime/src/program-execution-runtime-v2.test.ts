@@ -154,6 +154,15 @@ describe("A1 adaptive Program runtime V2 authority composition", () => {
     expect(source).toContain("detachAdaptiveGeneration();");
   });
 
+  it("keeps S02-1 run_code visibility Host-owned, negotiated, and executable-attempt gated", () => {
+    expect(source).toContain("capabilities.includes(LOCAL_ORCHESTRATION_CAPABILITY)");
+    expect(source).toContain("programAttempt?.work.satisfactionState");
+    expect(source).toContain("shouldAdvertiseRunCodeV1(");
+    expect(source).toContain("runCodeAuthorized,\n                localOrchestrationNegotiated");
+    expect(source).toContain("includeDynamic || localOrchestrationNegotiated");
+    expect(source).not.toContain("capabilityCeiling.push");
+  });
+
   it("contains adaptive callback failures and terminates failed refreshes with a Host cancel", () => {
     expect(source).toContain("fail the disposable Agent");
     expect(source).toContain('reason: "Adaptive context refresh failed"');

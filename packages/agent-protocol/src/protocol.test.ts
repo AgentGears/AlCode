@@ -4,6 +4,10 @@ import {
   DURABLE_TRANSCRIPT_CAPABILITY,
   GRAPH_CONTEXT_CAPABILITY,
   DYNAMIC_CAPABILITY_BINDING_CAPABILITY,
+  AGENT_LOCAL_CODE_MODE_BINDING_KIND,
+  LOCAL_ORCHESTRATION_CAPABILITY,
+  RUN_CODE_TOOL_DEFINITION,
+  RUN_CODE_TOOL_NAME,
   createInMemoryTransportPair,
   isAgentToHostMessage,
   isHostToAgentMessage,
@@ -173,6 +177,81 @@ describe("Agent Protocol v1", () => {
       toolName: "mcp__server__lookup",
       args: {},
       expectedCapabilityRevision: 17,
+    })).toBe(false);
+  });
+
+  it("validates the frozen S-02 local orchestration catalog contract without executing code", () => {
+    expect(LOCAL_ORCHESTRATION_CAPABILITY).toBe("local_orchestration_v1");
+    expect(AGENT_LOCAL_CODE_MODE_BINDING_KIND).toBe("agent_local_code_mode_v1");
+    expect(RUN_CODE_TOOL_NAME).toBe("run_code");
+    expect(Object.keys(RUN_CODE_TOOL_DEFINITION.inputSchema.properties)).toEqual(["code"]);
+    expect(RUN_CODE_TOOL_DEFINITION.inputSchema.required).toEqual(["code"]);
+
+    expect(isAgentToHostMessage({
+      type: "agent.hello",
+      protocolVersion: AGENT_PROTOCOL_VERSION,
+      generationId: "g-s02",
+      capabilities: [LOCAL_ORCHESTRATION_CAPABILITY],
+    })).toBe(true);
+
+    const update = {
+      type: "context.update",
+      requestId: "ctx-s02",
+      sessionId: "s1",
+      receiptId: "receipt-s02",
+      effectiveMode: "verbatim-v1",
+      sourceEventSequence: 14,
+      systemPrompt: "host-authorized",
+      messages: [],
+      toolCatalog: {
+        digest: "digest-s02",
+        tools: [{
+          definition: RUN_CODE_TOOL_DEFINITION,
+          binding: { kind: AGENT_LOCAL_CODE_MODE_BINDING_KIND },
+          isReadOnly: false,
+        }],
+      },
+    } as const;
+    expect(isHostToAgentMessage(update)).toBe(true);
+    expect(isHostToAgentMessage({
+      ...update,
+      toolCatalog: {
+        ...update.toolCatalog,
+        tools: [{
+          ...update.toolCatalog.tools[0],
+          binding: { kind: AGENT_LOCAL_CODE_MODE_BINDING_KIND, handler: "arbitrary" },
+        }],
+      },
+    })).toBe(false);
+    expect(isHostToAgentMessage({
+      ...update,
+      toolCatalog: {
+        ...update.toolCatalog,
+        tools: [{
+          ...update.toolCatalog.tools[0],
+          definition: { ...RUN_CODE_TOOL_DEFINITION, name: "arbitrary_local_tool" },
+        }],
+      },
+    })).toBe(false);
+    expect(isHostToAgentMessage({
+      ...update,
+      toolCatalog: {
+        ...update.toolCatalog,
+        tools: [{
+          ...update.toolCatalog.tools[0],
+          definition: {
+            ...RUN_CODE_TOOL_DEFINITION,
+            inputSchema: { type: "object", properties: {}, required: [] },
+          },
+        }],
+      },
+    })).toBe(false);
+    expect(isHostToAgentMessage({
+      ...update,
+      toolCatalog: {
+        ...update.toolCatalog,
+        tools: [{ ...update.toolCatalog.tools[0], isReadOnly: true }],
+      },
     })).toBe(false);
   });
 
