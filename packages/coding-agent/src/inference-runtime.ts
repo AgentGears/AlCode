@@ -145,11 +145,14 @@ function createRunCodeTool(input: {
         }
 
         const rootToolCallId = context.toolCallId ?? randomUUID();
+        const localSignal = context.signal === undefined
+          ? input.scope.signal
+          : AbortSignal.any([input.scope.signal, context.signal]);
         try {
           const result = await runCodeModeV1({
             code: rawInput.code,
             toolNames: peerNames,
-            ...(context.signal !== undefined ? { signal: context.signal } : {}),
+            signal: localSignal,
             dispatch: async ({ toolName, args, subcallIndex }) => {
               if (input.programAttemptAuthorityLost()) {
                 throw new Error("ProgramAttempt authority is stale; later local sub-dispatches are blocked");
