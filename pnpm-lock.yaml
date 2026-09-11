@@ -84,6 +84,9 @@ importers:
       '@alcode/ai':
         specifier: workspace:*
         version: link:../ai
+      '@alcode/code-mode':
+        specifier: workspace:*
+        version: link:../code-mode
       '@alcode/cognition-extension':
         specifier: workspace:*
         version: link:../../extensions/cognition
