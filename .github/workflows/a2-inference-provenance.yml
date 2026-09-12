@@ -1,0 +1,63 @@
+name: A2 Inference Provenance
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/a2-inference-provenance.yml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "scripts/gate/gate-a2-inference-provenance.ts"
+      - "scripts/gate/gate-s02-code-mode.ts"
+      - "docs/a2-inference-provenance-plan.md"
+      - "docs/a2-inference-provenance-as-built.md"
+      - "packages/agent-core/src/**"
+      - "packages/agent-protocol/src/**"
+      - "packages/ai/src/**"
+      - "packages/code-mode/src/**"
+      - "extensions/cognition/src/**"
+      - "packages/coding-agent/src/**"
+      - "packages/host-runtime/src/**"
+      - "packages/transcript/src/**"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/a2-inference-provenance.yml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "scripts/gate/gate-a2-inference-provenance.ts"
+      - "scripts/gate/gate-s02-code-mode.ts"
+      - "docs/a2-inference-provenance-plan.md"
+      - "docs/a2-inference-provenance-as-built.md"
+      - "packages/agent-core/src/**"
+      - "packages/agent-protocol/src/**"
+      - "packages/ai/src/**"
+      - "packages/code-mode/src/**"
+      - "extensions/cognition/src/**"
+      - "packages/coding-agent/src/**"
+      - "packages/host-runtime/src/**"
+      - "packages/transcript/src/**"
+
+jobs:
+  a2-inference-provenance:
+    name: A2 exact-head inference provenance closure
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact candidate head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.17.0
+          cache: pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Run permanent A2 gate on exact candidate head
+        env:
+          ALCODE_GATE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: pnpm gate:a2-inference-provenance
