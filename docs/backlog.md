@@ -16,16 +16,20 @@ Frozen now: `workspace_id`, `repository_id`/`repositoryId`, `session_id`,
 - `worktree_id` — when subagent isolation uses git worktrees.
 - `task_id` — when a unit of work spans sessions (long-horizon tasks).
 - `turn_id` — when turn-level attribution is needed for receipts/analytics.
-- `model_request_id` — when per-request tracing/provenance is needed. Phase 0.7
-  deliberately uses protocol correlation + durable context receipt identity
-  rather than promoting this identity solely for inference refresh.
-- **branded/global `tool_call_id` identity** — Phase 0.6 now preserves the
+- `model_request_id` — **TRIGGERED by A2/S-04 design work.** The 2026-09-12
+  inference-provenance gap study proves protocol correlation plus the durable
+  context receipt cannot reconstruct exact provider-inference causality. The
+  frozen A2 contract uses a Host-minted non-authorizing `InferenceEpochId` as
+  ALCODE's cross-provider identity; provider-native request/response IDs remain
+  optional provenance rather than foundational authority.
+- **branded/global `tool_call_id` identity** — Phase 0.6 preserves the
   provider/model `toolCallId` end-to-end across assistant content,
   `ToolExecutionContext`, Agent Protocol capability request/result, and durable
-  tool-result transcript state. It is explicitly distinct from Host
-  `operation_id`. Promoting it into the foundational branded identity set or
-  event envelope remains deferred until cross-domain identity guarantees
-  require that stronger contract.
+  tool-result transcript state. A2/S-04 now requires durable Operation
+  correlation to that existing identity, including explicit Code Mode parent
+  call/subcall metadata. Promoting `toolCallId` into the foundational branded
+  identity set or event envelope remains optional unless implementation
+  evidence proves the stronger type-level contract necessary.
 - `artifact_id` — if content-addressed digests are insufficient as handles.
 
 ## Required before Phase 0.2 (completed promotion)
