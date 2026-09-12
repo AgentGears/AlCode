@@ -17,7 +17,6 @@ import {
   uuidv7,
   type EventDraft,
   type PersistedDomainEvent,
-  type SessionId,
 } from "@alcode/events";
 import type { WorkspaceEventStore } from "@alcode/storage";
 import { CanonicalAdmissionQueue } from "./admission-queue.ts";
@@ -68,6 +67,7 @@ export interface InferenceEpochProjectionV1 {
   executionBase?: ProgramAttemptExecutionBaseV1;
   invocationState: InferenceEpochInvocationStateV1;
   preparedAt?: string;
+  responseObservedAt?: string;
   providerObservation?: InferenceProviderObservationV1;
   terminalOutcome?: InferenceTerminalOutcomeV1;
   stopReason?: string;
@@ -83,6 +83,10 @@ function record(value: unknown): Record<string, unknown> {
 
 function boundedNonEmpty(value: string, maxBytes: number): boolean {
   return value.length > 0 && encoder.encode(value).byteLength <= maxBytes;
+}
+
+function hasProviderObservation(observation: InferenceProviderObservationV1 | undefined): boolean {
+  return observation?.requestId !== undefined || observation?.responseId !== undefined;
 }
 
 function validateProviderDescriptor(descriptor: InferenceProviderDescriptorV1): void {
@@ -131,7 +135,9 @@ function canonicalBindingSnapshot(
     .sort((left, right) => left.toolName.localeCompare(right.toolName, "en"));
   const names = new Set<string>();
   for (const entry of sorted) {
-    if (!entry.toolName || names.has(entry.toolName)) throw new Error("Invalid inference capability binding snapshot");
+    if (!entry.toolName || names.has(entry.toolName)) {
+      throw new Error("Invalid inference capability binding snapshot");
+    }
     names.add(entry.toolName);
     if (entry.binding.kind === "dynamic" && !entry.binding.revision) {
       throw new Error("Dynamic inference binding requires a revision");
@@ -146,27 +152,33 @@ async function replayAll(store: WorkspaceEventStore): Promise<PersistedDomainEve
   return events;
 }
 
-function projectInferenceEpochs(events: readonly PersistedDomainEvent<string, unknown>[]): Map<string, InferenceEpochProjectionV1> {
+function projectInferenceEpochs(
+  events: readonly PersistedDomainEvent<string, unknown>[],
+): Map<string, InferenceEpochProjectionV1> {
   const projected = new Map<string, InferenceEpochProjectionV1>();
   for (const event of events) {
     const payload = record(event.payload);
-    const inferenceEpochId = typeof payload.inferenceEpochId === "string" ? payload.inferenceEpochId : undefined;
+    const inferenceEpochId = typeof payload.inferenceEpochId === "string"
+      ? payload.inferenceEpochId
+      : undefined;
     if (inferenceEpochId === undefined) continue;
 
     if (event.type === "inference.epoch.authorized") {
-      if (projected.has(inferenceEpochId)) throw new Error(`Duplicate inference epoch authorization: ${inferenceEpochId}`);
-      const providerDescriptor = payload.providerDescriptor as InferenceProviderDescriptorV1;
-      const capabilityBindingSnapshot = payload.capabilityBindingSnapshot as InferenceCapabilityBindingSnapshotEntryV1[];
+      if (projected.has(inferenceEpochId)) {
+        throw new Error(`Duplicate inference epoch authorization: ${inferenceEpochId}`);
+      }
       projected.set(inferenceEpochId, {
         inferenceEpochId,
         sessionId: String(event.sessionId ?? payload.sessionId ?? ""),
         connectionGenerationId: String(payload.connectionGenerationId ?? ""),
         contextReceiptId: String(payload.contextReceiptId ?? ""),
         sourceEventSequence: Number(payload.sourceEventSequence),
-        providerDescriptor: structuredClone(providerDescriptor),
+        providerDescriptor: structuredClone(payload.providerDescriptor) as InferenceProviderDescriptorV1,
         capabilityCatalogDigest: String(payload.capabilityCatalogDigest ?? ""),
         capabilityBindingSnapshotDigest: String(payload.capabilityBindingSnapshotDigest ?? ""),
-        capabilityBindingSnapshot: structuredClone(capabilityBindingSnapshot ?? []),
+        capabilityBindingSnapshot: structuredClone(
+          (payload.capabilityBindingSnapshot ?? []) as InferenceCapabilityBindingSnapshotEntryV1[],
+        ),
         ...(payload.programAttemptAuthority !== undefined
           ? { programAttemptAuthority: structuredClone(payload.programAttemptAuthority) as ProgramAttemptAuthorityAny }
           : {}),
@@ -179,13 +191,30 @@ function projectInferenceEpochs(events: readonly PersistedDomainEvent<string, un
     }
 
     const current = projected.get(inferenceEpochId);
-    if (current === undefined) throw new Error(`Inference lifecycle event precedes authorization: ${inferenceEpochId}`);
+    if (current === undefined) {
+      throw new Error(`Inference lifecycle event precedes authorization: ${inferenceEpochId}`);
+    }
+
     if (event.type === "inference.invocation.prepared") {
-      if (current.preparedAt !== undefined) continue;
-      current.preparedAt = event.occurredAt;
-      current.invocationState = "prepared_indeterminate";
+      if (current.preparedAt === undefined) current.preparedAt = event.occurredAt;
+      if (current.invocationState !== "response_observed") {
+        current.invocationState = "prepared_indeterminate";
+      }
       continue;
     }
+
+    if (event.type === "assistant.message.appended") {
+      if (current.preparedAt === undefined) {
+        throw new Error(`Inference-bound assistant message precedes prepared invocation: ${inferenceEpochId}`);
+      }
+      if (event.sessionId !== undefined && String(event.sessionId) !== current.sessionId) {
+        throw new Error(`Inference-bound assistant message session mismatch: ${inferenceEpochId}`);
+      }
+      current.responseObservedAt ??= event.occurredAt;
+      current.invocationState = "response_observed";
+      continue;
+    }
+
     if (event.type === "inference.epoch.terminal") {
       current.terminalOutcome = payload.outcome as InferenceTerminalOutcomeV1;
       current.terminalAt = event.occurredAt;
@@ -193,12 +222,23 @@ function projectInferenceEpochs(events: readonly PersistedDomainEvent<string, un
       if (payload.providerObservation !== undefined) {
         current.providerObservation = structuredClone(payload.providerObservation) as InferenceProviderObservationV1;
       }
-      current.invocationState = "response_observed";
+      if (hasProviderObservation(current.providerObservation)) {
+        current.responseObservedAt ??= event.occurredAt;
+        current.invocationState = "response_observed";
+      } else if (current.invocationState !== "response_observed") {
+        // A terminal Agent report alone cannot prove whether the remote provider
+        // observed the request or produced a response. Preserve the prepared
+        // uncertainty interval unless affirmative provider/transcript evidence exists.
+        current.invocationState = "prepared_indeterminate";
+      }
       continue;
     }
+
     if (event.type === "inference.epoch.interrupted") {
-      current.interruptedAt = event.occurredAt;
-      if (current.terminalOutcome === undefined) current.invocationState = "interrupted_indeterminate";
+      current.interruptedAt ??= event.occurredAt;
+      if (current.invocationState !== "response_observed") {
+        current.invocationState = "interrupted_indeterminate";
+      }
     }
   }
   return projected;
@@ -238,7 +278,9 @@ export class InferenceProvenanceServiceV1 {
       if (existing !== undefined) {
         const payload = record(existing.payload);
         const inferenceEpochId = String(payload.inferenceEpochId ?? "");
-        if (!inferenceEpochId) throw new InferenceProvenanceControlError("Malformed persisted inference authorization");
+        if (!inferenceEpochId) {
+          throw new InferenceProvenanceControlError("Malformed persisted inference authorization");
+        }
         return {
           inferenceEpochId,
           capabilityBindingSnapshotDigest: String(payload.capabilityBindingSnapshotDigest ?? ""),
@@ -265,7 +307,9 @@ export class InferenceProvenanceServiceV1 {
           ...(input.programAttemptAuthority !== undefined
             ? { programAttemptAuthority: structuredClone(input.programAttemptAuthority) }
             : {}),
-          ...(input.executionBase !== undefined ? { executionBase: structuredClone(input.executionBase) } : {}),
+          ...(input.executionBase !== undefined
+            ? { executionBase: structuredClone(input.executionBase) }
+            : {}),
         },
         payloadSchemaVersion: 1,
         producer: { kind: "runtime", component: "host-inference-provenance" },
@@ -281,12 +325,13 @@ export class InferenceProvenanceServiceV1 {
     connectionGenerationId: string;
     requirePrepared?: boolean;
   }): Promise<InferenceEpochProjectionV1> {
-    const epochs = projectInferenceEpochs(await replayAll(this.store));
-    const epoch = epochs.get(input.inferenceEpochId);
+    const epoch = projectInferenceEpochs(await replayAll(this.store)).get(input.inferenceEpochId);
     if (epoch === undefined
         || epoch.sessionId !== input.sessionId
         || epoch.connectionGenerationId !== input.connectionGenerationId) {
-      throw new InferenceProvenanceControlError("Inference epoch does not belong to the current Session/Agent generation");
+      throw new InferenceProvenanceControlError(
+        "Inference epoch does not belong to the current Session/Agent generation",
+      );
     }
     if (epoch.terminalOutcome !== undefined || epoch.interruptedAt !== undefined) {
       throw new InferenceProvenanceControlError("Inference epoch is already terminal or interrupted");
@@ -315,7 +360,7 @@ export class InferenceProvenanceServiceV1 {
           || current.interruptedAt !== undefined) {
         throw new InferenceProvenanceControlError("Inference epoch became stale before prepare");
       }
-      const draft: EventDraft<string, unknown> = {
+      await this.store.append([{
         eventId: mkEventId(),
         idempotencyKey,
         workspaceId: asWorkspaceId(this.store.workspaceId),
@@ -325,8 +370,7 @@ export class InferenceProvenanceServiceV1 {
         payload: { inferenceEpochId: input.inferenceEpochId },
         payloadSchemaVersion: 1,
         producer: { kind: "runtime", component: "host-inference-provenance" },
-      };
-      await this.store.append([draft]);
+      }]);
     });
   }
 
@@ -343,8 +387,7 @@ export class InferenceProvenanceServiceV1 {
     const idempotencyKey = `inference:terminal:${input.inferenceEpochId}`;
     await this.admission.enqueue(async () => {
       const events = await replayAll(this.store);
-      const existing = events.find((event) => event.idempotencyKey === idempotencyKey);
-      if (existing !== undefined) return;
+      if (events.some((event) => event.idempotencyKey === idempotencyKey)) return;
       const current = projectInferenceEpochs(events).get(input.inferenceEpochId);
       if (current === undefined || current.preparedAt === undefined
           || current.sessionId !== input.sessionId
@@ -353,7 +396,7 @@ export class InferenceProvenanceServiceV1 {
           || current.terminalOutcome !== undefined) {
         throw new InferenceProvenanceControlError("Inference epoch became stale before terminal record");
       }
-      const draft: EventDraft<string, unknown> = {
+      await this.store.append([{
         eventId: mkEventId(),
         idempotencyKey,
         workspaceId: asWorkspaceId(this.store.workspaceId),
@@ -364,25 +407,34 @@ export class InferenceProvenanceServiceV1 {
           inferenceEpochId: input.inferenceEpochId,
           outcome: input.outcome,
           ...(input.stopReason !== undefined ? { stopReason: input.stopReason } : {}),
-          ...(input.providerObservation !== undefined
+          ...(hasProviderObservation(input.providerObservation)
             ? { providerObservation: structuredClone(input.providerObservation) }
             : {}),
         },
         payloadSchemaVersion: 1,
         producer: { kind: "runtime", component: "host-inference-provenance" },
-      };
-      await this.store.append([draft]);
+      }]);
     });
   }
 
   async interruptGeneration(sessionId: string, connectionGenerationId: string): Promise<void> {
+    await this.interruptWhere(sessionId, (epoch) => epoch.connectionGenerationId === connectionGenerationId);
+  }
+
+  async interruptOtherGenerations(sessionId: string, currentGenerationId: string): Promise<void> {
+    await this.interruptWhere(sessionId, (epoch) => epoch.connectionGenerationId !== currentGenerationId);
+  }
+
+  private async interruptWhere(
+    sessionId: string,
+    matches: (epoch: InferenceEpochProjectionV1) => boolean,
+  ): Promise<void> {
     await this.admission.enqueue(async () => {
-      const events = await replayAll(this.store);
-      const epochs = projectInferenceEpochs(events);
+      const epochs = projectInferenceEpochs(await replayAll(this.store));
       const drafts: EventDraft<string, unknown>[] = [];
       for (const epoch of epochs.values()) {
         if (epoch.sessionId !== sessionId
-            || epoch.connectionGenerationId !== connectionGenerationId
+            || !matches(epoch)
             || epoch.terminalOutcome !== undefined
             || epoch.interruptedAt !== undefined) continue;
         drafts.push({
