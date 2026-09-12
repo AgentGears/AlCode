@@ -378,7 +378,7 @@ class AgentProtocolBridge implements AgentProtocolClient {
   private request<TResponse extends HostToAgentMessage>(
     requestId: string,
     outgoing: AgentToHostMessage,
-    matches: (message: HostToAgentMessage) => message is TResponse,
+    matches: (message: HostToAgentMessage) => boolean,
     options: RequestOptions = {},
   ): Promise<TResponse> {
     if (this.closed) return Promise.reject(new AgentProtocolBridgeClosedError());
