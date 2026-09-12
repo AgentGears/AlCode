@@ -20,6 +20,7 @@ import {
   type TranscriptEventRecord,
 } from "@alcode/transcript";
 import { CanonicalAdmissionQueue } from "./admission-queue.ts";
+import { InferenceProvenanceServiceV1 } from "./inference-provenance.ts";
 
 export const INTERRUPTED_TOOL_RESULT_TEXT =
   "Host recovery closed a tool call whose Agent generation ended before its durable tool result was admitted. " +
@@ -73,18 +74,30 @@ function pendingToolNames(current: ReturnType<typeof reduceSessionTranscript>): 
 }
 
 export class TranscriptAdmissionService {
+  private readonly inferenceProvenance: InferenceProvenanceServiceV1;
+
   constructor(
     private readonly store: WorkspaceEventStore,
     private readonly admission: CanonicalAdmissionQueue,
-  ) {}
+  ) {
+    this.inferenceProvenance = new InferenceProvenanceServiceV1(store, admission);
+  }
 
-  admitAssistant(
+  async admitAssistant(
     generationId: string,
     sessionId: SessionId,
     message: AssistantMessageProduced,
   ): Promise<PersistedDomainEvent<string, unknown>> {
     if (message.content === undefined || message.stopReason === undefined || message.timestamp === undefined) {
-      return Promise.reject(new Error("durable_transcript_v1 assistant message requires content, stopReason, and timestamp"));
+      throw new Error("durable_transcript_v1 assistant message requires content, stopReason, and timestamp");
+    }
+    if (message.inferenceEpochId !== undefined) {
+      await this.inferenceProvenance.requireCurrentEpoch({
+        inferenceEpochId: message.inferenceEpochId,
+        sessionId: String(sessionId),
+        connectionGenerationId: generationId,
+        requirePrepared: true,
+      });
     }
     const payload = {
       text: message.text,
