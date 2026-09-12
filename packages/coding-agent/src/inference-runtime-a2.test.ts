@@ -32,7 +32,7 @@ const authority: ProgramAttemptAuthorityV2 = {
       allowedRepositoryRoots: ["."],
       allowedEffectClasses: ["fs.read", "fs.write"],
       allowedExternalSystems: [],
-      capabilityCeiling: ["inspect", "echo", "mutate"],
+      capabilityCeiling: ["echo", "inspect", "mutate"],
       maximumTopologyExpansion: 0,
       mandatoryVerificationIds: [],
       forbiddenChangeKinds: [],
