@@ -199,16 +199,12 @@ export class HostRuntime {
     }
 
     if (resumeReason === "agent_replaced") {
-      // Provider invocation is an uncertainty boundary just like environmental
-      // mutation. Close every prior generation's nonterminal inference epoch
-      // before replacement context can authorize a new provider invocation.
       if (inferenceProvenanceCapable) {
         await this.inferenceProvenance.interruptOtherGenerations(
           String(session.sessionId),
           connection.generationId,
         );
       }
-      // Agent-process loss is also a mutation/recovery crash boundary.
       await this.store.store.recoverInterruptedOperations();
       if (durableTranscript) {
         await this.transcriptAdmission.recoverInterruptedToolResults(session.sessionId);
@@ -230,8 +226,6 @@ export class HostRuntime {
           );
         }
       } catch {
-        // Exit cleanup is best-effort here; replacement attach repeats the
-        // interruption under Host admission before minting a fresh epoch.
       } finally {
         this.programAgents.detach(session.sessionId, connection.generationId);
       }
@@ -381,6 +375,16 @@ export class HostRuntime {
                       executionBase: structuredClone(programAttempt.executionBase),
                     }
                   : {}),
+              }, {
+                assertCurrent: () => {
+                  if (!this.programAgents.isCurrentConnection(String(sessionId), generationId)) {
+                    throw new Error("Inference authorization Agent generation changed during refresh");
+                  }
+                  const currentCatalog = this.inferenceToolCatalog(dynamicCapabilityBinding);
+                  if (digestOf(currentCatalog.tools) !== digestOf(toolCatalog.tools)) {
+                    throw new Error("Inference authorization capability catalog changed during refresh");
+                  }
+                },
               })
             : undefined;
           update = {
@@ -394,7 +398,6 @@ export class HostRuntime {
         try {
           await transport.send(update);
         } catch {
-          // The receipt/epoch is canonical; a replacement Agent asks for a fresh decision.
         }
         break;
       }
