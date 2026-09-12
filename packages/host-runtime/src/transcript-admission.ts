@@ -92,6 +92,7 @@ export class TranscriptAdmissionService {
       stopReason: message.stopReason,
       ...(message.errorMessage !== undefined ? { errorMessage: message.errorMessage } : {}),
       timestamp: message.timestamp,
+      ...(message.inferenceEpochId !== undefined ? { inferenceEpochId: message.inferenceEpochId } : {}),
     };
     return this.admit(
       generationId,
