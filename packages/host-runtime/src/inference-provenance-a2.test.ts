@@ -302,7 +302,7 @@ describeLocked("A2 inference provenance", () => {
         text: "observed assistant output",
       },
       payloadSchemaVersion: 1,
-      producer: { kind: "agent", component: "a2-test" },
+      producer: { kind: "model", component: "a2-test" },
     }]);
 
     expect((await service.get(authorized.inferenceEpochId))?.invocationState).toBe("response_observed");
