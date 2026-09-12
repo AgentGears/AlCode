@@ -1,12 +1,13 @@
 # ALCODE Roadmap — Durable Autonomous Software Engineering Runtime
 
-**Status:** Active architecture orientation after P-01 closure.  
-**Closed product baseline:** `main@e6a9025b767a8fc9026bcd72670a338e8a37c059` closes P-01 — Production Program Agent.  
-**Authority:** This roadmap defines direction and dependency order only. It does **not** authorize implementation of a successor objective.
+**Status:** Active architecture orientation after A1, P-02, and S-02 closure.  
+**Closed product baseline:** `main@bc321ac350ddf90d28b69abfc254eaa9af8969be` closes S-02 Code Mode product integration on top of A1/P-01 and P-02.  
+**Next frozen design:** A2 / S-04 — Reconstructable Inference Provenance.  
+**Authority:** This roadmap defines direction and dependency order only. It does **not** by itself authorize implementation of a successor objective.
 
-ALCODE has completed the transition from an owned coding-agent foundation into a Host-governed, verifier-driven Program runtime with a real production model path. The next architectural problem is no longer how to run one bounded coding episode. It is how long-running software-engineering intent can evolve safely while execution, verification, recovery, Agent replacement, parallel work, and later learned capabilities remain correctly related to that intent.
+ALCODE is now a Host-governed adaptive Program runtime with real model execution, semantic planning, typed verification retry, replaceable Agent generations, and bounded local Code Mode orchestration. The next load-bearing problem is no longer adaptive Program meaning or local orchestration. It is making the exact causal relationship between one provider inference and durable Host facts mechanically reconstructable before the architecture expands into more execution environments, learned procedures, parallel workspaces, delegation, and remote workers.
 
-This document is the durable architectural navigation surface for that evolution. Detailed state machines, acceptance criteria, implementation slices, gate commands, and closure evidence belong in separate objective plans and as-built records.
+This document is the durable architectural navigation surface. Exact state machines, acceptance criteria, implementation slices, gate commands, and closure evidence belong in objective plans and as-built records.
 
 ---
 
@@ -27,19 +28,12 @@ Objective / Phase Plan
 Implementation + Gate + As-Built Closure
 ```
 
-The roadmap answers:
-
-1. What is ALCODE becoming?
-2. What has already been built and closed?
-3. What architectural stages remain?
-4. Why should they occur in this order?
-
-A roadmap entry is **not implementation authority**. A successor objective requires:
+A roadmap entry is not implementation authority. The normal progression remains:
 
 ```text
 roadmap direction
       ↓
-concrete client objective
+concrete forcing objective
       ↓
 study / bounded design work
       ↓
@@ -54,55 +48,43 @@ executable closure gate
 as-built closure record
 ```
 
-Completion of one objective never automatically authorizes the next. Improvements and ideas discovered during execution remain backlog material unless they are demonstrated blockers for the frozen objective.
+Completion of one objective never silently authorizes the next. Optional improvements discovered during execution remain backlog material unless they are demonstrated blockers for the frozen objective.
 
 ---
 
 ## 2. North star
 
-**ALCODE is a durable, model-independent autonomous software-engineering runtime centered on long-running Programs rather than chat sessions or Agent processes. Programs can span sessions, Agent generations, model/provider choices, Host lifetimes, and execution environments. Programs progressively decompose engineering objectives into durable work and ultimately precise Host-governed SDLC operations. Agents provide replaceable cognition; the Host retains canonical authority over work state, execution admission, environmental effects, recovery, verification, and completion. Experience can later be compiled into reusable procedural capabilities without allowing learned code to acquire independent execution authority.**
+**ALCODE is a durable, model-independent autonomous software-engineering runtime centered on long-running Programs rather than chat sessions or Agent processes. Programs span sessions, Agent generations, provider/model choices, Host lifetimes, and eventually multiple execution environments. Agents provide replaceable cognition; the Host retains canonical authority over work state, execution admission, environmental effects, recovery, verification, and completion.**
 
-The central product abstraction is therefore the durable engineering Program.
+The central hierarchy is:
 
 ```text
 Long-horizon objective
-        │
-        ▼
+        ↓
 ProgramState
-        │
-        ▼
+        ↓
 ProgramRevision
-        │
-        ▼
-WorkItem
-        │
-        ▼
+        ↓
+WorkItem / generation
+        ↓
 ProgramAttempt
-        │
-        ▼
-short-horizon cognition / orchestration
-        │
-   ┌────┼─────────────┐
-   ▼    ▼             ▼
-reasoning   workflow VM   learned procedure
-        │
-        ▼
-Host semantic capabilities
-        │
-        ▼
+        ↓
+replaceable Agent generation
+        ↓
+provider inference / local orchestration
+        ↓
+Host capabilities
+        ↓
 Operations
-        │
-        ▼
+        ↓
 effects / reconciliation / recovery
-        │
-        ▼
+        ↓
 verification
-        │
-        ▼
+        ↓
 Completion Oracle
 ```
 
-The LLM is a cognition engine inside this runtime. It is never canonical execution authority.
+The LLM is cognition inside this runtime. It is never canonical execution authority.
 
 ---
 
@@ -110,50 +92,54 @@ The LLM is a cognition engine inside this runtime. It is never canonical executi
 
 ALCODE targets developers, advanced individual users, open-source users, and researchers who need a powerful, hackable autonomous software-engineering runtime.
 
-It is **not** an enterprise governance platform. The roadmap does not target corporate RBAC hierarchies, organization administration, compliance dashboards, enterprise identity integration, approval bureaucracies, or multi-tenant governance consoles.
+It is not an enterprise governance platform. The roadmap does not target corporate RBAC hierarchies, organization administration, compliance dashboards, enterprise identity integration, approval bureaucracies, or multi-tenant governance consoles.
 
-ALCODE still requires permissions, provenance, isolation, capability control, effect tracking, recovery, and reproducibility because these are correctness and autonomy requirements. CLI, web, desktop, IDE, and future API surfaces are clients of the runtime; they do not own canonical Program truth.
+ALCODE still requires permissions, provenance, isolation, capability control, effect tracking, recovery, and reproducibility because those are correctness and autonomy properties. CLI, web, desktop, IDE, and future API surfaces are clients of the runtime; they do not own canonical Program truth.
 
 ---
 
 ## 4. Governing architectural invariants
 
-The Architecture Constitution remains authoritative. Future stages must preserve these long-horizon constraints:
+The Architecture Constitution remains authoritative. Future stages must preserve these constraints:
 
-1. **Program > Session > Agent process.** Long-running objective identity survives short-lived interaction and cognition processes.
+1. **Program > Session > Agent process.** Long-running objective identity survives interaction and cognition processes.
 2. **Host canonical authority.** Only the privileged Host admits canonical Program transitions, Operations, verification state, recovery state, and completion.
-3. **Long-horizon intent is durable; short-horizon cognition is disposable.** Program meaning may span days; inference scopes, local plans, Agent runs, and generated orchestration should be cheap to replace.
-4. **Progressive decomposition, not state explosion.** Durable Program topology contains meaningful engineering obligations, not every file read, edit, command, or test rerun.
+3. **Long-horizon intent is durable; short-horizon cognition is disposable.** Program meaning may span days; inference scopes and local orchestration remain replaceable.
+4. **Progressive decomposition, not state explosion.** Durable Program topology contains meaningful engineering obligations, not every local action.
 5. **Execution authority is renewable.** Stale, replaced, interrupted, or failed Attempts are not resumed as though authority survived.
 6. **Effects are facts, not model claims.** Environmental truth comes from Host-governed Operations and reconciliation evidence.
-7. **Uncertainty remains uncertainty.** Timeout, process loss, transport failure, or worker disappearance never proves a mutation did not happen.
-8. **No blind mutation retry.** Indeterminate mutation requires recovery/reconciliation before another mutation is admitted.
-9. **Verification is freshness-bound.** Passing evidence applies to an exact subject generation/execution base and may become stale after material change.
-10. **Agent completion is advisory.** Agent idle or self-assessment cannot complete a Program.
+7. **Uncertainty remains uncertainty.** Timeout, cancellation, process loss, or transport failure never proves a mutation did not happen.
+8. **No blind mutation retry.** Indeterminate mutation requires recovery/reconciliation before another conflicting mutation is admitted.
+9. **Verification is freshness-bound.** Passing evidence applies to an exact subject/execution base and may become stale after material change.
+10. **Agent completion is advisory.** Agent/provider/local-worker completion cannot complete a Program.
 11. **Composition ≠ authority.** Workflows, plugins, procedures, subagents, and remote workers may compose Host-authorized capabilities but do not gain independent authority.
-12. **Learning ≠ promotion authority.** Learned code cannot self-install into the trusted runtime or mint new capabilities.
-13. **Remote execution ≠ remote canonical authority.** Remote workers execute admitted work; the logical Host decides what may execute and what results mean canonically.
-14. **Scheduler = policy; Host state machines = truth.** Scheduling choices cannot create effect, verification, completion, or semantic Program facts.
+12. **Inference provenance ≠ authority.** Historical model causality may be reconstructable without becoming a capability token or current Program fact.
+13. **Learning ≠ promotion authority.** Learned code cannot self-install into the trusted runtime or mint new capabilities.
+14. **Remote execution ≠ remote canonical authority.** Remote workers execute admitted work; the logical Host decides what may execute and what results mean canonically.
+15. **Scheduler = policy; Host state machines = truth.** Scheduling choices cannot create effect, verification, completion, or semantic Program facts.
 
 ---
 
-## 5. Current position — closed foundation through P-01
+## 5. Current position — adaptive Program + semantic planning + Code Mode closed
 
-ALCODE currently has a fixed-topology autonomous Program runtime.
+The current architecture is:
 
 ```text
-Phase 0.0–0.9 foundation              CLOSED
-Phase 1.0 Durable ProgramState        CLOSED
-Phase 1.1 Default Program execution   CLOSED
-S-01 Replaceable Agent runtime        CLOSED
-P-01 Production Program Agent         CLOSED
-                                        │
-                                        ▼
-NEXT ARCHITECTURAL FRONTIER
-Adaptive Program semantics             PLANNED / NOT AUTHORIZED
+Phase 0.0–0.9 foundation                         CLOSED
+Phase 1.0 Durable ProgramState                   CLOSED
+Phase 1.1 Default Program execution              CLOSED
+S-01 Replaceable Agent runtime                   CLOSED
+P-01 Production Program Agent                    CLOSED
+A1 Adaptive Program revision/decomposition       CLOSED
+P-02 Semantic planning + typed verification      CLOSED
+S-02 ProgramAttempt-aware Code Mode               CLOSED
+                                                   │
+                                                   ▼
+NEXT LOAD-BEARING FRONTIER
+A2 / S-04 reconstructable inference provenance   DESIGN FROZEN
 ```
 
-The current production path is approximately:
+The current product path is approximately:
 
 ```text
 caller objective
@@ -162,252 +148,186 @@ durable Host input admission
   ↓
 Host planning episode
   ↓
-real model planning through tracked Host reads
+model planning through bounded tracked reads
+  + semantic CodeIntelligence observations
   + exact Host verifier catalog
   ↓
 bounded Program proposal
   ↓
-Host validation and seal
+Host validation / explicit Application acceptance
   ↓
-explicit Application acceptance
+adaptive ProgramState / ProgramRevision
   ↓
-fresh ProgramAttempt
+fresh ProgramAttempt under exact WorkItem-generation authority
   ↓
-Host-requested Agent execution
+replaceable Agent generation
   ↓
-Host-mediated coding capabilities
+provider inference
+    ├─ direct Host capability calls
+    └─ S-02 run_code
+          ↓ bounded Agent-local QuickJS control flow
+          ↓ every environmental sub-dispatch returns to Host
   ↓
-Host verification
-    ├─ fail → retire Attempt → durable failure fact → fresh retry Attempt
-    └─ pass → complete work → fresh successor Attempt if structurally ready
+Host Operations / effect truth
+  ↓
+typed Host verification
+    ├─ fail → retire Attempt → durable failure → fresh retry
+    └─ pass → satisfy work → fresh successor when ready
+  ↓
+optional Host-admitted semantic Program revision
   ↓
 Completion Oracle
   ↓
 Program.completed
 ```
 
-The authoritative P-01 as-built record is [`p-01-production-program-agent-as-built.md`](./p-01-production-program-agent-as-built.md).
-
-### Proven baseline
+### Closed foundation now proven
 
 The closed baseline includes:
 
 - append-only canonical event history and rebuildable projections;
-- durable Operation identity, effect uncertainty, reconciliation, and recovery;
+- durable Operation identity, effect uncertainty, reconciliation, quiescence, and recovery;
 - Host-owned capability admission and execution lifecycle;
 - durable transcript reconstruction and replaceable-Agent hydration;
-- governed context projection with `verbatim-v1` safe baseline and optional `graph-v1`;
-- Host-owned Application Protocol and disposable React projection;
-- Host-governed plugin/adaptor and code-observation boundaries;
-- durable ProgramState, fixed required-work topology, ProgramAttempt authority, execution-base freshness, verification generations, recovery barriers, and Completion Oracle;
-- default Program-backed local coding execution;
-- replaceable Agent generations with scoped AgentRun and Inference lifetimes;
-- production model-provider selection with no silent mock fallback;
-- bounded model-driven Program planning through Host-tracked semantic reads;
-- exact planning-time Host verifier catalog and real Host verification;
-- replay-safe ProgramAttempt driving, retry, successor execution, Agent replacement, and fail-closed recovery.
+- governed context projection with `verbatim-v1` safe default and opt-in `graph-v1`;
+- dynamic capability-generation fencing and Host-governed adapters;
+- Durable ProgramState, ProgramRevision, WorkItem generations, ProgramAttempt authority, execution-base freshness, verification generations, recovery barriers, and Completion Oracle;
+- model-driven Program planning with Host-tracked repository reads;
+- P-02 semantic symbol/reference/diagnostic planning observations;
+- typed Host verification with durable failed-verifier retry under fresh Attempt authority;
+- replay-safe Attempt driving, successor execution, Agent replacement, and restart recovery;
+- S-02 inference-scoped local Code Mode with bounded QuickJS workers and ordinary Host Operations for every environmental sub-dispatch.
 
 ### Current structural limitation
 
-The accepted Program topology remains fixed after Program creation.
+The runtime has strong execution authority but cannot yet mechanically reconstruct an exact provider inference after restart.
 
-Current ALCODE can robustly execute:
+Today it can durably show context receipts, assistant/tool transcript, ProgramAttempt facts, and Host Operations. It cannot yet prove one exact causal chain across all of them because there is no durable inference identity/provider binding, assistant transcript is not context-receipt-bound, `operation.requested` drops the incoming provider/model `toolCallId`, and S-02 nested parentage is not explicit durable data.
 
-```text
-accepted fixed Program DAG
-        ↓
-Attempts
-        ↓
-verification / retry / successors
-        ↓
-completion
-```
-
-It cannot yet safely evolve canonical Program meaning while work is in flight:
-
-```text
-Program revision R1
-        ↓
-execution discovers missing/incorrect work
-        ↓
-revision proposal
-        ↓
-Program revision R2
-        ↓
-retain unaffected execution/evidence
-invalidate affected execution/evidence
-        ↓
-continue under evolved canonical meaning
-```
-
-That is the next load-bearing architectural problem.
+The forcing analysis is recorded in [`a2-inference-provenance-gap-study.md`](./a2-inference-provenance-gap-study.md). The bounded frozen design is [`a2-inference-provenance-plan.md`](./a2-inference-provenance-plan.md).
 
 ---
 
 ## 6. Architectural timescales
 
-The forward architecture should preserve three distinct timescales.
+The architecture preserves distinct timescales:
 
 ```text
 LONG — durable semantic intent
 ProgramState
 ProgramRevision
-WorkItem
+WorkItem / generation
 
 MEDIUM — renewable execution authority
 ProgramAttempt
 AgentGeneration
-WorkspaceExecutionIdentity
-Delegation
+WorkspaceExecutionIdentity (future parallel/remote)
+Delegation (future)
 
 SHORT — disposable cognition and orchestration
+InferenceEpoch provenance
 InferenceScope
-local task plan
-WorkflowInvocation
+run_code local program
 individual capability calls
 ```
 
-Conflating these timescales creates lifecycle bugs. A Program should not disappear because an Agent dies; an Attempt should not survive semantic invalidation; an inference should not become durable authority merely because its provenance is recorded.
+`InferenceEpoch` belongs to the short-horizon layer even when its provenance is durably recorded. Durable recording does not promote it into execution authority.
 
 ---
 
 # 7. Forward roadmap
 
-The A-series is the preferred dependency order for the next architecture. Stage names describe outcomes, not pre-authorized implementation projects.
+The A-series remains the long-term dependency map. Status labels below reflect actual repository state rather than the historical pre-A1 snapshot.
 
-## A1 — Adaptive Program Revision and Progressive Decomposition
+## A1 — Adaptive Program Revision and Progressive Decomposition — CLOSED
 
-**Goal:** Allow canonical Program meaning and work topology to evolve safely after Program creation while preserving correct relationships to in-flight Attempts, verification evidence, recovery state, and future parallel work.
+A1 is implemented and landed. It provides semantic Program revisions distinct from operational CAS revision, WorkItem identity/generation, progressive decomposition, RevisionImpact, relevance-scoped invalidation, adaptive Attempt authority, recovery/rebuild semantics, and Completion interaction.
 
-Expected semantic shape:
+A1 remains the canonical semantic foundation for later parallel/delegated work.
 
-```text
-ProgramState
-    │
-    ▼
-ProgramRevision
-    │
-    ▼
-RevisionImpact
-    │
-    ▼
-WorkItem
-    │
-WorkItemGeneration
-    │
-    ▼
-AttemptAuthority
-    │
-    ▼
-ProgramAttempt
-```
+## A2 — Durable Inference Provenance and Provider Independence — NEXT
 
-A1 should define immutable/revisioned Program semantic transitions, compare-and-swap revision admission, stale concurrent proposal rejection, WorkItem identity/generation, progressive child decomposition, refinement/correction/scope-amendment distinctions, inherited authority envelopes, RevisionImpact, relevance-scoped Attempt/verification invalidation, rebuildable revision lineage, and completion rules proving no unresolved required decomposition remains.
+**Goal:** make model inference operationally reconstructable and provider-neutral without turning historical inference into execution authority.
 
-A1 should introduce only the eligibility/Attempt-admission semantics required by adaptive work. It should **not** introduce general parallel workspaces, durable subagent teams, Code Mode, learned procedures, or remote workers.
+The S-04 gap study has now proved that current receipts/events are insufficient. The frozen design introduces a Host-minted non-authorizing inference epoch/correlation contract that reuses existing context receipts, ProgramAttempt authority, capability snapshots, transcript, and Operation truth.
 
-**Why first:** Every later long-horizon feature becomes harder and less trustworthy if canonical Program meaning cannot evolve rigorously.
-
-## A2 — Durable Inference Provenance and Provider Independence
-
-**Goal:** Make model inference operationally reconstructable and provider-independent without turning historical inference into execution authority.
-
-P-01 already provides a real production model path. A2 is therefore the durable provenance/provider-abstraction stage, not “add the first production model.”
-
-A future `InferenceRecord` should causally bind inference identity to ProgramState/Revision/Attempt/WorkItem, Agent generation/run, provider/model configuration, context receipt, capability projection, workspace execution base, request/response identity, tool-call lineage, outcome, and timestamps.
-
-Invariant:
-
-> **InferenceRecord is causal provenance, never execution authority.**
-
-Replaying historical inference creates new current authority; it does not resurrect an old Attempt, generation, or capability scope.
-
-Provider direction may include Anthropic, OpenAI, OpenAI-compatible services, and local/self-hosted OpenAI-compatible providers where product requirements justify them.
-
-## A3 — Semantic SDLC Capability Layer
-
-**Goal:** Add typed engineering operations where semantics improve verification, reconciliation, authorization, reproducibility, or evidence quality.
-
-Candidate capability families include repository inspection/status, code and symbol search, dependency inspection, patch/create/delete/refactor operations, build/tests/benchmark/typecheck/lint/static analysis/coverage, Git operations, and artifact inspection/comparison.
-
-These are semantic façades over Host-governed effects, not a second authority layer. A generic process capability remains a deliberate escape hatch for unknown project-specific commands.
-
-Rule:
-
-> Create a semantic capability when its semantics materially improve correctness, evidence, authorization, recovery, or reproducibility.
-
-## A4 — Capability Workflow VM
-
-**Goal:** Let the model author short-lived control programs for mechanical sequences without another model inference for every step.
-
-“Code Mode” may be a product label; architecturally this should be a restricted capability-oriented workflow VM:
+Expected causal shape:
 
 ```text
-Generated Workflow IR
-        │
-        ▼
-disposable interpreter
-   ┌────┴──────────────┐
-   ▼                   ▼
-pure computation    capability instruction
-                         │
-                         ▼
-                  CapabilityBroker
-                         │
-                         ▼
-                     Operation
+context receipt + exact Host inference cut
+        ↓
+InferenceEpoch
+        ↓
+provider/model invocation
+        ↓
+assistant tool call
+        ↓
+optional run_code parent/subcalls
+        ↓
+Host Operation identities
 ```
 
-The initial IR should support bounded variables, conditionals, loops, pure transformations, structured capability calls/errors, and returns. Before physical sandboxing exists it must not provide direct filesystem/network access, arbitrary process spawning, dynamic module loading, `eval`, event-log mutation, ProgramState mutation, or secret access.
+The epoch is provenance, never current execution authority. Provider-native request/response IDs are optional metadata; ALCODE's Host-minted epoch is the cross-provider identity.
 
-Workflow failure never replaces Operation truth. A partially executed workflow may contain confirmed, failed, or indeterminate Operations that remain individually authoritative.
+A2 establishes a provider-neutral semantic descriptor and lifecycle contract but does not require adding a second live production provider as a closure condition.
+
+## A3 — Semantic SDLC Capability Layer — PARTIALLY REALIZED / INCREMENTAL
+
+P-02 and prior phases already provide several typed semantic surfaces: planning reads, CodeIntelligence, typed verification contracts, filesystem/edit/process capabilities, and artifact/verification semantics.
+
+A3 is no longer treated as a single prerequisite megaphase. Add typed engineering capabilities when semantics materially improve correctness, evidence, authorization, reconciliation, or reproducibility. A generic process capability remains a deliberate escape hatch for project-specific commands.
+
+Future candidates include richer repository status/diff/refactor/build/test/coverage/artifact operations where measured need justifies the contract.
+
+## A4 — Capability Workflow VM / Code Mode — CLOSED AS S-02 BOUNDED REALIZATION
+
+S-02 supplies the bounded product realization of this stage:
+
+```text
+model-written local program
+        ↓
+fresh isolated QuickJS worker
+        ↓
+pure local control flow
+        ↓
+exact inference SDK snapshot
+        ↓
+CapabilityBroker for every environmental sub-dispatch
+        ↓
+ordinary Host Operations
+```
+
+S-02 intentionally excludes ambient filesystem/network/process/Host authority, nested Code Mode, durable local-worker state, and direct Program/verification/Completion transitions.
+
+A broader arbitrary generated-code runtime is **not** implied by S-02 closure and would require later physical isolation policy.
 
 ## A5 — Sandboxed Execution Providers
 
-**Goal:** Add physical isolation while keeping the Host outside the sandbox.
+**Goal:** add physical execution isolation while keeping the Host outside the sandbox.
 
-Introduce a `WorkspaceExecutionProvider`-class abstraction supporting local process execution and isolated environments such as containers, then later remote containers/VMs.
+Introduce a `WorkspaceExecutionProvider`-class boundary supporting the existing local path and isolated environments such as containers, then later remote containers/VMs.
 
-The first serious isolation backend should provide explicit mounts, unprivileged execution, CPU/memory/process/output bounds, network restrictions, scrubbed environment, explicit secret projection, and deterministic cleanup.
+A serious isolation backend should provide explicit mounts, unprivileged execution, CPU/memory/process/output bounds, network restrictions, scrubbed environment, explicit secret projection, deterministic cleanup, and execution-base observation strong enough for Program authority.
 
-A4 may precede A5 only while the Workflow VM is restricted to Host capability instructions. Arbitrary generated code should not become a normal execution path before physical isolation exists.
+S-02 may remain available before A5 because its local VM has no ambient environmental authority; arbitrary generated OS code must not become a normal path merely because Code Mode exists.
 
 ## A6 — Procedure Optimization and Lifecycle
 
-**Goal:** Convert repeated successful experience into governed reusable procedures without allowing learned code to self-install or acquire independent authority.
+**Goal:** convert repeated successful experience into governed reusable procedures without allowing learned code to self-install or acquire authority.
 
 ```text
-Level 0 — atomic Host capabilities
-Level 1 — ephemeral Workflow VM programs
-Level 2 — validated reusable procedures
+atomic Host capabilities
+        ↓
+ephemeral S-02 orchestration
+        ↓
+validated reusable procedure candidates
+        ↓
+static validation + isolated evaluation + verification
+        ↓
+versioned promoted ProcedureGeneration
 ```
 
-Expected lifecycle:
-
-```text
-trajectories
-  ↓
-Candidate
-  ↓
-static validation
-  ↓
-sandbox evaluation
-  ↓
-behavioral verification
-  ↓
-Experimental
-  ↓
-promotion decision
-  ↓
-Stable ProcedureGeneration
-   ┌───────┼─────────┐
-   ▼       ▼         ▼
- merge  quarantine  retire
-```
-
-The target is a **Procedure Optimization System**, not merely a Skill Store. A large Procedure Registry should be distinct from the small context-specific Active Procedure Projection shown to an inference.
-
-Procedure applicability is evidence-bound and version-sensitive. Capability-contract changes, ecosystem assumptions, execution-provider requirements, or observed failure domains may invalidate applicability without erasing provenance.
+A large Procedure Registry should remain separate from the bounded Active Procedure Projection shown to one inference.
 
 Core invariant:
 
@@ -415,29 +335,29 @@ Core invariant:
 
 ## A7 — Isolated Parallel Workspace Execution
 
-**Goal:** Introduce useful concurrency through independent execution domains rather than weakening same-workspace serialization.
+**Goal:** introduce useful concurrency through independently identified execution domains rather than weakening same-workspace serialization.
 
-Initial isolation can use Git worktrees or equivalent independently identified workspace generations. A future `WorkspaceExecutionIdentity` should distinguish repository/base revision, branch/worktree, environment generation, sandbox identity, and observed workspace state.
+Initial isolation can use Git worktrees or equivalent independently identified workspace generations. A future `WorkspaceExecutionIdentity` should distinguish repository/base revision, branch/worktree, environment generation, sandbox identity, and observed state.
 
 Parallel work creates an explicit integration boundary:
 
 ```text
-branch/worktree implementation
+isolated implementation
         ↓
 local verification
         ↓
-integration operation
+Host integration operation
         ↓
 new integrated workspace generation
         ↓
 integration verification
 ```
 
-Passing verification on branch A does not verify the merged integration workspace. Same-workspace serialization remains the safe default.
+Passing verification on branch/worktree A does not verify the merged integration workspace.
 
 ## A8 — Durable Delegation over Replaceable Agents
 
-**Goal:** Add bounded subagent/delegation semantics only after the Program can evolve and independent execution domains exist.
+**Goal:** add bounded subagent/delegation semantics only after adaptive Programs and isolated execution domains exist.
 
 The durable object is work/delegation, not the worker process:
 
@@ -451,23 +371,21 @@ ProgramAttempt
 replaceable AgentGeneration
 ```
 
-A Delegation may carry an authority ceiling, workspace identity, specialization hint, resource/cost budget, and current Attempt. Agent or model replacement must not change the identity of the delegated obligation. Authority topology remains Host-centered rather than forming chains of privileged Agents.
+A Delegation may carry an authority ceiling, workspace identity, specialization hint, resource/cost budget, and current Attempt. Agent/model replacement never changes the identity of the delegated obligation. Authority topology remains Host-centered.
 
 ## A9 — Remote Execution
 
-**Goal:** Move execution across machines without moving canonical authority away from the Host.
+**Goal:** move execution across machines without moving canonical authority away from the Host.
 
-The remote protocol must preserve Operation identity, worker generation/incarnation, leases/fencing, transport retry identity, idempotency identity, effect reconciliation, result provenance/authenticity, and worker-loss handling.
+The remote protocol must preserve Operation identity, worker generation/incarnation, leases/fencing, transport retry identity, idempotency identity, exact execution-base identity, effect reconciliation, result provenance/authenticity, and worker-loss handling.
 
-The existing separation between execution outcome, effect certainty, and reconciliation state remains intact. Timeout or worker disappearance cannot mean “the mutation did not happen.”
+Timeout or worker disappearance can never mean “the mutation did not happen.”
 
 ## A10 — Autonomous Program Policy Scheduling
 
-**Goal:** Add long-running autonomous policy over the canonical Program runtime.
+**Goal:** add long-running autonomous policy over the canonical Program runtime.
 
-By this stage the runtime should already derive semantic eligibility, issue Attempts, isolate execution domains, delegate work, and preserve recovery truth. A10 adds policy sophistication rather than becoming the first scheduler.
-
-The scheduler may reason about required/eligible work, refinement, concurrency, workspace/provider placement, model/Agent specialization, procedure projection, blockers, stale evidence, replan decisions, and budget.
+By this stage the runtime should already derive semantic eligibility, issue Attempts, isolate execution domains, delegate work, and preserve recovery truth. A10 adds policy sophistication rather than becoming the first source of scheduling truth.
 
 ```text
 Scheduler = policy
@@ -478,11 +396,9 @@ The scheduler observes canonical state and proposes/advises admissions. It does 
 
 ## A11 — Research / Runtime Ecosystem and Product Maturity
 
-**Goal:** Make ALCODE a strong experimental and developer runtime without turning it into an enterprise administration platform.
+**Goal:** make ALCODE a strong experimental and developer runtime without turning it into enterprise administration software.
 
 Likely extension seams include `ModelProvider`, `PlanningStrategy`, `ContextStrategy`, `MemoryStrategy`, `ReasoningStrategy`, `VerificationStrategy`, `ProcedureLearner`, `CapabilityProvider`, `AgentRuntimeModule`, `WorkspaceExecutionProvider`, `SchedulingStrategy`, and `DelegationStrategy`.
-
-The target research property is that the same Program/repository/capability environment can be exercised across different models and harness strategies while preserving the Host correctness substrate.
 
 Benchmark principle:
 
@@ -490,51 +406,46 @@ Benchmark principle:
 
 ---
 
-## 8. Dependency rationale
+## 8. Dependency rationale from the current position
 
-Preferred ordering:
+The preferred load-bearing sequence is now:
 
 ```text
-adaptive Programs
+A2 reconstructable inference provenance
       ↓
-durable inference provenance
+A5 physical execution-provider isolation
       ↓
-semantic SDLC capabilities
+A6 governed procedure lifecycle
       ↓
-Workflow VM
+A7 parallel isolated workspaces
       ↓
-sandboxed execution
+A8 durable delegation / subagents
       ↓
-procedure optimization
+A9 remote execution
       ↓
-parallel isolated workspaces
+A10 autonomous policy scheduling
       ↓
-durable delegation / subagents
-      ↓
-remote execution
-      ↓
-autonomous policy scheduling
-      ↓
-research/runtime ecosystem maturity
+A11 research/runtime ecosystem maturity
 ```
 
-The order may change only through an explicit successor objective. Several dependencies are architectural:
+A3 semantic capability expansion remains demand-driven alongside these stages; A4 is already closed by S-02's bounded realization.
 
-- **Adaptive Programs before subagents:** multiple Agents executing a fixed plan faster is not long-horizon adaptation.
-- **Semantic capabilities before Workflow VM/procedures:** reusable orchestration is safer over typed Host-governed effects than over opaque shell behavior.
-- **Workflow VM before procedures:** a restricted executable representation gives candidate procedures a governable form before long-term retention.
-- **Sandbox before broader learned execution:** synthesized code should not gain unrestricted OS/network authority because it was learned from successful trajectories.
+The major dependencies are:
+
+- **Inference provenance before broader provider/delegated execution:** later workers/providers are much easier to compare, diagnose, and recover if causal inference history is exact first.
+- **Physical isolation before learned/broader generated execution:** synthesized code should not gain unrestricted OS/network authority because it was produced by a model or learned from successful trajectories.
+- **Procedure lifecycle before autonomous procedure reuse:** retention and promotion need evidence/version boundaries, not successful text alone.
 - **Isolated workspaces before subagents:** safe parallel effects should exist before multiplying cognition workers.
-- **Local isolation before remote workers:** distributed failure modes should extend a proven local execution-provider contract.
-- **Autonomous scheduling late:** sophisticated policy is valuable only after trustworthy semantic work, execution domains, delegation, procedure applicability, and recovery state exist.
+- **Local isolation before remote workers:** distributed failure modes should extend a proven execution-provider identity/containment contract.
+- **Autonomous scheduling late:** sophisticated policy is valuable only after trustworthy semantic work, execution domains, delegation, provenance, procedure applicability, and recovery exist.
 
 ---
 
 ## 9. Verification and completion direction
 
-As Program semantics become dynamic, completion must become stricter rather than more model-dependent.
+Adaptive Program semantics make completion stricter, not more model-dependent.
 
-The eventual Completion Oracle should be able to establish at one protected canonical cut that:
+The Completion Oracle should continue to establish at one protected canonical cut that:
 
 - all required current work is satisfied;
 - no unresolved required decomposition remains;
@@ -547,7 +458,7 @@ The eventual Completion Oracle should be able to establish at one protected cano
 - required artifacts/outputs are present;
 - the current integration workspace is the workspace actually verified.
 
-Implementation done is not equivalent to verification current. Previous passing evidence is not automatically current after material Program or workspace change.
+A2 inference provenance must not be added to this list as an independent completion predicate except insofar as a later explicitly frozen objective requires provenance integrity for a specific audit/product guarantee. Model/provider self-assessment remains non-authoritative.
 
 ---
 
@@ -561,76 +472,71 @@ Measure task success, tests/regressions, patch quality, wall-clock time, token/m
 
 ### Runtime integrity
 
-Adversarially test Agent/Host loss, stale Attempt/revision/inference authority, workspace drift, timeout after write, worker disappearance, duplicate requests, verification invalidation, and procedure dependency drift. Measure duplicate effects, stale-authority admission, recovery/reconciliation correctness, invalid evidence reuse, and incorrect completion.
+Adversarially test Agent/Host loss, stale Attempt/revision/inference provenance claims, workspace drift, timeout after write, worker disappearance, duplicate requests, verification invalidation, capability-generation replacement, and procedure dependency drift. Measure duplicate effects, stale-authority admission, recovery/reconciliation correctness, invalid evidence reuse, false provenance joins, and incorrect completion.
 
 Every major objective should retain the established proof discipline: semantic proof, adversarial lifecycle proof, recovery proof, and capability proof where relevant.
 
 ---
 
-## 11. Immediate next action after P-01
+## 11. Immediate next action after S-02
 
-P-01 is closed. Its closure does **not** authorize successor work.
+A1, P-02, and S-02 are closed. Their closure does not automatically authorize unrelated successor implementation.
 
-The recommended next architecture objective is **A1 — Adaptive Program Revision and Progressive Decomposition**.
+The bounded next design objective is **A2 / S-04 — Reconstructable Inference Provenance**.
 
-Before A1 implementation begins, its separate plan should freeze at least:
+The forcing study has established that current receipts/events cannot mechanically reconstruct one exact inference because:
 
 ```text
-What exactly is a ProgramRevision?
-What transaction admits the next revision?
-How are stale revision proposals rejected?
-What changes preserve WorkItemId?
-What advances WorkItemGeneration?
-What requires a new WorkItemId?
-What does decomposed mean?
-How is a child graph bounded by inherited authority?
-What is refinement vs correction vs scope amendment?
-Which revisions invalidate which Attempts?
-Which revisions invalidate which verification evidence?
-How is RevisionImpact derived?
-How do concurrent revision proposals race?
-How does recovery reproduce exact revision lineage?
-How does cancellation interact with pending revision work?
-How does Completion prove no unresolved required decomposition remains?
+no durable InferenceEpoch identity
+provider/model effective semantics are not durably bound
+assistant transcript is not context-receipt/inference-bound
+operation.requested does not retain provider/model toolCallId
+S-02 nested parentage is not explicit durable data
+exact binding-bearing inference catalog is not durably attached to one inference
 ```
 
-The A1 plan must be explicitly reviewed and frozen before A1 production implementation begins.
+The frozen A2 plan corrects those gaps with a Host-minted non-authorizing epoch plus minimal lifecycle/correlation facts. It explicitly excludes subagents, worktrees, remote execution, procedure learning, general scheduling, and a requirement to add another live provider.
+
+Production A2 implementation remains a separate explicit execution step after the design-freeze documentation is reviewed and landed.
 
 ---
 
 ## 12. Roadmap maintenance rule
 
-This file is intentionally more stable than objective plans.
-
-Update it when:
+Update this file when:
 
 1. a major objective closes and the current-position section becomes stale;
 2. explicit product direction changes the long-term architecture;
 3. implementation evidence proves a roadmap dependency or architectural assumption wrong;
 4. a durable stage is intentionally added, removed, or materially reordered.
 
-Do **not** rewrite the roadmap because an implementation detail, PR sequence, provider choice, or reversible mechanism changes. Historical implementation facts belong in phase plans and closure records rather than accumulating indefinitely here.
+Do not rewrite the roadmap because a reversible mechanism, PR sequence, provider choice, or local implementation detail changes. Historical facts belong in objective plans and closure records.
 
 ---
 
 ## 13. Current status summary
 
 ```text
-CLOSED FOUNDATION
-────────────────────────────────────────────────────────
+CLOSED FOUNDATION / PRODUCT CAPABILITY
+────────────────────────────────────────────────────────────
 0.x  Owned Host/runtime, durability, cognition, context,
      Application Protocol, adapters
 1.0  Durable ProgramState
 1.1  Default Program-backed execution
 S-01 Replaceable Agent runtime
 P-01 Production Program Agent
+A1   Adaptive Program revision / progressive decomposition
+P-02 Semantic planning + typed verification retry
+S-02 ProgramAttempt-aware Code Mode
+A4   Capability Workflow VM — bounded realization via S-02
 
-FORWARD ARCHITECTURE — NOT AUTOMATICALLY AUTHORIZED
-────────────────────────────────────────────────────────
-A1   Adaptive Program revision and decomposition     NEXT
-A2   Durable inference provenance/provider breadth
-A3   Semantic SDLC capabilities
-A4   Capability Workflow VM
+CURRENT FROZEN DESIGN — IMPLEMENTATION SEPARATE
+────────────────────────────────────────────────────────────
+A2 / S-04  Reconstructable inference provenance           NEXT
+
+INCREMENTAL / FUTURE
+────────────────────────────────────────────────────────────
+A3   Semantic SDLC capability expansion                    DEMAND-DRIVEN
 A5   Sandboxed execution providers
 A6   Procedure optimization and lifecycle
 A7   Isolated parallel workspace execution
@@ -643,10 +549,13 @@ A11  Research/runtime ecosystem and product maturity
 The immediate architectural boundary is:
 
 ```text
-fixed-topology autonomous Program      CLOSED / PROVEN
-                 │
-                 ▼
-adaptive long-horizon Program          NEXT DESIGN OBJECTIVE
+adaptive single-Agent Program + local orchestration     CLOSED / PROVEN
+                         │
+                         ▼
+exact reconstructable provider-inference causality      NEXT IMPLEMENTATION CANDIDATE
+                         │
+                         ▼
+physical isolation → procedures → parallelism → delegation → remote
 ```
 
-That transition should be solved rigorously before adding higher-level execution features that depend on evolving Program meaning.
+That ordering preserves ALCODE's central design: cognition and orchestration may become richer, but canonical authority remains concentrated in durable Host state machines and Operations.
