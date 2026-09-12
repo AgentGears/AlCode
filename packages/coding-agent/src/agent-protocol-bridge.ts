@@ -7,6 +7,9 @@ import {
   type CapabilityResult,
   type ContextUpdate,
   type HostToAgentMessage,
+  type InferenceProviderDescriptorV1,
+  type InferenceProviderObservationV1,
+  type InferenceTerminalOutcomeV1,
   type ProgramAttemptAuthorityV1,
   type ProgramCreationProposalWireV1,
   type ProgramPlanningReadResult,
@@ -47,13 +50,27 @@ export interface ProgramProgressRequest {
   requestAwaitingVerification: boolean;
 }
 
+export interface InferenceTerminalClientRecordV1 {
+  sessionId: string;
+  inferenceEpochId: string;
+  outcome: InferenceTerminalOutcomeV1;
+  stopReason?: "stop" | "length" | "tool_use" | "error" | "aborted";
+  providerObservation?: InferenceProviderObservationV1;
+}
+
 export type HostMessageHandler = (message: HostToAgentMessage) => void | Promise<void>;
 
 /** Privileged Agent-side semantic surface. It intentionally exposes no raw transport primitives. */
 export interface AgentProtocolClient extends CognitionHostClient {
   announceHello(generationId: string, capabilities: readonly string[]): Promise<void>;
   reportError(message: string, sessionId?: string): Promise<void>;
-  requestContextUpdate(sessionId: string, signal: AbortSignal): Promise<ContextUpdate>;
+  requestContextUpdate(
+    sessionId: string,
+    providerDescriptorOrSignal: InferenceProviderDescriptorV1 | AbortSignal,
+    signal?: AbortSignal,
+  ): Promise<ContextUpdate>;
+  prepareInference(sessionId: string, inferenceEpochId: string, signal?: AbortSignal): Promise<void>;
+  reportInferenceTerminal(record: InferenceTerminalClientRecordV1): Promise<void>;
   requestProgramPlanningRead(request: ProgramPlanningReadClientRequest): Promise<ProgramPlanningReadResult>;
   submitProgramProposal(request: ProgramProposalRequest): Promise<ProgramProposalResult>;
   submitProgramProgress(request: ProgramProgressRequest): Promise<ProgramProgressResult>;
@@ -118,15 +135,66 @@ class AgentProtocolBridge implements AgentProtocolClient {
     });
   }
 
-  requestContextUpdate(sessionId: string, signal: AbortSignal): Promise<ContextUpdate> {
+  requestContextUpdate(
+    sessionId: string,
+    providerDescriptorOrSignal: InferenceProviderDescriptorV1 | AbortSignal,
+    maybeSignal?: AbortSignal,
+  ): Promise<ContextUpdate> {
+    const providerDescriptor = providerDescriptorOrSignal instanceof AbortSignal
+      ? undefined
+      : providerDescriptorOrSignal;
+    const signal = providerDescriptorOrSignal instanceof AbortSignal
+      ? providerDescriptorOrSignal
+      : maybeSignal;
+    if (signal === undefined) return Promise.reject(new Error("Context refresh requires an AbortSignal"));
     const requestId = randomUUID();
     return this.request(
       requestId,
-      { type: "context.refresh.request", requestId, sessionId },
+      {
+        type: "context.refresh.request",
+        requestId,
+        sessionId,
+        ...(providerDescriptor !== undefined ? { providerDescriptor: structuredClone(providerDescriptor) } : {}),
+      },
       (message): message is ContextUpdate => message.type === "context.update"
         && message.requestId === requestId
         && message.sessionId === sessionId,
       { signal },
+    );
+  }
+
+  async prepareInference(sessionId: string, inferenceEpochId: string, signal?: AbortSignal): Promise<void> {
+    const requestId = randomUUID();
+    await this.request(
+      requestId,
+      { type: "inference.prepared", requestId, sessionId, inferenceEpochId },
+      (message) => message.type === "inference.prepared.ack"
+        && message.requestId === requestId
+        && message.sessionId === sessionId
+        && message.inferenceEpochId === inferenceEpochId,
+      signal !== undefined ? { signal } : {},
+    );
+  }
+
+  async reportInferenceTerminal(record: InferenceTerminalClientRecordV1): Promise<void> {
+    const requestId = randomUUID();
+    await this.request(
+      requestId,
+      {
+        type: "inference.terminal",
+        requestId,
+        sessionId: record.sessionId,
+        inferenceEpochId: record.inferenceEpochId,
+        outcome: record.outcome,
+        ...(record.stopReason !== undefined ? { stopReason: record.stopReason } : {}),
+        ...(record.providerObservation !== undefined
+          ? { providerObservation: structuredClone(record.providerObservation) }
+          : {}),
+      },
+      (message) => message.type === "inference.terminal.ack"
+        && message.requestId === requestId
+        && message.sessionId === record.sessionId
+        && message.inferenceEpochId === record.inferenceEpochId,
     );
   }
 
@@ -212,6 +280,9 @@ class AgentProtocolBridge implements AgentProtocolClient {
         ...(request.programAttemptAuthority !== undefined
           ? { programAttemptAuthority: structuredClone(request.programAttemptAuthority) }
           : {}),
+        ...(request.inferenceEpochId !== undefined ? { inferenceEpochId: request.inferenceEpochId } : {}),
+        ...(request.parentToolCallId !== undefined ? { parentToolCallId: request.parentToolCallId } : {}),
+        ...(request.localSubcallIndex !== undefined ? { localSubcallIndex: request.localSubcallIndex } : {}),
       },
       (message): message is CapabilityResult => message.type === "capability.result"
         && message.requestId === requestId
@@ -230,6 +301,7 @@ class AgentProtocolBridge implements AgentProtocolClient {
         requestId,
         sessionId: record.sessionId,
         text: record.text,
+        ...(record.inferenceEpochId !== undefined ? { inferenceEpochId: record.inferenceEpochId } : {}),
       });
       return;
     }
@@ -244,6 +316,7 @@ class AgentProtocolBridge implements AgentProtocolClient {
         stopReason: record.stopReason,
         ...(record.errorMessage !== undefined ? { errorMessage: record.errorMessage } : {}),
         timestamp: record.timestamp,
+        ...(record.inferenceEpochId !== undefined ? { inferenceEpochId: record.inferenceEpochId } : {}),
       },
       (message): message is TranscriptAdmitted => message.type === "transcript.admitted"
         && message.requestId === requestId
@@ -389,6 +462,8 @@ function createSemanticClientFacade(bridge: AgentProtocolBridge): AgentProtocolC
     announceHello: bridge.announceHello.bind(bridge),
     reportError: bridge.reportError.bind(bridge),
     requestContextUpdate: bridge.requestContextUpdate.bind(bridge),
+    prepareInference: bridge.prepareInference.bind(bridge),
+    reportInferenceTerminal: bridge.reportInferenceTerminal.bind(bridge),
     requestProgramPlanningRead: bridge.requestProgramPlanningRead.bind(bridge),
     submitProgramProposal: bridge.submitProgramProposal.bind(bridge),
     submitProgramProgress: bridge.submitProgramProgress.bind(bridge),
