@@ -1,6 +1,15 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { EventDraft } from "@alcode/events";
 import type { WorkspaceEventStore } from "@alcode/storage";
+import { CapabilityBroker, type CapabilityBrokerRequest } from "./capability-broker.ts";
+
+declare module "./capability-broker.ts" {
+  interface CapabilityBrokerRequest {
+    inferenceEpochId?: string;
+    parentToolCallId?: string;
+    localSubcallIndex?: number;
+  }
+}
 
 export interface CapabilityInferenceProvenanceV1 {
   toolCallId: string;
@@ -10,7 +19,8 @@ export interface CapabilityInferenceProvenanceV1 {
 }
 
 const correlation = new AsyncLocalStorage<CapabilityInferenceProvenanceV1>();
-const installed = new WeakSet<object>();
+const installedStores = new WeakSet<object>();
+const BROKER_PATCH = Symbol.for("alcode.a2.capability-inference-provenance.v1");
 
 function validate(input: CapabilityInferenceProvenanceV1): CapabilityInferenceProvenanceV1 {
   if (!input.toolCallId) throw new Error("capability provenance requires toolCallId");
@@ -60,14 +70,13 @@ function withCorrelation(
 
 /**
  * Install one Host-owned append interceptor on the canonical Workspace store.
- * It is inert outside an explicitly scoped capability execution. Because every
- * component shares this exact store object, Program-routed and ordinary broker
- * admission receive identical provenance enrichment without changing execution
- * authority or Operation identity semantics.
+ * It is inert outside a broker execution scope. Because Program routing and the
+ * broker share this exact store object, the same correlation is persisted for
+ * ordinary and Program-linked Operations without granting execution authority.
  */
 export function installCapabilityInferenceProvenanceV1(store: WorkspaceEventStore): void {
-  if (installed.has(store as object)) return;
-  installed.add(store as object);
+  if (installedStores.has(store as object)) return;
+  installedStores.add(store as object);
   const append = store.append.bind(store);
   store.append = ((drafts: EventDraft<string, unknown>[]) => {
     const current = correlation.getStore();
@@ -83,3 +92,27 @@ export function withCapabilityInferenceProvenanceV1<T>(
 ): Promise<T> {
   return correlation.run(validate(input), work);
 }
+
+/**
+ * CapabilityBroker already owns execution/admission. This patch only binds its
+ * existing request correlation to the canonical append interval. It neither
+ * authorizes the request nor changes Operation/effect settlement semantics.
+ */
+function installBrokerScopeV1(): void {
+  const prototype = CapabilityBroker.prototype as CapabilityBroker["__proto__"] & Record<PropertyKey, unknown>;
+  if (prototype[BROKER_PATCH] === true) return;
+  const original = CapabilityBroker.prototype.execute;
+  Object.defineProperty(prototype, BROKER_PATCH, { value: true, configurable: false });
+  CapabilityBroker.prototype.execute = function executeWithInferenceProvenance(
+    request: CapabilityBrokerRequest,
+  ) {
+    return withCapabilityInferenceProvenanceV1({
+      toolCallId: request.toolCallId,
+      ...(request.inferenceEpochId !== undefined ? { inferenceEpochId: request.inferenceEpochId } : {}),
+      ...(request.parentToolCallId !== undefined ? { parentToolCallId: request.parentToolCallId } : {}),
+      ...(request.localSubcallIndex !== undefined ? { localSubcallIndex: request.localSubcallIndex } : {}),
+    }, () => original.call(this, request));
+  };
+}
+
+installBrokerScopeV1();
