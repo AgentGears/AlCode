@@ -384,7 +384,7 @@ class AgentProtocolBridgeV2 implements AgentProtocolClientV2 {
   private request<TResponse extends HostToAgentMessageV2Aware>(
     requestId: string,
     outgoing: AgentToHostMessageV2Aware,
-    matches: (message: HostToAgentMessageV2Aware) => message is TResponse,
+    matches: (message: HostToAgentMessageV2Aware) => boolean,
     options: RequestOptions = {},
   ): Promise<TResponse> {
     if (this.closed) return Promise.reject(new AgentProtocolBridgeV2ClosedError());
