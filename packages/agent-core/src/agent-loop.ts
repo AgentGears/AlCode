@@ -10,6 +10,7 @@ import type {
   AssistantMessage,
   Message,
   ModelProvider,
+  ModelProviderObservation,
   TextContent,
   ToolCallContent,
   ToolResultMessage,
@@ -20,6 +21,15 @@ export interface InferenceContext {
   messages: readonly Message[];
   /** Exact Host-authorized tools for this provider inference when refreshed. */
   tools?: readonly AgentTool[];
+  /** Host-minted A2 causal identity; provenance only, never execution authority. */
+  inferenceEpochId?: string;
+}
+
+export interface InferenceLifecycleResult {
+  inferenceEpochId?: string;
+  outcome: "completed" | "provider_error" | "aborted";
+  stopReason?: AssistantMessage["stopReason"];
+  providerObservation?: ModelProviderObservation;
 }
 
 export interface AgentLoopOptions {
@@ -45,7 +55,7 @@ export interface AgentLoopOptions {
    * the provider inference and all tool calls formed by it settle, including
    * exceptional provider/tool-event paths. It owns no execution authority.
    */
-  afterInference?: () => void | Promise<void>;
+  afterInference?: (result: InferenceLifecycleResult) => void | Promise<void>;
 }
 
 export async function runAgentLoop(
@@ -69,7 +79,6 @@ export async function runAgentLoop(
 
   for (let step = 0; step < maxSteps; step++) {
     if (signal?.aborted) break;
-    await emit({ type: "turn_start" });
 
     const localInference: InferenceContext = {
       systemPrompt,
@@ -82,32 +91,66 @@ export async function runAgentLoop(
         ? await options.beforeInference(localInference)
         : localInference;
     } catch (error) {
-      if (signal?.aborted) {
-        await emit({ type: "turn_end" });
-        break;
-      }
+      if (signal?.aborted) break;
       throw error;
     }
+
+    const inferenceEpochId = authorized.inferenceEpochId;
+    await emit({
+      type: "turn_start",
+      ...(inferenceEpochId !== undefined ? { inferenceEpochId } : {}),
+    });
+
     if (signal?.aborted) {
-      await options.afterInference?.();
-      await emit({ type: "turn_end" });
+      await options.afterInference?.({
+        ...(inferenceEpochId !== undefined ? { inferenceEpochId } : {}),
+        outcome: "aborted",
+      });
+      await emit({
+        type: "turn_end",
+        ...(inferenceEpochId !== undefined ? { inferenceEpochId } : {}),
+      });
       break;
     }
 
     let finishAfterTurn = false;
+    let lifecycle: InferenceLifecycleResult = {
+      ...(inferenceEpochId !== undefined ? { inferenceEpochId } : {}),
+      outcome: "provider_error",
+    };
     try {
       const authorizedTools = authorized.tools ? [...authorized.tools] : tools;
 
-      const assistantMessage = await streamAssistant(
+      const streamed = await streamAssistant(
         authorized.systemPrompt,
         [...authorized.messages].map((message) => structuredClone(message)),
         authorizedTools,
         provider,
         signal,
       );
+      const assistantMessage = streamed.message;
+      lifecycle = {
+        ...(inferenceEpochId !== undefined ? { inferenceEpochId } : {}),
+        outcome: assistantMessage.stopReason === "aborted"
+          ? "aborted"
+          : assistantMessage.stopReason === "error" ? "provider_error" : "completed",
+        stopReason: assistantMessage.stopReason,
+        ...(streamed.providerObservation !== undefined
+          ? { providerObservation: structuredClone(streamed.providerObservation) }
+          : {}),
+      };
+
       messages.push(assistantMessage);
-      await emit({ type: "message_start", message: assistantMessage });
-      await emit({ type: "message_end", message: assistantMessage });
+      await emit({
+        type: "message_start",
+        message: assistantMessage,
+        ...(inferenceEpochId !== undefined ? { inferenceEpochId } : {}),
+      });
+      await emit({
+        type: "message_end",
+        message: assistantMessage,
+        ...(inferenceEpochId !== undefined ? { inferenceEpochId } : {}),
+      });
 
       const toolCalls = assistantMessage.content.filter(
         (c): c is ToolCallContent => c.type === "toolCall",
@@ -117,8 +160,17 @@ export async function runAgentLoop(
         finishAfterTurn = true;
       } else {
         for (const tc of toolCalls) {
-          if (signal?.aborted) break;
-          await emit({ type: "tool_execution_start", toolCallId: tc.id, toolName: tc.name, args: tc.arguments });
+          if (signal?.aborted) {
+            lifecycle = { ...lifecycle, outcome: "aborted" };
+            break;
+          }
+          await emit({
+            type: "tool_execution_start",
+            toolCallId: tc.id,
+            toolName: tc.name,
+            args: tc.arguments,
+            ...(inferenceEpochId !== undefined ? { inferenceEpochId } : {}),
+          });
 
           const tool = authorizedTools.find((t) => t.name === tc.name);
           let result: AgentToolResult;
@@ -134,7 +186,11 @@ export async function runAgentLoop(
             outcome = "failed";
           } else {
             try {
-              const ctx = signal ? { signal, toolCallId: tc.id } : { toolCallId: tc.id };
+              const ctx = {
+                ...(signal ? { signal } : {}),
+                toolCallId: tc.id,
+                ...(inferenceEpochId !== undefined ? { inferenceEpochId } : {}),
+              };
               result = await tool.execute(tc.arguments, ctx);
               isError = false;
               outcome = result.executionOutcome ?? "succeeded";
@@ -149,7 +205,15 @@ export async function runAgentLoop(
             }
           }
 
-          await emit({ type: "tool_execution_end", toolCallId: tc.id, toolName: tc.name, result, isError, outcome });
+          await emit({
+            type: "tool_execution_end",
+            toolCallId: tc.id,
+            toolName: tc.name,
+            result,
+            isError,
+            outcome,
+            ...(inferenceEpochId !== undefined ? { inferenceEpochId } : {}),
+          });
 
           const toolResult: ToolResultMessage = {
             role: "toolResult",
@@ -160,15 +224,32 @@ export async function runAgentLoop(
             timestamp: Date.now(),
           };
           messages.push(toolResult);
-          await emit({ type: "message_start", message: toolResult });
-          await emit({ type: "message_end", message: toolResult });
+          await emit({
+            type: "message_start",
+            message: toolResult,
+            ...(inferenceEpochId !== undefined ? { inferenceEpochId } : {}),
+          });
+          await emit({
+            type: "message_end",
+            message: toolResult,
+            ...(inferenceEpochId !== undefined ? { inferenceEpochId } : {}),
+          });
         }
       }
+    } catch (error) {
+      lifecycle = {
+        ...lifecycle,
+        outcome: signal?.aborted ? "aborted" : "provider_error",
+      };
+      throw error;
     } finally {
-      await options.afterInference?.();
+      await options.afterInference?.(lifecycle);
     }
 
-    await emit({ type: "turn_end" });
+    await emit({
+      type: "turn_end",
+      ...(inferenceEpochId !== undefined ? { inferenceEpochId } : {}),
+    });
     if (finishAfterTurn) break;
   }
 
@@ -182,7 +263,7 @@ async function streamAssistant(
   tools: AgentTool[],
   provider: ModelProvider,
   signal?: AbortSignal,
-): Promise<AssistantMessage> {
+): Promise<{ message: AssistantMessage; providerObservation?: ModelProviderObservation }> {
   const request: import("./contracts.ts").ModelRequest = {
     systemPrompt,
     messages,
@@ -226,5 +307,10 @@ async function streamAssistant(
     timestamp: Date.now(),
   };
   if (errorMessage !== undefined) msg.errorMessage = errorMessage;
-  return msg;
+  return {
+    message: msg,
+    ...(stream.providerObservation !== undefined
+      ? { providerObservation: structuredClone(stream.providerObservation) }
+      : {}),
+  };
 }
