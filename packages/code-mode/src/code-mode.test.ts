@@ -219,30 +219,57 @@ describe("S02-2 isolated local runtime", () => {
     expect(Date.now() - started).toBeLessThan(1_500);
   });
 
-  it("terminates local compute on cancellation but drains already-issued dispatch", async () => {
+  it("bounds wall-time drain when an issued dispatch never produces a result", async () => {
+    const started = Date.now();
+    let dispatchAborted = false;
+    const promise = runCodeModeV1WithLimitsForTest({
+      code: "return await tools.slow({});",
+      toolNames: ["slow"],
+      dispatch: async ({ signal }) => {
+        await new Promise<void>((_resolve, reject) => {
+          const onAbort = () => {
+            dispatchAborted = true;
+            reject(signal.reason instanceof Error ? signal.reason : new Error(String(signal.reason ?? "timed out")));
+          };
+          if (signal.aborted) { onAbort(); return; }
+          signal.addEventListener("abort", onAbort, { once: true });
+        });
+        return "unreachable";
+      },
+    }, limits({ wallMs: 100, activeComputeMs: 1_000 }));
+    expect(await errorCode(promise)).toBe("wall_time_limit");
+    expect(dispatchAborted).toBe(true);
+    expect(Date.now() - started).toBeLessThan(1_500);
+  });
+
+  it("terminates local compute on cancellation and boundedly aborts an issued dispatch wait", async () => {
     const controller = new AbortController();
-    let release!: () => void;
     let started!: () => void;
     const issued = new Promise<void>((resolve) => { started = resolve; });
-    const drain = new Promise<void>((resolve) => { release = resolve; });
+    let dispatchAborted = false;
     let settled = false;
     const promise = runCodeModeV1({
       code: "return await tools.slow({ value: 1 });",
       toolNames: ["slow"],
       signal: controller.signal,
-      dispatch: async () => {
+      dispatch: async ({ signal }) => {
         started();
-        await drain;
-        return "done";
+        await new Promise<void>((_resolve, reject) => {
+          const onAbort = () => {
+            dispatchAborted = true;
+            reject(signal.reason instanceof Error ? signal.reason : new Error(String(signal.reason ?? "cancelled")));
+          };
+          if (signal.aborted) { onAbort(); return; }
+          signal.addEventListener("abort", onAbort, { once: true });
+        });
+        return "unreachable";
       },
     }).finally(() => { settled = true; });
 
     await issued;
     controller.abort("test cancellation");
-    await new Promise((resolve) => setTimeout(resolve, 25));
-    expect(settled).toBe(false);
-    release();
     expect(await errorCode(promise)).toBe("cancelled");
+    expect(dispatchAborted).toBe(true);
     expect(settled).toBe(true);
   });
 

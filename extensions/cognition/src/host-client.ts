@@ -11,6 +11,8 @@ export interface CognitionCapabilityRequest {
   toolName: string;
   args: unknown;
   expectedCapabilityRevision?: string;
+  /** Agent-local cancellation only; never serialized as Host authority. */
+  signal?: AbortSignal;
   programAttemptAuthority?: ProgramAttemptAuthorityV1;
 }
 

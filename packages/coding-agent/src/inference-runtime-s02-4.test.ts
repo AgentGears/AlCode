@@ -107,7 +107,7 @@ describe("S02-4 local orchestration authority/effect adversarial proof", () => {
       programAttemptAuthority: authorityV2,
       client: {
         async requestCapability(request) {
-          calls.push(structuredClone(request));
+          calls.push(request);
           if (request.toolName === "mutate") {
             mutationIssued.release();
             await mutationRelease.promise;
@@ -164,12 +164,12 @@ describe("S02-4 local orchestration authority/effect adversarial proof", () => {
     await runtime.dispose();
   });
 
-  it("cancels local compute but keeps scope disposal pending until an issued Host sub-dispatch drains", async () => {
+  it("cancels local compute and boundedly releases the issued Agent-side Host wait before scope disposal", async () => {
     const runtime = await AgentRuntime.create({ generationId: "agent-generation-s02-4" });
     const controller = new AbortController();
     const issued = latch();
-    const releaseHost = latch();
     let hostCalls = 0;
+    let requestAborted = false;
 
     const projection = createInferenceCapabilityProjection({
       runtime,
@@ -180,38 +180,35 @@ describe("S02-4 local orchestration authority/effect adversarial proof", () => {
         async requestCapability(request) {
           hostCalls += 1;
           issued.release();
-          await releaseHost.promise;
-          return hostResult(request, {
-            outcome: "succeeded",
-            operationId: "operation-drained-after-cancel",
-            result: { settled: true },
+          expect(request.signal).toBeDefined();
+          await new Promise<void>((_resolve, reject) => {
+            const signal = request.signal!;
+            const onAbort = () => {
+              requestAborted = true;
+              reject(signal.reason instanceof Error ? signal.reason : new Error(String(signal.reason ?? "cancelled")));
+            };
+            if (signal.aborted) { onAbort(); return; }
+            signal.addEventListener("abort", onAbort, { once: true });
           });
+          throw new Error("unreachable");
         },
       },
     });
 
-    let runSettled = false;
     const run = projectedTool(projection.tools, "run_code").execute({
       code: 'return await tools.mutate({ path: "src/cancel.ts" });',
     }, {
       toolCallId: "outer-s02-4-cancel",
       signal: controller.signal,
-    }).finally(() => { runSettled = true; });
+    });
 
     await issued.promise;
     controller.abort("S02-4 cancellation");
-    let disposeSettled = false;
-    const disposing = projection.dispose().then(() => { disposeSettled = true; });
-    await Promise.resolve();
-    expect(runSettled).toBe(false);
-    expect(disposeSettled).toBe(false);
-
-    releaseHost.release();
     const result = await run;
-    await disposing;
+    await projection.dispose();
     expect(hostCalls).toBe(1);
+    expect(requestAborted).toBe(true);
     expect(result.executionOutcome).toBe("cancelled");
-    expect(disposeSettled).toBe(true);
 
     await runtime.dispose();
   });

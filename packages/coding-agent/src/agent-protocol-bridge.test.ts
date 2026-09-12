@@ -80,6 +80,36 @@ describe("privileged Agent protocol bridge", () => {
     await bridge.close();
   });
 
+  it("cancels capability correlation through the Agent-local signal and ignores a late Host result", async () => {
+    const pair = createInMemoryTransportPair<AgentToHostMessage, HostToAgentMessage>();
+    const bridge = createAgentProtocolBridgeForTransport(pair.a);
+    let captured: Extract<AgentToHostMessage, { type: "capability.request" }> | undefined;
+    pair.b.onMessage((message) => {
+      if (message.type === "capability.request") captured = message;
+    });
+
+    const controller = new AbortController();
+    const pending = bridge.requestCapability({
+      sessionId: "session-a", toolCallId: "tool-call-cancel", toolName: "read", args: {},
+      signal: controller.signal,
+    });
+    await Promise.resolve();
+    controller.abort(new Error("cancel capability"));
+    await expect(pending).rejects.toThrow("cancel capability");
+    expect(captured).toBeDefined();
+
+    await pair.b.send({
+      type: "capability.result",
+      requestId: captured!.requestId,
+      sessionId: "session-a",
+      toolCallId: "tool-call-cancel",
+      toolName: "read",
+      outcome: "succeeded",
+      result: { late: true },
+    });
+    await bridge.close();
+  });
+
   it("preserves Program, capability, transcript, idle, hello, and diagnostics wire semantics behind narrow methods", async () => {
     const pair = createInMemoryTransportPair<AgentToHostMessage, HostToAgentMessage>();
     const bridge = createAgentProtocolBridgeForTransport(pair.a);

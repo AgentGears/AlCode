@@ -54,6 +54,7 @@ export function createProtocolProxyTool<TAuthority extends ProgramAttemptAuthori
         toolCallId: context.toolCallId ?? randomUUID(),
         toolName: options.name,
         args: input,
+        ...(context.signal !== undefined ? { signal: context.signal } : {}),
         ...(options.expectedCapabilityRevision !== undefined
           ? { expectedCapabilityRevision: options.expectedCapabilityRevision }
           : {}),
