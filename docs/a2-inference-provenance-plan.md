@@ -20,17 +20,21 @@ Which inference produced this assistant/tool call?
 What exact Host-authorized context did it receive?
 Which exact capability/binding snapshot could it use?
 Which ProgramAttempt authority did it observe?
-Which effective provider/model semantics were used?
+Which effective provider/model semantics were declared for it?
 Which Host Operations were caused by its tool calls?
 For run_code, which outer call caused each local sub-dispatch?
-How did the inference terminate or become interrupted?
+What is actually known about provider invocation and inference termination?
 ```
 
-The answer must come from durable, bounded, mechanically validated facts rather than event adjacency, process memory, current environment variables, or parsed identifier conventions.
+The answer must come from durable, bounded, mechanically validated facts rather than event adjacency, process memory, current environment variables, parsed identifier conventions, or optimistic assumptions after process loss.
 
 The central invariant is:
 
 > **Inference provenance explains causality; it never grants, renews, transfers, or proves execution authority.**
+
+A second invariant follows from the same uncertainty discipline used by Host Operations:
+
+> **Missing inference/provider evidence remains missing or indeterminate; it is never upgraded to “not invoked,” success, or failure merely because the Agent disappeared.**
 
 ---
 
@@ -86,14 +90,7 @@ Each provider inference receives a fresh, non-reusable Host-minted `InferenceEpo
 
 The identity is scoped to causal provenance. It is not a capability token, lease, ProgramAttempt, retry identity, or execution claim.
 
-A new provider inference always receives a new epoch, including after:
-
-- tool-loop continuation;
-- Agent replacement;
-- provider/model replacement;
-- context refresh;
-- ProgramAttempt retry/successor;
-- semantic Program revision that causes a fresh inference.
+A new provider inference always receives a new epoch, including after tool-loop continuation, Agent replacement, provider/model replacement, context refresh, ProgramAttempt retry/successor, or a semantic Program revision that causes a fresh inference.
 
 Historical epoch identity is immutable.
 
@@ -101,13 +98,11 @@ Historical epoch identity is immutable.
 
 A2 does not copy rendered prompt/history into a new durable record.
 
-Every epoch references the existing durable `context.projection_compiled` receipt. The receipt remains authoritative for the context source/selection/delivery evidence it already owns.
-
-The epoch additionally binds the receipt to the exact inference lifecycle.
+Every epoch references the existing durable `context.projection_compiled` receipt. The receipt remains authoritative for the context source/selection/delivery evidence it already owns. The epoch binds that receipt to one inference lifecycle.
 
 ### D3 — One exact inference-authorization cut
 
-Before provider invocation, the Host must durably bind one epoch to the exact inference authorization cut containing at least:
+Before provider invocation, the Host must durably bind one epoch to one coherent inference authorization cut containing at least:
 
 - Session;
 - current Agent generation;
@@ -116,19 +111,36 @@ Before provider invocation, the Host must durably bind one epoch to the exact in
 - exact binding-bearing capability snapshot digest;
 - exact current ProgramAttempt authority snapshot, when Program-backed;
 - accepted execution-base identity/digest already carried or referenced by that authority, when applicable;
-- secret-free effective provider/model semantic descriptor.
+- secret-free effective provider/model semantic descriptor supplied by the owned Agent/provider-adapter path.
 
 Context receipt creation and epoch authorization must represent one coherent Host decision. Implementation may refactor the current context-refresh service, but it must not create a mixed cut where context comes from one state and capability/Attempt provenance from another.
 
-### D4 — Provider invocation start is a durable acknowledged boundary
+### D4 — Provider invocation uses durable preparation plus explicit uncertainty
 
-Receipt/epoch authorization alone does not prove that a network/local provider invocation occurred.
+The context receipt and epoch authorization do not prove that `ModelProvider.stream()` was called. Likewise, a durable record written *before* that call cannot truthfully prove the call occurred: the Agent can be lost between the durable acknowledgement and the call.
 
-Before calling `ModelProvider.stream()`, an A2-capable Agent must report the authorized epoch back to the Host. The Host validates Session + exact current Agent generation + authorized epoch identity, durably records provider invocation start, and acknowledges it. Only then may that Agent invoke the provider for the epoch.
+Therefore A2 freezes a two-sided boundary rather than a false atomic “started” fact:
 
-This start handshake is provenance sequencing, not model-execution permission beyond the already-established Agent lifecycle. A missing start record means ALCODE must not claim the provider was invoked.
+1. **Prepared.** Before calling the provider adapter, the A2-capable Agent reports the authorized epoch to the Host. The Host validates Session + exact current Agent generation + epoch identity, durably records an invocation-prepared fact, and acknowledges it. The owned Agent must not call `ModelProvider.stream()` before that acknowledgement.
+2. **Observed provider activity / outcome.** After the Agent has evidence from the provider adapter path — for example a returned/observed stream response, provider-native response identity, normalized model event, or caught provider outcome — it may durably report the corresponding bounded observation/outcome.
 
-### D5 — Provider/model provenance is secret-free and provider-neutral
+The crucial crash rule is:
+
+```text
+prepared acknowledged
+        ↓
+Agent loss before any later durable provider observation
+        ↓
+provider invocation occurrence = indeterminate
+```
+
+The provider call may not yet have happened, or it may have happened and the Agent may have died before recording later evidence. ALCODE must preserve that uncertainty. It must not claim either “provider definitely invoked” or “provider definitely not invoked.”
+
+If the Agent is lost **before** the prepared acknowledgement and the implementation proves the provider adapter cannot be called before that acknowledgement, replay may derive `not_invoked_by_owned_agent_path` for that epoch. This is a local sequencing fact, not attestation about external provider systems.
+
+This boundary is provenance sequencing. It does not create new Program or capability authority.
+
+### D5 — Provider/model provenance is secret-free, provider-neutral, and not remote attestation
 
 The Agent/provider adapter must expose a bounded semantic descriptor containing at least:
 
@@ -142,9 +154,9 @@ canonical semantic-configuration digest
 
 The semantic configuration includes request-shaping settings that can materially alter model behavior when configured, such as output-token limits, temperature, and provider endpoint identity where relevant.
 
-Credentials, authorization headers, API keys, raw secret values, and unrestricted environment snapshots are forbidden.
+Credentials, authorization headers, API keys, raw secret values, and unrestricted environment snapshots are forbidden. Sensitive endpoint/configuration values that should not be persisted verbatim are represented by a stable bounded digest or an existing safe reference.
 
-Sensitive endpoint/configuration values that should not be persisted verbatim are represented by a stable bounded digest or an existing safe reference.
+The Host validates, bounds, and durably binds this descriptor to the epoch. Unless independent provider-native evidence exists, the descriptor means **“the owned Agent/provider adapter declared these effective semantics”**; it is not cryptographic or remote-provider attestation.
 
 The descriptor contract is provider-neutral. A2 does **not** require a second live production provider; deterministic fixture providers must prove that the contract is not Anthropic-specific.
 
@@ -152,17 +164,15 @@ The descriptor contract is provider-neutral. A2 does **not** require a second li
 
 When a provider exposes stable request/message/response identifiers, the adapter should preserve them as bounded provider-native provenance.
 
-They are optional because providers differ. Absence must be represented honestly; ALCODE must never fabricate a provider-native ID.
-
-The ALCODE `InferenceEpochId` remains the stable cross-provider causal identity.
+They are optional because providers differ. Absence must be represented honestly; ALCODE must never fabricate a provider-native ID. The ALCODE `InferenceEpochId` remains the stable cross-provider causal identity.
 
 ### D7 — Assistant transcript output is explicitly inference-bound
 
 Durable assistant admission for an A2-capable inference carries the `InferenceEpochId` that produced it.
 
-The Host validates that the epoch belongs to the same Session and Agent generation and has a recorded provider-start boundary. The transcript remains the conversation/history projection; the epoch is only its causal parent.
+The Host validates that the epoch belongs to the same Session and Agent generation and has a valid prepared boundary. The assistant response itself is later evidence that the owned Agent path observed provider output; it does not retroactively make an earlier crash window certain.
 
-Transcript admission request IDs remain protocol/idempotency identities and are not redefined as model-request identities.
+The transcript remains the conversation/history projection; the epoch is only its causal parent. Transcript admission request IDs remain protocol/idempotency identities and are not redefined as model-request identities.
 
 ### D8 — Every model-caused Host Operation records explicit inference/tool-call correlation
 
@@ -194,18 +204,11 @@ The current `${root}:local:${index}` tool-call spelling may remain for diagnosti
 
 ### D10 — Epoch terminal state describes cognition lifecycle only
 
-After the provider response and all tool calls formed by that inference have settled or the inference scope ends, the Agent reports a terminal epoch outcome. At minimum distinguish:
+After the provider response and all tool calls formed by that inference have settled, or the inference scope ends, the Agent reports a terminal epoch outcome. At minimum the durable projection must distinguish known completion, provider error, cancellation/abort, and loss/interruption/unknown terminal evidence.
 
-```text
-completed
-provider_error
-aborted
-interrupted / terminal record absent because generation was lost
-```
+A missing terminal record must never become success. Agent-generation loss may allow the Host to derive that the old epoch can no longer make new Agent-side progress, while provider invocation occurrence and already-admitted Host Operation truth remain independently classified.
 
-Exact wire spelling is implementation-owned, but the durable projection must not convert missing terminal evidence into success.
-
-Epoch completion says nothing about environmental effect certainty beyond the independent Operation journal. In particular:
+Epoch completion says nothing about environmental effect certainty. In particular:
 
 - an aborted inference does not prove an admitted mutation did not happen;
 - an interrupted Agent does not cancel Host Operation truth;
@@ -213,31 +216,15 @@ Epoch completion says nothing about environmental effect certainty beyond the in
 
 ### D11 — Reconstruct the epoch as a projection, not a second canonical state machine
 
-A2 should add the minimum durable inference lifecycle/correlation events and derive a rebuildable `InferenceEpoch` projection from them.
+A2 adds the minimum durable inference lifecycle/correlation events and derives a rebuildable `InferenceEpoch` projection from them.
 
-Do not create an independently mutable inference database whose state can diverge from canonical workspace events.
-
-The projection may materialize/index for performance, but deleting/rebuilding that projection from verified events must reproduce the same epoch lineage.
+Do not create an independently mutable inference database whose state can diverge from canonical workspace events. A materialized/indexed projection is permitted for performance only if deleting and rebuilding it from verified events reproduces the same lineage and uncertainty states.
 
 ### D12 — Historical provenance never resurrects authority
 
-Replaying or inspecting an old epoch may recover:
+Replaying or inspecting an old epoch may recover what context was delivered, what provider/model semantics were declared, what provider activity/outcomes were observed, what tool calls were produced, which Operations were admitted, and what lifecycle state is known.
 
-- what context was delivered;
-- what provider/model semantics were recorded;
-- what tool calls were produced;
-- which Operations were admitted;
-- what lifecycle outcome was recorded.
-
-It may **not**:
-
-- execute a capability;
-- renew a dynamic capability binding;
-- make a stale ProgramAttempt current;
-- revive an old Agent generation;
-- satisfy verification merely because an old inference claimed success;
-- settle an indeterminate Operation;
-- complete a Program.
+It may **not** execute a capability, renew a dynamic capability binding, make a stale ProgramAttempt current, revive an old Agent generation, satisfy verification merely because an old inference claimed success, settle an indeterminate Operation, or complete a Program.
 
 A fresh execution always requires existing fresh Host authority.
 
@@ -249,13 +236,7 @@ No old provider response, context receipt, or epoch may be relabeled as belongin
 
 ### D14 — A2 does not broaden provider execution or Code Mode authority
 
-A2 is provenance/provider-abstraction work. It does not authorize:
-
-- arbitrary generated code outside S-02's current isolated local runtime;
-- new filesystem/network authority;
-- direct provider access to Host/storage;
-- direct model-authored event admission;
-- a provider-specific bypass around Agent Protocol/CapabilityBroker.
+A2 is provenance/provider-abstraction work. It does not authorize arbitrary generated code outside S-02's current isolated local runtime, new filesystem/network authority, direct provider access to Host/storage, direct model-authored event admission, or a provider-specific bypass around Agent Protocol/CapabilityBroker.
 
 ---
 
@@ -266,7 +247,7 @@ The frozen causal sequence is:
 ```text
 Agent reaches beforeInference
         ↓
-Agent supplies secret-free effective provider/model descriptor
+Agent supplies secret-free provider/model descriptor
         ↓
 Host captures one exact inference authorization cut
         ├─ context receipt
@@ -278,13 +259,17 @@ Host durably authorizes fresh InferenceEpoch I
         ↓
 context.update(..., receiptId, inferenceEpochId=I, exact catalog/Attempt)
         ↓
-Agent reports inference start(I)
+Agent requests invocation preparation(I)
         ↓
-Host durably records + acknowledges start(I)
+Host durably records + acknowledges prepared(I)
         ↓
-ModelProvider.stream(exact authorized request)
+owned Agent may call ModelProvider.stream(...)
         ↓
-assistant response bound to I
+provider activity/outcome observed?
+   ├─ yes → bounded observation/outcome may be durably attached to I
+   └─ Agent loss before evidence → invocation occurrence remains indeterminate
+        ↓
+assistant response, if observed, is bound to I
         ↓
 0..N model tool calls
         │
@@ -297,11 +282,9 @@ assistant response bound to I
               C2(parent=C0,index=1) → Operation O2
               ...
         ↓
-all tool work formed by I settles at Agent inference-scope boundary
+all Agent-side work formed by I settles or generation/scope ends
         ↓
-Agent reports terminal inference outcome(I)
-        ↓
-Host durable epoch projection is reconstructable
+known terminal outcome or explicit interrupted/unknown projection
 ```
 
 Already-admitted Host Operations may outlive the Agent-side epoch lifecycle exactly as in S-02.
@@ -326,12 +309,13 @@ The Agent must retain the receipt/epoch metadata through the provider invocation
 
 ### 5.3 Inference lifecycle messages
 
-Add bounded Agent→Host lifecycle records for:
+Add bounded Agent→Host lifecycle facts sufficient to represent:
 
-- provider invocation started;
-- epoch terminal outcome.
+- provider invocation prepared/acknowledged before adapter call;
+- later provider activity/outcome observed where available;
+- epoch terminal outcome when known.
 
-Both are correlated to the exact epoch and current Agent generation by the Host connection; the Agent does not choose arbitrary generation identity.
+The wire spelling and number of messages are implementation details. The semantic requirement is that replay distinguishes prepared, observed, terminal, and unknown/indeterminate states without fabricating an atomic external-start fact.
 
 ### 5.4 Assistant admission
 
@@ -351,9 +335,7 @@ The CapabilityBroker persists those causal fields on `operation.requested` witho
 
 ## 6. Rebuildable `InferenceEpoch` projection
 
-The projection should expose bounded records sufficient for diagnostics, research, replay inspection, and future provider comparison.
-
-A conceptual record is:
+A conceptual projection is:
 
 ```text
 InferenceEpoch
@@ -365,8 +347,9 @@ InferenceEpoch
   providerDescriptor
   capabilityCatalogDigest
   capabilityBindingSnapshotDigest
-  programAttemptAuthority?   // provenance snapshot, not live authority
-  providerStartedAt?
+  programAttemptAuthority?      // provenance snapshot, never live authority
+  invocationPreparedAt?
+  providerObservationState      // none | observed | indeterminate
   providerNativeRequestId?
   providerNativeResponseId?
   assistantEventId?
@@ -381,7 +364,7 @@ InferenceEpoch
     operationId?
 ```
 
-The projection must preserve `unknown`/missing facts rather than infer them from adjacency.
+Exact enum spelling is implementation-owned. The projection must preserve unknown/indeterminate facts rather than infer them from adjacency.
 
 Large rendered prompts, raw provider payloads, secrets, and arbitrary tool results are not duplicated into the epoch; existing receipts/transcript/Operation references are used instead.
 
@@ -395,15 +378,22 @@ Executable tests prove every provider inference receives a fresh non-reusable `I
 
 ### AC-A2-02 — One exact durable inference authorization cut
 
-A deterministic fixture proves the epoch references the exact durable context receipt, exact capability catalog/binding snapshot, exact Agent generation, and exact ProgramAttempt projection from one coherent Host decision. A race that changes ProgramAttempt or dynamic capability generation during refresh must either produce one internally coherent cut or reject/retry; mixed provenance is forbidden.
+A deterministic fixture proves the epoch references the exact durable context receipt, capability catalog/binding snapshot, Agent generation, and ProgramAttempt projection from one coherent Host decision. A race that changes ProgramAttempt or dynamic capability generation during refresh must either produce one internally coherent cut or reject/retry; mixed provenance is forbidden.
 
 ### AC-A2-03 — Secret-free provider/model semantic provenance
 
-Provider adapter tests prove the durable descriptor records provider/model/adapter identity and canonical effective semantic-config digest while excluding API keys, authorization headers, raw secret environment values, and other forbidden secret material. Equivalent effective semantics produce the same canonical digest; materially different safe semantic settings produce a different digest.
+Provider adapter tests prove the durable descriptor records provider/model/adapter identity and canonical effective semantic-config digest while excluding API keys, authorization headers, raw secret environment values, and other forbidden secret material. Equivalent effective semantics produce the same canonical digest; materially different safe semantic settings produce a different digest. Tests also prove the descriptor is treated as bounded Agent/provider-adapter provenance rather than external provider attestation.
 
-### AC-A2-04 — Provider invocation start and terminal honesty
+### AC-A2-04 — Provider preparation and uncertainty honesty
 
-Tests prove provider execution does not begin until the Host has durably acknowledged the exact epoch start. Successful response, provider error, and cancellation record truthful terminal provenance. Loss of the Agent after start but before terminal record remains reconstructably nonterminal/interrupted; restart does not fabricate success.
+Tests prove the owned Agent never calls the provider adapter before the exact epoch preparation is durably acknowledged.
+
+They also prove:
+
+- Agent loss before preparation acknowledgement produces no provider adapter invocation in the deterministic fixture;
+- loss after preparation acknowledgement but before later durable provider evidence yields an indeterminate invocation-occurrence state, not “not invoked” and not success;
+- observed assistant/provider outcome is attached to the same epoch;
+- provider error/cancellation/Agent loss do not fabricate environmental Operation outcomes.
 
 ### AC-A2-05 — Assistant output reconstructs to exactly one epoch
 
@@ -423,13 +413,7 @@ InferenceEpoch I
 
 ### AC-A2-07 — S-02 outer call → nested subcalls → Operations
 
-One inference emits one `run_code` call containing at least three ordinary sub-dispatches. Replay proves each resulting Operation has:
-
-- the same `InferenceEpochId`;
-- its own distinct `toolCallId`;
-- explicit `parentToolCallId` equal to the outer `run_code` call;
-- deterministic `localSubcallIndex`;
-- distinct Host `OperationId`.
+One inference emits one `run_code` call containing at least three ordinary sub-dispatches. Replay proves each resulting Operation has the same `InferenceEpochId`, its own distinct `toolCallId`, explicit `parentToolCallId` equal to the outer `run_code` call, deterministic `localSubcallIndex`, and a distinct Host `OperationId`.
 
 The proof must not parse the tool-call ID string to derive parentage.
 
@@ -439,7 +423,7 @@ Host-driven verifier/recovery operations that have no direct model tool-call par
 
 ### AC-A2-09 — Restart/rebuild equality
 
-After deleting/rebuilding any inference projection cache and reopening the workspace, verified events reconstruct the same epoch identities, context/provider/capability/Attempt bindings, tool-call parentage, Operation correlations, and known/unknown terminal outcomes.
+After deleting/rebuilding any inference projection cache and reopening the workspace, verified events reconstruct the same epoch identities, context/provider/capability/Attempt bindings, provider uncertainty classification, tool-call parentage, Operation correlations, and known/unknown terminal outcomes.
 
 ### AC-A2-10 — Replacement and historical replay cannot mint authority
 
@@ -457,7 +441,7 @@ Add one permanent deterministic A2 gate, expected command:
 pnpm gate:a2-inference-provenance
 ```
 
-The gate composes A2 focused proofs with the existing S-02 Code Mode and product-agent predecessor gates needed to prove no authority/effect regression. Exact command composition may be minimized during implementation, but closure requires the A2 gate and its declared predecessor compatibility checks on the same exact candidate head.
+The gate composes A2 focused proofs with the existing S-02 Code Mode and product-agent predecessor checks needed to prove no authority/effect regression. Exact command composition may be minimized during implementation, but closure requires the A2 gate and its declared predecessor compatibility checks on the same exact candidate head.
 
 Live provider calls remain optional smoke tests and are never a blocking CI dependency.
 
@@ -465,32 +449,32 @@ Live provider calls remain optional smoke tests and are never a blocking CI depe
 
 ## 8. Frozen adversarial scenarios
 
-### Scenario A — receipt exists, provider never starts
+### Scenario A — epoch authorized, Agent lost before preparation
 
 ```text
 Host authorizes I + persists context receipt
         ↓
-Agent is cancelled/replaced before start acknowledgement
+Agent lost before prepared(I) acknowledgement
 ```
 
-Expected: durable history may show authorized context, but must not claim provider invocation or response.
+Expected: deterministic provider fixture proves the owned Agent path did not call the provider adapter. Durable history must not claim a provider invocation.
 
-### Scenario B — provider starts, Agent disappears
+### Scenario B — preparation acknowledged, Agent disappears in invocation window
 
 ```text
-start(I) durably acknowledged
+prepared(I) durably acknowledged
         ↓
-provider call begins
+Agent may or may not have called provider adapter
         ↓
-Agent process lost before terminal report
+Agent disappears before later provider observation/outcome is durable
 ```
 
-Expected: I remains started/nonterminal or derives interrupted from generation closure without fabricated provider success. No Operation outcome is inferred.
+Expected: provider invocation occurrence remains indeterminate. Replay does not fabricate either invocation or non-invocation, and does not fabricate success/failure.
 
 ### Scenario C — stale ProgramAttempt with valid epoch
 
 ```text
-I was authorized under Attempt A0
+I authorized under Attempt A0
         ↓
 A0 invalidated
         ↓
@@ -569,7 +553,7 @@ A shortest reversible sequence is:
 
 ```text
 A2-1  identity + provider descriptor + protocol negotiation
-A2-2  exact Host epoch authorization/start lifecycle + context binding
+A2-2  exact Host epoch authorization + prepared/uncertain lifecycle + context binding
 A2-3  assistant + ordinary tool-call/Operation durable correlation
 A2-4  S-02 explicit nested parentage + restart projection
 A2-5  adversarial/product gate + as-built closure
@@ -598,6 +582,7 @@ A2/S-04 does **not** authorize or require:
 - inference-based effect truth;
 - inference-based verification satisfaction;
 - model/provider-based Completion authority;
+- remote-provider receipt/processing attestation as an A2 requirement;
 - reopening A1, P-02, or S-02 semantics absent new falsifying evidence.
 
 ---
@@ -608,14 +593,7 @@ Reversible implementation details include exact event names, protocol version sp
 
 A demonstrated blocker may adjust those mechanisms while preserving the frozen semantics above.
 
-Do **not** resolve implementation difficulty by:
-
-- moving canonical Program/Operation authority into the Agent/provider;
-- making inference provenance an authority token;
-- weakening ProgramAttempt/dynamic-binding validation;
-- equating Agent/provider cancellation with effect absence;
-- duplicating rendered context/history into an independent durable truth store;
-- persisting secrets for reproducibility.
+Do **not** resolve implementation difficulty by moving canonical Program/Operation authority into the Agent/provider, making inference provenance an authority token, weakening ProgramAttempt/dynamic-binding validation, equating Agent/provider cancellation with effect absence, duplicating rendered context/history into an independent durable truth store, persisting secrets for reproducibility, or pretending a pre-call durable record proves a later external call occurred.
 
 If a provider does not expose a native request/response identifier, retain `undefined`/absent provenance; do not fabricate one.
 
@@ -626,20 +604,22 @@ If a provider does not expose a native request/response identifier, retain `unde
 A2/S-04 implementation is complete only when:
 
 1. AC-A2-01 through AC-A2-12 pass on one exact candidate head;
-2. the product path proves one ordinary inference and one S-02 `run_code` inference can both be reconstructed after restart to exact context/provider/Attempt/capability/tool/Operation lineage;
+2. the product path proves one ordinary inference and one S-02 `run_code` inference can both be reconstructed after restart to exact context/provider/Attempt/capability/tool/Operation lineage, including honest provider-invocation uncertainty where evidence ends;
 3. stale Attempt, dynamic capability ABA, Agent replacement, and S-02 cancellation adversarial cases remain fail-closed under predecessor authority rules;
 4. no test relies on parsing local tool-call naming to prove durable parentage;
 5. the permanent A2 gate passes together with declared predecessor compatibility checks; and
 6. an as-built closure record documents the exact implementation mapping and any bounded corrections.
 
-Successful closure will establish reconstructable model causality. It will **not** authorize A5 sandboxing, procedure learning, parallel workspaces, subagents, remote execution, or autonomous scheduling.
+Successful closure establishes reconstructable model causality with explicit uncertainty. It does **not** authorize A5 sandboxing, procedure learning, parallel workspaces, subagents, remote execution, or autonomous scheduling.
 
 ---
 
 ## 14. Freeze review result
 
-The gap study demonstrates the S-04 adoption trigger: existing receipts/events cannot mechanically reconstruct exact inference causality because the provider invocation has no durable epoch identity/provider binding, transcript output is not receipt-bound, Host Operations drop `toolCallId`, and S-02 nested parentage is not durable.
+The gap study demonstrates the S-04 adoption trigger: existing receipts/events cannot mechanically reconstruct exact inference causality because the provider invocation has no durable epoch/provider binding, transcript output is not receipt-bound, Host Operations drop `toolCallId`, and S-02 nested parentage is not durable.
 
-This plan corrects exactly those gaps while reusing existing context, ProgramAttempt, capability, Operation/effect, verification, and completion authority.
+Review of the first draft found one correctness issue: a durable acknowledgement written before `ModelProvider.stream()` cannot truthfully be called “provider started,” because process loss can occur between acknowledgement and invocation. This frozen version corrects the contract to preserve that interval as explicit indeterminate provenance.
 
-**Review decision:** Proceed as written for a future explicitly authorized implementation step.
+The plan therefore corrects only the demonstrated provenance gaps while reusing existing context, ProgramAttempt, capability, Operation/effect, verification, and completion authority.
+
+**Review decision:** Proceed with bounded correction — provider invocation uncertainty preserved as specified above.
