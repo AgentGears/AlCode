@@ -39,13 +39,14 @@ function authorization(
   sessionId: string,
   connectionGenerationId: string,
   contextReceiptId: string,
+  sourceEventSequence: number,
   provider: string,
 ): InferenceEpochAuthorizationInputV1 {
   return {
     sessionId,
     connectionGenerationId,
     contextReceiptId,
-    sourceEventSequence: 7,
+    sourceEventSequence,
     providerDescriptor: providerDescriptor(
       provider,
       provider === "anthropic" ? "claude-fixture" : "deterministic-model-v1",
@@ -85,14 +86,54 @@ describeLocked("A2 inference provenance", () => {
     });
   }
 
+  async function appendContextReceipt(
+    store: LockedWorkspaceStore,
+    sessionId: string,
+  ): Promise<{ receiptId: string; sourceEventSequence: number }> {
+    const sourceEventSequence = await store.store.headSequence();
+    const eventId = mkEventId();
+    await store.store.append([{
+      eventId,
+      workspaceId,
+      sessionId: asSessionId(sessionId),
+      occurredAt: new Date().toISOString(),
+      type: "context.projection_compiled",
+      payload: { receiptId: String(eventId) },
+      payloadSchemaVersion: 1,
+      producer: { kind: "projection", projectionName: "a2-test-context" },
+    }]);
+    return { receiptId: String(eventId), sourceEventSequence };
+  }
+
+  async function authorizeAtCurrentCut(
+    store: LockedWorkspaceStore,
+    service: InferenceProvenanceServiceV1,
+    sessionId: string,
+    connectionGenerationId: string,
+    provider: string,
+    assertCurrent: () => void = () => undefined,
+  ) {
+    const receipt = await appendContextReceipt(store, sessionId);
+    return service.authorize(
+      authorization(
+        sessionId,
+        connectionGenerationId,
+        receipt.receiptId,
+        receipt.sourceEventSequence,
+        provider,
+      ),
+      { assertCurrent },
+    );
+  }
+
   it("mints fresh epochs, preserves provider uncertainty honestly, and rebuilds exactly from canonical events", async () => {
     locked = await openStore();
     const admission = new CanonicalAdmissionQueue(locked.store);
     const service = new InferenceProvenanceServiceV1(locked.store, admission);
     const sessionId = uuidv7();
 
-    const first = await service.authorize(authorization(sessionId, "generation-a", "receipt-1", "anthropic"));
-    const second = await service.authorize(authorization(sessionId, "generation-a", "receipt-2", "fixture-provider"));
+    const first = await authorizeAtCurrentCut(locked, service, sessionId, "generation-a", "anthropic");
+    const second = await authorizeAtCurrentCut(locked, service, sessionId, "generation-a", "fixture-provider");
     expect(second.inferenceEpochId).not.toBe(first.inferenceEpochId);
 
     await service.prepare({
@@ -142,6 +183,62 @@ describeLocked("A2 inference provenance", () => {
     expect(await rebuilt.list()).toEqual(beforeRestart);
   });
 
+  it("rejects a canonical interleave instead of authorizing a mixed provenance cut", async () => {
+    locked = await openStore();
+    const service = new InferenceProvenanceServiceV1(
+      locked.store,
+      new CanonicalAdmissionQueue(locked.store),
+    );
+    const sessionId = uuidv7();
+    const receipt = await appendContextReceipt(locked, sessionId);
+    await locked.store.append([{
+      eventId: mkEventId(),
+      workspaceId,
+      sessionId: asSessionId(sessionId),
+      occurredAt: new Date().toISOString(),
+      type: "runtime.criterion.evidence",
+      payload: { evidenceType: "a2-interleave", data: null },
+      payloadSchemaVersion: 1,
+      producer: { kind: "runtime", component: "a2-test" },
+    }]);
+
+    await expect(service.authorize(
+      authorization(
+        sessionId,
+        "generation-a",
+        receipt.receiptId,
+        receipt.sourceEventSequence,
+        "anthropic",
+      ),
+      { assertCurrent: () => undefined },
+    )).rejects.toThrow(/canonical cut changed/);
+    expect(await service.list()).toEqual([]);
+  });
+
+  it("runs the final synchronous generation/catalog guard before epoch admission", async () => {
+    locked = await openStore();
+    const service = new InferenceProvenanceServiceV1(
+      locked.store,
+      new CanonicalAdmissionQueue(locked.store),
+    );
+    const sessionId = uuidv7();
+    let guardCalls = 0;
+
+    await expect(authorizeAtCurrentCut(
+      locked,
+      service,
+      sessionId,
+      "generation-a",
+      "anthropic",
+      () => {
+        guardCalls += 1;
+        throw new InferenceProvenanceControlError("generation or capability snapshot changed");
+      },
+    )).rejects.toThrow(/generation or capability snapshot changed/);
+    expect(guardCalls).toBe(1);
+    expect(await service.list()).toEqual([]);
+  });
+
   it("keeps replacement a causal cut and rejects historical or wrong-generation epochs", async () => {
     locked = await openStore();
     const service = new InferenceProvenanceServiceV1(
@@ -149,8 +246,12 @@ describeLocked("A2 inference provenance", () => {
       new CanonicalAdmissionQueue(locked.store),
     );
     const sessionId = uuidv7();
-    const authorized = await service.authorize(
-      authorization(sessionId, "generation-old", "receipt-replaced", "anthropic"),
+    const authorized = await authorizeAtCurrentCut(
+      locked,
+      service,
+      sessionId,
+      "generation-old",
+      "anthropic",
     );
     await service.prepare({
       inferenceEpochId: authorized.inferenceEpochId,
@@ -183,13 +284,14 @@ describeLocked("A2 inference provenance", () => {
       new CanonicalAdmissionQueue(locked.store),
     );
     const semanticConfig = { apiKey: "must-never-be-canonical" };
-    const input = authorization(uuidv7(), "generation-a", "receipt-secret", "anthropic");
+    const input = authorization(uuidv7(), "generation-a", "receipt-secret", 0, "anthropic");
     input.providerDescriptor = {
       ...input.providerDescriptor,
       semanticConfig,
       semanticConfigDigest: digestOf(semanticConfig),
     };
-    await expect(service.authorize(input)).rejects.toThrow(/Forbidden provider semantic configuration key/);
+    await expect(service.authorize(input, { assertCurrent: () => undefined }))
+      .rejects.toThrow(/Forbidden provider semantic configuration key/);
   });
 
   it("persists direct and Code Mode causal tuples on operation.requested without attributing Host-only work", async () => {
@@ -282,8 +384,12 @@ describeLocked("A2 inference provenance", () => {
       new CanonicalAdmissionQueue(locked.store),
     );
     const sessionId = uuidv7();
-    const authorized = await service.authorize(
-      authorization(sessionId, "generation-a", "receipt-assistant", "anthropic"),
+    const authorized = await authorizeAtCurrentCut(
+      locked,
+      service,
+      sessionId,
+      "generation-a",
+      "anthropic",
     );
     await service.prepare({
       inferenceEpochId: authorized.inferenceEpochId,
