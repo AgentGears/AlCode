@@ -15,6 +15,8 @@ export const AssistantMessageAppendedPayloadSchema = z.object({
   stopReason: z.enum(["stop", "length", "tool_use", "error", "aborted"]).optional(),
   errorMessage: z.string().optional(),
   timestamp: z.number().finite().optional(),
+  /** A2 causal parent; transcript remains conversation truth, not execution authority. */
+  inferenceEpochId: z.string().min(1).optional(),
 }).strict();
 
 export const ToolResultAppendedPayloadSchema = z.object({

@@ -2,8 +2,16 @@
 // No network, no credentials required.
 
 import { describe, expect, it } from "vitest";
-import { MockProvider, resolveProviderConfig, liveCredentialsAvailable, ProviderError } from "./index.ts";
-import type { ModelRequest, Message } from "@alcode/agent-core";
+import {
+  AnthropicProvider,
+  MockProvider,
+  ProviderError,
+  createProviderDescriptor,
+  liveCredentialsAvailable,
+  providerSemanticConfigDigest,
+  resolveProviderConfig,
+} from "./index.ts";
+import type { ModelProviderDescriptor, ModelRequest, Message } from "@alcode/agent-core";
 
 function makeRequest(): ModelRequest {
   return {
@@ -11,6 +19,15 @@ function makeRequest(): ModelRequest {
     messages: [{ role: "user", content: [{ type: "text", text: "hi" }], timestamp: 0 }] as readonly Message[],
     tools: [],
   };
+}
+
+function expectProviderNeutralDescriptor(descriptor: ModelProviderDescriptor): void {
+  expect(descriptor.provider.length).toBeGreaterThan(0);
+  expect(descriptor.model.length).toBeGreaterThan(0);
+  expect(descriptor.adapter.length).toBeGreaterThan(0);
+  expect(descriptor.adapterVersion).toBeGreaterThan(0);
+  expect(descriptor.semanticConfigDigest).toMatch(/^[0-9a-f]{64}$/);
+  expect(descriptor.semanticConfigDigest).toBe(providerSemanticConfigDigest(descriptor.semanticConfig));
 }
 
 describe("MockProvider", () => {
@@ -53,6 +70,61 @@ describe("MockProvider", () => {
     for await (const e of stream) events.push(e);
 
     expect(events[0]).toEqual({ type: "done", stopReason: "stop" });
+  });
+});
+
+describe("A2 provider semantic provenance", () => {
+  it("canonicalizes equivalent semantic settings and changes the digest for material differences", () => {
+    const first = providerSemanticConfigDigest({ temperature: 0, maxOutputTokens: 2048 });
+    const reordered = providerSemanticConfigDigest({ maxOutputTokens: 2048, temperature: 0 });
+    const changed = providerSemanticConfigDigest({ maxOutputTokens: 4096, temperature: 0 });
+    expect(reordered).toBe(first);
+    expect(changed).not.toBe(first);
+  });
+
+  it("keeps Anthropic credentials and raw headers out of the durable semantic descriptor", () => {
+    const secret = "sk-ant-secret-a2-fixture";
+    const provider = new AnthropicProvider({
+      provider: "anthropic",
+      model: "claude-a2-fixture",
+      apiKey: secret,
+      baseURL: "https://proxy.example.test/anthropic",
+      maxTokens: 2048,
+      temperature: 0,
+    });
+    const serialized = JSON.stringify(provider.descriptor);
+    expectProviderNeutralDescriptor(provider.descriptor);
+    expect(serialized).not.toContain(secret);
+    expect(serialized.toLowerCase()).not.toContain("authorization");
+    expect(serialized.toLowerCase()).not.toContain("api_key");
+    expect(serialized.toLowerCase()).not.toContain("apikey");
+    expect(provider.descriptor.semanticConfig).toHaveProperty("endpointDigest");
+    expect(provider.descriptor.semanticConfig).not.toHaveProperty("baseURL");
+  });
+
+  it("uses one provider-neutral descriptor contract for live Anthropic and deterministic non-Anthropic fixtures", () => {
+    const anthropic = new AnthropicProvider({
+      provider: "anthropic",
+      model: "claude-a2-fixture",
+      apiKey: "fixture-only-not-persisted",
+    });
+    const deterministic = new MockProvider([]);
+    expectProviderNeutralDescriptor(anthropic.descriptor);
+    expectProviderNeutralDescriptor(deterministic.descriptor);
+    expect(anthropic.descriptor.provider).toBe("anthropic");
+    expect(deterministic.descriptor.provider).toBe("deterministic-fixture");
+  });
+
+  it("createProviderDescriptor recomputes the canonical digest from safe semantic settings", () => {
+    const descriptor = createProviderDescriptor({
+      provider: "fixture",
+      model: "m1",
+      adapter: "fixture-adapter",
+      adapterVersion: 1,
+      semanticConfig: { b: 2, a: 1 },
+    });
+    expect(descriptor.semanticConfigDigest)
+      .toBe(providerSemanticConfigDigest({ a: 1, b: 2 }));
   });
 });
 

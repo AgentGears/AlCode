@@ -1,6 +1,7 @@
 import {
   DYNAMIC_CAPABILITY_BINDING_CAPABILITY,
   GRAPH_CONTEXT_CAPABILITY,
+  INFERENCE_PROVENANCE_CAPABILITY,
   LOCAL_ORCHESTRATION_CAPABILITY,
   PROGRAM_EXECUTION_V2_CAPABILITY,
   PROGRAM_EXECUTION_V2_MESSAGE_VERSION,
@@ -20,6 +21,7 @@ import {
 import { digestOf } from "@alcode/context";
 import { uuidv7, type SessionId } from "@alcode/events";
 import type { AgentConnection } from "./agent-supervisor.ts";
+import { withCapabilityInferenceProvenanceV1 } from "./capability-inference-provenance.ts";
 import type { CapabilityBrokerRequest, CapabilityBrokerResult } from "./capability-broker.ts";
 import { COGNITION_TOOL_NAMES } from "./cognition-service.ts";
 import type {
@@ -262,18 +264,25 @@ export class ProgramExecutionRuntimeV2 {
 
       const includeDynamic = capabilities.includes(DYNAMIC_CAPABILITY_BINDING_CAPABILITY);
       const graphContext = capabilities.includes(GRAPH_CONTEXT_CAPABILITY);
+      const inferenceProvenance = capabilities.includes(INFERENCE_PROVENANCE_CAPABILITY);
       const unsubscribe = adaptiveTransport.onMessage(async (message) => {
         try {
           if (message.type === "context.refresh.request") {
             if (message.sessionId !== sessionId) return;
+            if (inferenceProvenance && message.providerDescriptor === undefined) {
+              throw new Error("Negotiated inference provenance requires a provider descriptor");
+            }
             const cacheKey = `${connection.generationId}:${message.requestId}`;
             let update = this.contextCache.get(cacheKey);
             if (update === undefined) {
-              const programAttempt = await this.agent.currentAttemptProjection(sessionId, connection.generationId);
+              const programAttemptBeforeRefresh = await this.agent.currentAttemptProjection(
+                sessionId,
+                connection.generationId,
+              );
               const localOrchestrationNegotiated = capabilities.includes(LOCAL_ORCHESTRATION_CAPABILITY);
               const runCodeAuthorized = shouldAdvertiseRunCodeV1(
                 capabilities,
-                programAttempt?.work.satisfactionState,
+                programAttemptBeforeRefresh?.work.satisfactionState,
               );
               const toolCatalog = this.toolCatalog(
                 includeDynamic,
@@ -287,9 +296,51 @@ export class ProgramExecutionRuntimeV2 {
                 toolDefinitions: toolCatalog.tools.map((tool) => tool.definition),
                 graphCapable: graphContext,
               });
+              const programAttempt = await this.agent.currentAttemptProjection(
+                sessionId,
+                connection.generationId,
+              );
+              if (digestOf(programAttempt ?? null) !== digestOf(programAttemptBeforeRefresh ?? null)) {
+                throw new Error("Adaptive ProgramAttempt changed during inference refresh");
+              }
+              const inferenceEpoch = inferenceProvenance
+                ? await this.host.inferenceProvenance.authorize({
+                    sessionId,
+                    connectionGenerationId: connection.generationId,
+                    contextReceiptId: refreshed.receiptId,
+                    sourceEventSequence: refreshed.sourceEventSequence,
+                    providerDescriptor: structuredClone(message.providerDescriptor!),
+                    capabilityCatalogDigest: toolCatalog.digest,
+                    capabilityBindingSnapshot: toolCatalog.tools.map((tool) => ({
+                      toolName: tool.definition.name,
+                      binding: structuredClone(tool.binding),
+                    })),
+                    ...(programAttempt !== undefined
+                      ? {
+                          programAttemptAuthority: structuredClone(programAttempt.authority),
+                          executionBase: structuredClone(programAttempt.executionBase),
+                        }
+                      : {}),
+                  }, {
+                    assertCurrent: () => {
+                      if (!this.agent.isCurrentConnection(sessionId, connection.generationId)) {
+                        throw new Error("Adaptive inference authorization Agent generation changed during refresh");
+                      }
+                      const currentCatalog = this.toolCatalog(
+                        includeDynamic,
+                        runCodeAuthorized,
+                        localOrchestrationNegotiated,
+                      );
+                      if (digestOf(currentCatalog.tools) !== digestOf(toolCatalog.tools)) {
+                        throw new Error("Adaptive inference authorization capability catalog changed during refresh");
+                      }
+                    },
+                  })
+                : undefined;
               const { programAttempt: _legacyProgramAttempt, ...refreshedWithoutProgramAttempt } = refreshed;
               const nextUpdate: ContextUpdateV2 = {
                 ...refreshedWithoutProgramAttempt,
+                ...(inferenceEpoch !== undefined ? { inferenceEpochId: inferenceEpoch.inferenceEpochId } : {}),
                 ...((includeDynamic || localOrchestrationNegotiated) ? { toolCatalog } : {}),
                 ...(programAttempt !== undefined ? { programAttempt } : {}),
               };
@@ -318,7 +369,39 @@ export class ProgramExecutionRuntimeV2 {
               return;
             }
             const request = message as CapabilityRequestV2;
-            const response = await this.agent.handleCapability(
+            if (inferenceProvenance) {
+              if (request.inferenceEpochId === undefined) {
+                try {
+                  await adaptiveTransport.send(capabilityResult(request, "stale", {
+                    errorCode: "inference_provenance_required",
+                    error: "Capability request lacks its current inference epoch",
+                  }));
+                } catch {}
+                return;
+              }
+              try {
+                await this.host.inferenceProvenance.requireCurrentEpoch({
+                  inferenceEpochId: request.inferenceEpochId,
+                  sessionId,
+                  connectionGenerationId: connection.generationId,
+                  requirePrepared: true,
+                });
+              } catch (error) {
+                try {
+                  await adaptiveTransport.send(capabilityResult(request, "stale", {
+                    errorCode: "inference_provenance_stale",
+                    error: error instanceof Error ? error.message : String(error),
+                  }));
+                } catch {}
+                return;
+              }
+            }
+            const response = await withCapabilityInferenceProvenanceV1({
+              toolCallId: request.toolCallId,
+              ...(request.inferenceEpochId !== undefined ? { inferenceEpochId: request.inferenceEpochId } : {}),
+              ...(request.parentToolCallId !== undefined ? { parentToolCallId: request.parentToolCallId } : {}),
+              ...(request.localSubcallIndex !== undefined ? { localSubcallIndex: request.localSubcallIndex } : {}),
+            }, () => this.agent.handleCapability(
               {
                 message: request,
                 generationId: connection.generationId,
@@ -343,7 +426,7 @@ export class ProgramExecutionRuntimeV2 {
                 }
                 return brokerResult(request, await this.host.capabilityBroker.execute(prepared));
               },
-            );
+            ));
             try { await adaptiveTransport.send(response); } catch {}
             return;
           }

@@ -23,6 +23,9 @@ export type {
   ToolDefinition,
   ModelRequest,
   ModelEvent,
+  ModelProviderSemanticConfigValue,
+  ModelProviderDescriptor,
+  ModelProviderObservation,
   ModelStream,
   ModelProvider,
   AgentContext,
@@ -30,7 +33,12 @@ export type {
   AgentEventSink,
 } from "./contracts.ts";
 
-export { runAgentLoop, type AgentLoopOptions, type InferenceContext } from "./agent-loop.ts";
+export {
+  runAgentLoop,
+  type AgentLoopOptions,
+  type InferenceContext,
+  type InferenceLifecycleResult,
+} from "./agent-loop.ts";
 
 export {
   AgentRuntime,

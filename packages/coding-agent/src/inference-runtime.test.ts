@@ -167,11 +167,13 @@ describe("S-01D inference-scoped Host capability projection", () => {
     expect(generationClosed).toBe(true);
   });
 
-  it("integrates the worker through the inference projection rather than constructing catalog tools directly", () => {
+  it("integrates the worker through the inference projection and closes it after terminal reporting", () => {
     const worker = source("packages/coding-agent/src/agent-worker.ts");
     const inferenceRuntime = source("packages/coding-agent/src/inference-runtime.ts");
     expect(worker).toContain("createInferenceCapabilityProjection({");
-    expect(worker).toContain("afterInference: disposeActiveInferenceScope");
+    expect(worker).toContain("afterInference: async (result) => {");
+    expect(worker).toContain("await adaptiveProtocol.reportInferenceTerminal({");
+    expect(worker).toContain("await disposeActiveInferenceScope();");
     expect(worker).not.toContain("createProtocolProxyTool");
     expect(inferenceRuntime).toContain("const admission = scope.admit()");
     expect(inferenceRuntime).toContain("const lifecycleAdmission = scope.admit()");

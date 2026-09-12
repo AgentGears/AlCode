@@ -26,6 +26,7 @@ export function createAgentEventForwarder(
         ...(message.errorMessage !== undefined ? { errorMessage: message.errorMessage } : {}),
         timestamp: message.timestamp,
         durable: durableTranscript,
+        ...(event.inferenceEpochId !== undefined ? { inferenceEpochId: event.inferenceEpochId } : {}),
       });
       return;
     }

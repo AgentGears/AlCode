@@ -99,6 +99,12 @@ export interface ToolExecutionContext {
   workingDirectory?: string;
   /** Provider/model tool-call identity. Host proxies must preserve this end-to-end. */
   toolCallId?: string;
+  /** Host-minted causal identity for the provider inference that formed this call. */
+  inferenceEpochId?: string;
+  /** Explicit S-02 parent call; never derive durable lineage by parsing toolCallId. */
+  parentToolCallId?: string;
+  /** Deterministic local orchestration invocation index under parentToolCallId. */
+  localSubcallIndex?: number;
 }
 
 export interface AgentTool<TInput = Record<string, unknown>, TResult = unknown> {
@@ -137,11 +143,36 @@ export type ModelEvent =
   | { type: "done"; stopReason: AssistantMessage["stopReason"]; errorMessage?: string }
   | { type: "error"; message: string };
 
+export type ModelProviderSemanticConfigValue = string | number | boolean | null;
+
+/**
+ * Secret-free, provider-neutral semantic description of the effective model
+ * invocation configuration. It is owned Agent/provider-adapter provenance,
+ * not remote-provider attestation and never an execution authority token.
+ */
+export interface ModelProviderDescriptor {
+  provider: string;
+  model: string;
+  adapter: string;
+  adapterVersion: number;
+  semanticConfig: Record<string, ModelProviderSemanticConfigValue>;
+  semanticConfigDigest: string;
+}
+
+/** Optional provider-native identifiers observed by an adapter. Never fabricate. */
+export interface ModelProviderObservation {
+  requestId?: string;
+  responseId?: string;
+}
+
 export interface ModelStream {
+  readonly providerObservation?: ModelProviderObservation;
   [Symbol.asyncIterator](): AsyncIterator<ModelEvent>;
 }
 
 export interface ModelProvider {
+  /** A2 production providers expose this; optional preserves narrow test providers. */
+  readonly descriptor?: ModelProviderDescriptor;
   stream(request: ModelRequest): Promise<ModelStream>;
 }
 
@@ -158,11 +189,11 @@ export interface AgentContext {
 export type AgentEvent =
   | { type: "agent_start" }
   | { type: "agent_end" }
-  | { type: "turn_start" }
-  | { type: "turn_end" }
-  | { type: "message_start"; message: AgentMessage }
-  | { type: "message_end"; message: AgentMessage }
-  | { type: "tool_execution_start"; toolCallId: string; toolName: string; args: unknown }
-  | { type: "tool_execution_end"; toolCallId: string; toolName: string; result: AgentToolResult; isError: boolean; outcome: ToolExecutionOutcome };
+  | { type: "turn_start"; inferenceEpochId?: string }
+  | { type: "turn_end"; inferenceEpochId?: string }
+  | { type: "message_start"; message: AgentMessage; inferenceEpochId?: string }
+  | { type: "message_end"; message: AgentMessage; inferenceEpochId?: string }
+  | { type: "tool_execution_start"; toolCallId: string; toolName: string; args: unknown; inferenceEpochId?: string; parentToolCallId?: string; localSubcallIndex?: number }
+  | { type: "tool_execution_end"; toolCallId: string; toolName: string; result: AgentToolResult; isError: boolean; outcome: ToolExecutionOutcome; inferenceEpochId?: string; parentToolCallId?: string; localSubcallIndex?: number };
 
 export type AgentEventSink = (event: AgentEvent) => void | Promise<void>;

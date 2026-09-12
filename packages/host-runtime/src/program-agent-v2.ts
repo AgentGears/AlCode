@@ -384,6 +384,9 @@ export class ProgramAgentServiceV2 {
         ...(message.expectedCapabilityRevision !== undefined
           ? { expectedCapabilityRevision: message.expectedCapabilityRevision }
           : {}),
+        ...(message.inferenceEpochId !== undefined ? { inferenceEpochId: message.inferenceEpochId } : {}),
+        ...(message.parentToolCallId !== undefined ? { parentToolCallId: message.parentToolCallId } : {}),
+        ...(message.localSubcallIndex !== undefined ? { localSubcallIndex: message.localSubcallIndex } : {}),
         program: structuredClone(cut.operationalProgramContext),
       });
     });

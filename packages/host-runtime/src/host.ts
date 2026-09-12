@@ -8,6 +8,7 @@ import {
   DYNAMIC_CAPABILITY_BINDING_CAPABILITY,
   DURABLE_TRANSCRIPT_CAPABILITY,
   GRAPH_CONTEXT_CAPABILITY,
+  INFERENCE_PROVENANCE_CAPABILITY,
   PROGRAM_EXECUTION_CAPABILITY,
   PROGRAM_STATE_CAPABILITY,
   type AgentToHostMessage,
@@ -33,6 +34,7 @@ import { CognitionGateway } from "./cognition-gateway.ts";
 import { COGNITION_TOOL_NAMES, HostCognitionService } from "./cognition-service.ts";
 import { HostContextService, type HostContextServiceOptions } from "./context-service.ts";
 import { HostContextSourceReader } from "./context-source.ts";
+import { InferenceProvenanceServiceV1 } from "./inference-provenance.ts";
 import { DefaultHostPolicy, type HostPolicy } from "./policy.ts";
 import { ProgramAgentServiceV1 } from "./program-agent.ts";
 import type { ProgramRootOperationAuthorityV1 } from "./program-dispatch.ts";
@@ -93,6 +95,7 @@ export class HostRuntime {
   readonly transcriptAdmission: TranscriptAdmissionService;
   readonly contextSource: HostContextSourceReader;
   readonly contextService: HostContextService;
+  readonly inferenceProvenance: InferenceProvenanceServiceV1;
 
   private readonly store: LockedWorkspaceStore;
   private readonly hostInstanceId: string;
@@ -109,6 +112,7 @@ export class HostRuntime {
     this.workDispatcher = new DurableWorkDispatcher(options.store.store, this.admission);
     this.sessions = new HostSessionManager(options.store, this.admission);
     this.cognition = new HostCognitionService(options.store.store, this.admission, this.cognitionGateway, this.workDispatcher);
+    this.inferenceProvenance = new InferenceProvenanceServiceV1(options.store.store, this.admission);
     this.transcriptAdmission = new TranscriptAdmissionService(options.store.store, this.admission);
     this.contextSource = new HostContextSourceReader(options.store);
     this.contextService = new HostContextService(
@@ -184,6 +188,7 @@ export class HostRuntime {
     const durableTranscript = connection.capabilities?.includes(DURABLE_TRANSCRIPT_CAPABILITY) ?? false;
     const graphContext = connection.capabilities?.includes(GRAPH_CONTEXT_CAPABILITY) ?? false;
     const dynamicCapabilityBinding = connection.capabilities?.includes(DYNAMIC_CAPABILITY_BINDING_CAPABILITY) ?? false;
+    const inferenceProvenanceCapable = connection.capabilities?.includes(INFERENCE_PROVENANCE_CAPABILITY) ?? false;
     const programStateCapable = connection.capabilities?.includes(PROGRAM_STATE_CAPABILITY) ?? false;
     const programExecutionCapable = connection.capabilities?.includes(PROGRAM_EXECUTION_CAPABILITY) ?? false;
     if (programExecutionCapable && !programStateCapable) {
@@ -194,11 +199,12 @@ export class HostRuntime {
     }
 
     if (resumeReason === "agent_replaced") {
-      // Agent-process loss is a crash boundary. Before generation B can become
-      // current, turn every nonterminal Operation into an explicit interrupted
-      // recovery fact and close any dangling durable transcript tool calls with
-      // a non-authoritative recovery error. Phase-1 recovery still exclusively
-      // decides external effect certainty before any fresh Attempt is issued.
+      if (inferenceProvenanceCapable) {
+        await this.inferenceProvenance.interruptOtherGenerations(
+          String(session.sessionId),
+          connection.generationId,
+        );
+      }
       await this.store.store.recoverInterruptedOperations();
       if (durableTranscript) {
         await this.transcriptAdmission.recoverInterruptedToolResults(session.sessionId);
@@ -211,9 +217,20 @@ export class HostRuntime {
       programStateCapable,
       programExecutionCapable,
     );
-    void connection.waitForExit()
-      .then(() => this.programAgents.detach(session.sessionId, connection.generationId))
-      .catch(() => this.programAgents.detach(session.sessionId, connection.generationId));
+    const finalizeGeneration = async (): Promise<void> => {
+      try {
+        if (inferenceProvenanceCapable) {
+          await this.inferenceProvenance.interruptGeneration(
+            String(session.sessionId),
+            connection.generationId,
+          );
+        }
+      } catch {
+      } finally {
+        this.programAgents.detach(session.sessionId, connection.generationId);
+      }
+    };
+    void connection.waitForExit().then(finalizeGeneration, finalizeGeneration);
 
     const transport = connection.transport;
     await transport.send({ type: "host.hello", protocolVersion: 1, hostInstanceId: this.hostInstanceId });
@@ -257,6 +274,7 @@ export class HostRuntime {
       durableTranscript,
       graphContext,
       dynamicCapabilityBinding,
+      inferenceProvenanceCapable,
       programStateCapable,
       programExecutionCapable,
       systemPrompt,
@@ -265,7 +283,7 @@ export class HostRuntime {
       generationId: connection.generationId,
       detach: () => {
         unsubscribe();
-        this.programAgents.detach(session.sessionId, connection.generationId);
+        void finalizeGeneration();
       },
     };
   }
@@ -310,6 +328,7 @@ export class HostRuntime {
     durableTranscript: boolean,
     graphContext: boolean,
     dynamicCapabilityBinding: boolean,
+    inferenceProvenanceCapable: boolean,
     programStateCapable: boolean,
     programExecutionCapable: boolean,
     baseSystemPrompt: string,
@@ -317,8 +336,11 @@ export class HostRuntime {
     switch (message.type) {
       case "context.refresh.request": {
         if (message.sessionId !== (sessionId as string)) throw new Error("Agent session mismatch");
-        if (!graphContext && !dynamicCapabilityBinding && !programStateCapable) {
+        if (!graphContext && !dynamicCapabilityBinding && !programStateCapable && !inferenceProvenanceCapable) {
           throw new Error("Agent has no inference-refresh capability");
+        }
+        if (inferenceProvenanceCapable && message.providerDescriptor === undefined) {
+          throw new Error("Negotiated inference provenance requires a provider descriptor");
         }
         const cacheKey = `${generationId}:${message.requestId}`;
         let update = this.contextRequestCache.get(cacheKey);
@@ -335,8 +357,39 @@ export class HostRuntime {
           const programAttempt = programStateCapable
             ? await this.programAgents.currentAttemptProjection(sessionId, generationId)
             : undefined;
+          const inferenceEpoch = inferenceProvenanceCapable
+            ? await this.inferenceProvenance.authorize({
+                sessionId: String(sessionId),
+                connectionGenerationId: generationId,
+                contextReceiptId: refreshed.receiptId,
+                sourceEventSequence: refreshed.sourceEventSequence,
+                providerDescriptor: structuredClone(message.providerDescriptor!),
+                capabilityCatalogDigest: toolCatalog.digest,
+                capabilityBindingSnapshot: toolCatalog.tools.map((tool) => ({
+                  toolName: tool.definition.name,
+                  binding: structuredClone(tool.binding),
+                })),
+                ...(programAttempt !== undefined
+                  ? {
+                      programAttemptAuthority: structuredClone(programAttempt.authority),
+                      executionBase: structuredClone(programAttempt.executionBase),
+                    }
+                  : {}),
+              }, {
+                assertCurrent: () => {
+                  if (!this.programAgents.isCurrentConnection(String(sessionId), generationId)) {
+                    throw new Error("Inference authorization Agent generation changed during refresh");
+                  }
+                  const currentCatalog = this.inferenceToolCatalog(dynamicCapabilityBinding);
+                  if (digestOf(currentCatalog.tools) !== digestOf(toolCatalog.tools)) {
+                    throw new Error("Inference authorization capability catalog changed during refresh");
+                  }
+                },
+              })
+            : undefined;
           update = {
             ...refreshed,
+            ...(inferenceEpoch !== undefined ? { inferenceEpochId: inferenceEpoch.inferenceEpochId } : {}),
             ...(dynamicCapabilityBinding ? { toolCatalog } : {}),
             ...(programAttempt !== undefined ? { programAttempt } : {}),
           };
@@ -345,8 +398,50 @@ export class HostRuntime {
         try {
           await transport.send(update);
         } catch {
-          // The receipt is canonical; a replacement Agent asks for a fresh decision.
         }
+        break;
+      }
+
+      case "inference.prepared": {
+        if (!inferenceProvenanceCapable) throw new Error("Inference provenance was not negotiated");
+        if (message.sessionId !== String(sessionId)) throw new Error("Agent session mismatch");
+        await this.inferenceProvenance.prepare({
+          inferenceEpochId: message.inferenceEpochId,
+          sessionId: String(sessionId),
+          connectionGenerationId: generationId,
+        });
+        try {
+          await transport.send({
+            type: "inference.prepared.ack",
+            requestId: message.requestId,
+            sessionId: String(sessionId),
+            inferenceEpochId: message.inferenceEpochId,
+          });
+        } catch {}
+        break;
+      }
+
+      case "inference.terminal": {
+        if (!inferenceProvenanceCapable) throw new Error("Inference provenance was not negotiated");
+        if (message.sessionId !== String(sessionId)) throw new Error("Agent session mismatch");
+        await this.inferenceProvenance.terminal({
+          inferenceEpochId: message.inferenceEpochId,
+          sessionId: String(sessionId),
+          connectionGenerationId: generationId,
+          outcome: message.outcome,
+          ...(message.stopReason !== undefined ? { stopReason: message.stopReason } : {}),
+          ...(message.providerObservation !== undefined
+            ? { providerObservation: structuredClone(message.providerObservation) }
+            : {}),
+        });
+        try {
+          await transport.send({
+            type: "inference.terminal.ack",
+            requestId: message.requestId,
+            sessionId: String(sessionId),
+            inferenceEpochId: message.inferenceEpochId,
+          });
+        } catch {}
         break;
       }
 
@@ -359,7 +454,10 @@ export class HostRuntime {
             sessionId,
             occurredAt: new Date().toISOString(),
             type: "assistant.message.appended",
-            payload: { text: message.text },
+            payload: {
+              text: message.text,
+              ...(message.inferenceEpochId !== undefined ? { inferenceEpochId: message.inferenceEpochId } : {}),
+            },
             payloadSchemaVersion: 1,
             producer: { kind: "model", provider: `agent:${generationId}` },
           }]);
@@ -400,10 +498,47 @@ export class HostRuntime {
         const cacheKey = `${generationId}:${message.requestId}`;
         let response = this.requestCache.get(cacheKey);
         if (!response) {
-          const activeProgramAuthority = await this.programAgents.currentAttemptAuthority(sessionId);
+          if (inferenceProvenanceCapable) {
+            if (message.inferenceEpochId === undefined) {
+              response = {
+                type: "capability.result",
+                requestId: message.requestId,
+                sessionId: String(sessionId),
+                toolCallId: message.toolCallId,
+                toolName: message.toolName,
+                outcome: "stale",
+                errorCode: "inference_provenance_required",
+                error: "Capability request lacks its current inference epoch",
+              };
+            } else {
+              try {
+                await this.inferenceProvenance.requireCurrentEpoch({
+                  inferenceEpochId: message.inferenceEpochId,
+                  sessionId: String(sessionId),
+                  connectionGenerationId: generationId,
+                  requirePrepared: true,
+                });
+              } catch (error) {
+                response = {
+                  type: "capability.result",
+                  requestId: message.requestId,
+                  sessionId: String(sessionId),
+                  toolCallId: message.toolCallId,
+                  toolName: message.toolName,
+                  outcome: "stale",
+                  errorCode: "inference_provenance_stale",
+                  error: error instanceof Error ? error.message : String(error),
+                };
+              }
+            }
+          }
+
+          const activeProgramAuthority = response === undefined
+            ? await this.programAgents.currentAttemptAuthority(sessionId)
+            : undefined;
           let programAuthority: ProgramAttemptAuthorityV1 | undefined;
 
-          if (activeProgramAuthority !== undefined) {
+          if (response === undefined && activeProgramAuthority !== undefined) {
             if (!programExecutionCapable) {
               response = {
                 type: "capability.result", requestId: message.requestId, sessionId: sessionId as string,
@@ -423,7 +558,7 @@ export class HostRuntime {
             } else {
               programAuthority = structuredClone(message.programAttemptAuthority);
             }
-          } else if (message.programAttemptAuthority !== undefined) {
+          } else if (response === undefined && message.programAttemptAuthority !== undefined) {
             response = {
               type: "capability.result", requestId: message.requestId, sessionId: sessionId as string,
               toolCallId: message.toolCallId, toolName: message.toolName,
@@ -435,7 +570,7 @@ export class HostRuntime {
                 ? "ProgramAttempt authority is no longer current; refresh before retry"
                 : `${PROGRAM_EXECUTION_CAPABILITY} is required for Program-backed capability execution`,
             };
-          } else if (programExecutionCapable
+          } else if (response === undefined && programExecutionCapable
               && !this.programAgents.isCurrentConnection(String(sessionId), generationId)) {
             response = {
               type: "capability.result", requestId: message.requestId, sessionId: sessionId as string,
@@ -468,6 +603,9 @@ export class HostRuntime {
               args: message.args,
               ...(message.expectedCapabilityRevision !== undefined ? { expectedCapabilityRevision: message.expectedCapabilityRevision } : {}),
               ...(programAuthority !== undefined ? { program: programAuthority } : {}),
+              ...(message.inferenceEpochId !== undefined ? { inferenceEpochId: message.inferenceEpochId } : {}),
+              ...(message.parentToolCallId !== undefined ? { parentToolCallId: message.parentToolCallId } : {}),
+              ...(message.localSubcallIndex !== undefined ? { localSubcallIndex: message.localSubcallIndex } : {}),
             });
             response = {
               type: "capability.result", requestId: message.requestId, sessionId: sessionId as string,
