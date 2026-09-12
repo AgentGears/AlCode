@@ -275,11 +275,14 @@ export class ProgramExecutionRuntimeV2 {
             const cacheKey = `${connection.generationId}:${message.requestId}`;
             let update = this.contextCache.get(cacheKey);
             if (update === undefined) {
-              const programAttempt = await this.agent.currentAttemptProjection(sessionId, connection.generationId);
+              const programAttemptBeforeRefresh = await this.agent.currentAttemptProjection(
+                sessionId,
+                connection.generationId,
+              );
               const localOrchestrationNegotiated = capabilities.includes(LOCAL_ORCHESTRATION_CAPABILITY);
               const runCodeAuthorized = shouldAdvertiseRunCodeV1(
                 capabilities,
-                programAttempt?.work.satisfactionState,
+                programAttemptBeforeRefresh?.work.satisfactionState,
               );
               const toolCatalog = this.toolCatalog(
                 includeDynamic,
@@ -293,6 +296,13 @@ export class ProgramExecutionRuntimeV2 {
                 toolDefinitions: toolCatalog.tools.map((tool) => tool.definition),
                 graphCapable: graphContext,
               });
+              const programAttempt = await this.agent.currentAttemptProjection(
+                sessionId,
+                connection.generationId,
+              );
+              if (digestOf(programAttempt ?? null) !== digestOf(programAttemptBeforeRefresh ?? null)) {
+                throw new Error("Adaptive ProgramAttempt changed during inference refresh");
+              }
               const inferenceEpoch = inferenceProvenance
                 ? await this.host.inferenceProvenance.authorize({
                     sessionId,
@@ -311,6 +321,20 @@ export class ProgramExecutionRuntimeV2 {
                           executionBase: structuredClone(programAttempt.executionBase),
                         }
                       : {}),
+                  }, {
+                    assertCurrent: () => {
+                      if (!this.agent.isCurrentConnection(sessionId, connection.generationId)) {
+                        throw new Error("Adaptive inference authorization Agent generation changed during refresh");
+                      }
+                      const currentCatalog = this.toolCatalog(
+                        includeDynamic,
+                        runCodeAuthorized,
+                        localOrchestrationNegotiated,
+                      );
+                      if (digestOf(currentCatalog.tools) !== digestOf(toolCatalog.tools)) {
+                        throw new Error("Adaptive inference authorization capability catalog changed during refresh");
+                      }
+                    },
                   })
                 : undefined;
               const { programAttempt: _legacyProgramAttempt, ...refreshedWithoutProgramAttempt } = refreshed;
