@@ -11,6 +11,16 @@
 //
 // See docs/adr/0005-runtime-ownership-boundaries.md §Host↔Agent.
 
+import { createHash } from "node:crypto";
+import type {
+  ModelEvent,
+  ModelProvider,
+  ModelProviderDescriptor,
+  ModelProviderSemanticConfigValue,
+  ModelRequest,
+  ModelStream,
+} from "@alcode/agent-core";
+
 // ---------------------------------------------------------------------------
 // Provider configuration
 // ---------------------------------------------------------------------------
@@ -28,6 +38,48 @@ export interface ProviderConfig {
   maxTokens?: number;
   /** Temperature. */
   temperature?: number;
+}
+
+function canonical(value: unknown): unknown {
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map(canonical);
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+    const item = (value as Record<string, unknown>)[key];
+    if (item !== undefined) out[key] = canonical(item);
+  }
+  return out;
+}
+
+export function providerSemanticConfigDigest(
+  semanticConfig: Readonly<Record<string, ModelProviderSemanticConfigValue>>,
+): string {
+  return createHash("sha256")
+    .update(JSON.stringify(canonical(semanticConfig)), "utf8")
+    .digest("hex");
+}
+
+/** Endpoint identity is provenance-sensitive but persisted only as a digest. */
+export function providerEndpointDigest(endpoint: string): string {
+  return createHash("sha256").update(endpoint, "utf8").digest("hex");
+}
+
+export function createProviderDescriptor(input: {
+  provider: string;
+  model: string;
+  adapter: string;
+  adapterVersion: number;
+  semanticConfig?: Record<string, ModelProviderSemanticConfigValue>;
+}): ModelProviderDescriptor {
+  const semanticConfig = { ...(input.semanticConfig ?? {}) };
+  return {
+    provider: input.provider,
+    model: input.model,
+    adapter: input.adapter,
+    adapterVersion: input.adapterVersion,
+    semanticConfig,
+    semanticConfigDigest: providerSemanticConfigDigest(semanticConfig),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -84,13 +136,6 @@ export class ProviderAuthError extends ProviderError {
 // Mock/deterministic provider (for tests, no network)
 // ---------------------------------------------------------------------------
 
-import type {
-  ModelProvider,
-  ModelRequest,
-  ModelStream,
-  ModelEvent,
-} from "@alcode/agent-core";
-
 export interface MockResponse {
   text?: string;
   toolCalls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }>;
@@ -99,16 +144,24 @@ export interface MockResponse {
 }
 
 /**
- * A mock provider that returns scripted responses. Deterministic — no network,
- * no credentials. Used by tests and as the default when no live provider is
- * configured.
+ * A deterministic non-Anthropic fixture provider. Its descriptor deliberately
+ * exercises the provider-neutral A2 contract while never requiring network or
+ * credentials in default CI.
  */
 export class MockProvider implements ModelProvider {
+  readonly descriptor: ModelProviderDescriptor;
   private responses: MockResponse[];
   private callIndex = 0;
 
   constructor(responses: MockResponse[]) {
     this.responses = responses;
+    this.descriptor = createProviderDescriptor({
+      provider: "deterministic-fixture",
+      model: "mock-v1",
+      adapter: "alcode-mock",
+      adapterVersion: 1,
+      semanticConfig: { deterministic: true },
+    });
   }
 
   async stream(request: ModelRequest): Promise<ModelStream> {
