@@ -99,7 +99,7 @@ export function withCapabilityInferenceProvenanceV1<T>(
  * authorizes the request nor changes Operation/effect settlement semantics.
  */
 function installBrokerScopeV1(): void {
-  const prototype = CapabilityBroker.prototype as CapabilityBroker["__proto__"] & Record<PropertyKey, unknown>;
+  const prototype = CapabilityBroker.prototype as unknown as Record<PropertyKey, unknown>;
   if (prototype[BROKER_PATCH] === true) return;
   const original = CapabilityBroker.prototype.execute;
   Object.defineProperty(prototype, BROKER_PATCH, { value: true, configurable: false });
