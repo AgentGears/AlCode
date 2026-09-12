@@ -165,6 +165,8 @@ function createRunCodeTool(input: {
                 ...context,
                 signal,
                 toolCallId: `${rootToolCallId}:local:${subcallIndex}`,
+                parentToolCallId: rootToolCallId,
+                localSubcallIndex: subcallIndex,
               };
               const peerResult = await peer.execute(args as Record<string, unknown>, subcallContext);
               if (input.programAttemptAuthorityLost()) {
