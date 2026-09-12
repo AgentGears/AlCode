@@ -42,6 +42,15 @@ export interface InferenceEpochAuthorizationInputV1 {
   executionBase?: ProgramAttemptExecutionBaseV1;
 }
 
+/**
+ * Synchronous currentness assertions evaluated at the final canonical
+ * authorization boundary. They may tighten provenance admission only; they do
+ * not mint capability, Program, effect, verification, or Completion authority.
+ */
+export interface InferenceEpochAuthorizationGuardV1 {
+  assertCurrent(): void;
+}
+
 export interface InferenceEpochAuthorizationV1 {
   inferenceEpochId: string;
   capabilityBindingSnapshotDigest: string;
@@ -261,7 +270,10 @@ export class InferenceProvenanceServiceV1 {
     private readonly admission: CanonicalAdmissionQueue,
   ) {}
 
-  async authorize(input: InferenceEpochAuthorizationInputV1): Promise<InferenceEpochAuthorizationV1> {
+  async authorize(
+    input: InferenceEpochAuthorizationInputV1,
+    guard: InferenceEpochAuthorizationGuardV1,
+  ): Promise<InferenceEpochAuthorizationV1> {
     validateProviderDescriptor(input.providerDescriptor);
     if (!input.sessionId || !input.connectionGenerationId || !input.contextReceiptId
         || !Number.isSafeInteger(input.sourceEventSequence) || input.sourceEventSequence < 0
@@ -286,6 +298,30 @@ export class InferenceProvenanceServiceV1 {
           capabilityBindingSnapshotDigest: String(payload.capabilityBindingSnapshotDigest ?? ""),
         };
       }
+
+      // AC-A2-02: the context receipt must be the event immediately following
+      // the exact context source head. Any canonical event admitted while the
+      // context was being compiled makes the cut stale instead of mixing eras.
+      const contextReceipt = events.find((event) => String(event.eventId) === input.contextReceiptId);
+      if (contextReceipt === undefined
+          || contextReceipt.type !== "context.projection_compiled"
+          || contextReceipt.sequence !== input.sourceEventSequence + 1) {
+        throw new InferenceProvenanceControlError(
+          "Inference authorization context cut changed during refresh; request a fresh context receipt",
+        );
+      }
+      const currentHead = await this.store.headSequence();
+      if (currentHead !== contextReceipt.sequence) {
+        throw new InferenceProvenanceControlError(
+          "Inference authorization canonical cut changed after context refresh; request a fresh context receipt",
+        );
+      }
+
+      // No await may occur between the final in-memory currentness guard and
+      // append invocation. SqliteEventStore.append executes the canonical
+      // transaction synchronously before its Promise is returned, so this is
+      // the exact generation/capability side of the same authorization cut.
+      guard.assertCurrent();
 
       const inferenceEpochId = uuidv7();
       const draft: EventDraft<string, unknown> = {
