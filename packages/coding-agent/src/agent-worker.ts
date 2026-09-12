@@ -3,12 +3,20 @@
 // It does NOT import storage, workspace, memory, reasoning, or Host runtime.
 
 import { randomUUID } from "node:crypto";
-import { AgentRuntime, runAgentLoop, type Message } from "@alcode/agent-core";
+import {
+  AgentRuntime,
+  runAgentLoop,
+  type Message,
+  type ModelProvider,
+  type ModelProviderDescriptor,
+} from "@alcode/agent-core";
+import { createProviderDescriptor } from "@alcode/ai";
 import {
   AGENT_PROTOCOL_VERSION,
   DYNAMIC_CAPABILITY_BINDING_CAPABILITY,
   DURABLE_TRANSCRIPT_CAPABILITY,
   GRAPH_CONTEXT_CAPABILITY,
+  INFERENCE_PROVENANCE_CAPABILITY,
   LOCAL_ORCHESTRATION_CAPABILITY,
   PROGRAM_EXECUTION_CAPABILITY,
   PROGRAM_EXECUTION_V2_CAPABILITY,
@@ -89,6 +97,20 @@ function projectionExecutable(projection: ProgramAttemptProjectionAny | undefine
     : projection.work.satisfactionState === "active";
 }
 
+function effectiveProviderDescriptor(provider: ModelProvider): ModelProviderDescriptor {
+  if (provider.descriptor !== undefined) return structuredClone(provider.descriptor);
+  if (process.env.ALCODE_AGENT_SCRIPT?.trim()) {
+    return createProviderDescriptor({
+      provider: "scripted-fixture",
+      model: "scripted-worker-v1",
+      adapter: "alcode-scripted-worker",
+      adapterVersion: 1,
+      semanticConfig: { deterministic: true },
+    });
+  }
+  throw new Error("A2 inference provenance requires a provider semantic descriptor");
+}
+
 async function main(): Promise<void> {
   const generationId = process.env.ALCODE_AGENT_GENERATION_ID;
   if (!generationId) throw new Error("ALCODE_AGENT_GENERATION_ID is required");
@@ -155,6 +177,7 @@ async function main(): Promise<void> {
     DURABLE_TRANSCRIPT_CAPABILITY,
     GRAPH_CONTEXT_CAPABILITY,
     DYNAMIC_CAPABILITY_BINDING_CAPABILITY,
+    INFERENCE_PROVENANCE_CAPABILITY,
     LOCAL_ORCHESTRATION_CAPABILITY,
     PROGRAM_STATE_CAPABILITY,
     PROGRAM_EXECUTION_CAPABILITY,
@@ -191,6 +214,7 @@ async function main(): Promise<void> {
         context: localContext,
         latestProgramAttemptAuthority: () => latestProgramAttemptAuthority as ProgramAttemptAuthorityV1 | undefined,
       });
+      const providerDescriptor = effectiveProviderDescriptor(composition.provider);
       const completeHistory = await runAgentLoop(text, {
         systemPrompt: localContext.systemPrompt,
         provider: composition.provider,
@@ -202,7 +226,12 @@ async function main(): Promise<void> {
           ? {
               beforeInference: async () => {
                 await disposeActiveInferenceScope();
-                const refreshed = await requestInferenceContext(adaptiveProtocol, localSessionId, runAbortController.signal);
+                const refreshed = await requestInferenceContext(
+                  adaptiveProtocol,
+                  localSessionId,
+                  providerDescriptor,
+                  runAbortController.signal,
+                );
                 const refreshedAttempt = refreshed.programAttempt as ProgramAttemptProjectionAny | undefined;
                 if (requiredProgramAttemptAuthority !== undefined) {
                   const currentAuthority = refreshedAttempt?.authority;
@@ -221,6 +250,9 @@ async function main(): Promise<void> {
                   }
                   firstInferenceCut = false;
                 }
+                if (refreshed.inferenceEpochId === undefined) {
+                  throw new Error("Host did not return a negotiated A2 inference epoch");
+                }
                 latestProgramAttemptAuthority = refreshedAttempt?.authority;
                 const projection = createInferenceCapabilityProjection({
                   runtime,
@@ -230,6 +262,11 @@ async function main(): Promise<void> {
                   programAttemptAuthority: refreshedAttempt?.authority,
                 });
                 activeInferenceProjection = projection;
+                await adaptiveProtocol.prepareInference(
+                  localSessionId,
+                  refreshed.inferenceEpochId,
+                  runAbortController.signal,
+                );
                 return {
                   systemPrompt: renderProgramAttemptContext(
                     refreshed.systemPrompt,
@@ -237,10 +274,27 @@ async function main(): Promise<void> {
                     requiredProgramAttemptAuthority !== undefined,
                   ),
                   messages: refreshed.messages,
+                  inferenceEpochId: refreshed.inferenceEpochId,
                   ...(projection.tools !== undefined ? { tools: [...projection.tools] } : {}),
                 };
               },
-              afterInference: disposeActiveInferenceScope,
+              afterInference: async (result) => {
+                try {
+                  if (result.inferenceEpochId !== undefined) {
+                    await adaptiveProtocol.reportInferenceTerminal({
+                      sessionId: localSessionId,
+                      inferenceEpochId: result.inferenceEpochId,
+                      outcome: result.outcome,
+                      ...(result.stopReason !== undefined ? { stopReason: result.stopReason } : {}),
+                      ...(result.providerObservation !== undefined
+                        ? { providerObservation: structuredClone(result.providerObservation) }
+                        : {}),
+                    });
+                  }
+                } finally {
+                  await disposeActiveInferenceScope();
+                }
+              },
             }
           : {}),
         ...(timestamp !== undefined ? { promptTimestamp: timestamp } : {}),
@@ -346,6 +400,8 @@ async function main(): Promise<void> {
       case "context.update":
       case "capability.result":
       case "transcript.admitted":
+      case "inference.prepared.ack":
+      case "inference.terminal.ack":
       case "program.planning.read.result":
       case "program.proposal.result":
       case "program.progress.result":
