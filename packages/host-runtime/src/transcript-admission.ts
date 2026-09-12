@@ -20,6 +20,7 @@ import {
   type TranscriptEventRecord,
 } from "@alcode/transcript";
 import { CanonicalAdmissionQueue } from "./admission-queue.ts";
+import { installCapabilityInferenceProvenanceV1 } from "./capability-inference-provenance.ts";
 import { InferenceProvenanceServiceV1 } from "./inference-provenance.ts";
 
 export const INTERRUPTED_TOOL_RESULT_TEXT =
@@ -80,6 +81,7 @@ export class TranscriptAdmissionService {
     private readonly store: WorkspaceEventStore,
     private readonly admission: CanonicalAdmissionQueue,
   ) {
+    installCapabilityInferenceProvenanceV1(store);
     this.inferenceProvenance = new InferenceProvenanceServiceV1(store, admission);
   }
 
@@ -141,11 +143,6 @@ export class TranscriptAdmissionService {
     );
   }
 
-  /**
-   * Close one durable transcript tool-call gap after the Agent generation that
-   * owned the call has ended. This is protocol-structure recovery only: the
-   * synthetic error result deliberately asserts no Operation outcome or effect.
-   */
   admitInterruptedToolResult(
     sessionId: SessionId,
     input: InterruptedToolResultInputV1,
@@ -187,11 +184,6 @@ export class TranscriptAdmissionService {
     });
   }
 
-  /**
-   * Recover every dangling tool call in one dead-generation transcript before a
-   * replacement Agent receives context. The fixed error result is deliberately
-   * non-authoritative for Operation/effect truth.
-   */
   async recoverInterruptedToolResults(sessionId: SessionId): Promise<string[]> {
     const before = reduceSessionTranscript(await replayAll(this.store), String(sessionId));
     if (before.status === "complete") return [];
@@ -236,7 +228,6 @@ export class TranscriptAdmissionService {
         producer,
       };
 
-      // Take one canonical snapshot while holding Host admission serialization.
       const head = await this.store.headSequence();
       const events: PersistedDomainEvent<string, unknown>[] = [];
       let cursor = 0;
@@ -247,9 +238,6 @@ export class TranscriptAdmissionService {
         cursor = batch[batch.length - 1]!.sequence;
       }
 
-      // A retry must reach the event-store fingerprint oracle before semantic
-      // transition validation, because the transition is already reflected in
-      // the current transcript and would otherwise look like a duplicate.
       const existing = events.find((event) => event.idempotencyKey === idempotencyKey);
       if (existing) {
         const persisted = await this.store.append([draft]);
