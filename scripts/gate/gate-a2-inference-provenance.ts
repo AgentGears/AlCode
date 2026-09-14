@@ -38,9 +38,10 @@ checks.push(check(
       "packages/agent-core/src/inference-lifecycle.test.ts",
       "packages/ai/src/index.test.ts",
       "packages/host-runtime/src/inference-provenance-a2.test.ts",
+      "packages/host-runtime/src/inference-provenance-protocol-a2.test.ts",
     );
   },
-  "fresh Host epochs, exact provider descriptors, prepared-before-inference lifecycle, uncertainty preservation, provider-neutral fixtures, replacement cuts, and canonical replay rebuild are proven without remote-provider attestation",
+  "fresh Host epochs, exact provider descriptors, prepared-before-inference lifecycle, uncertainty preservation, exact assistant correlation, provider-neutral fixtures, replacement cuts, and canonical replay rebuild are proven without remote-provider attestation",
 ));
 
 checks.push(check(
