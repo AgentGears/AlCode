@@ -447,6 +447,9 @@ export class HostRuntime {
 
       case "assistant.message": {
         if (message.sessionId !== (sessionId as string)) throw new Error("Agent session mismatch");
+        if (inferenceProvenanceCapable && message.inferenceEpochId === undefined) {
+          throw new Error("Negotiated inference provenance requires assistant inferenceEpochId");
+        }
         if (!durableTranscript) {
           await this.admission.append([{
             eventId: mkEventId(),
