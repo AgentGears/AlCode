@@ -71,7 +71,8 @@ describeLocked("A5 CapabilityBroker captured execution-world admission", () => {
     let executed = false;
     const capability: HostCapability = {
       name: "world_probe",
-      workspaceAccessClass: "read_only",
+      executionScope: "workspace_world",
+      workspaceAccessClass: "no_workspace_access",
       async execute(_args, context) {
         executed = true;
         return {
@@ -179,5 +180,42 @@ describeLocked("A5 CapabilityBroker captured execution-world admission", () => {
     expect(events.some((event) => event.type === "operation.requested")).toBe(false);
     expect((await worlds.currentOperationProvenance()).executionWorldGenerationId)
       .not.toBe(g0.executionWorldGenerationId);
+  });
+
+  it("fails closed before admission when a workspace-world capability has no binding authority", async () => {
+    locked = await openLockedWorkspaceStore({
+      databasePath: join(dir, "workspace-no-authority.sqlite"),
+      lockPath: join(dir, "workspace-no-authority.lock"),
+      workspaceId: asWorkspaceId(uuidv7()),
+      repositoryId: uuidv7(),
+    });
+    let executed = false;
+    const host = new HostRuntime({
+      store: locked,
+      capabilities: [{
+        name: "world_probe",
+        executionScope: "workspace_world",
+        workspaceAccessClass: "no_workspace_access",
+        async execute() {
+          executed = true;
+          return { result: null, outcome: "succeeded" };
+        },
+      }],
+      policy: new DefaultHostPolicy({ knownTools: ["world_probe"] }),
+    });
+    await host.startup();
+    const session = await host.openOrResumeSession();
+    const result = await host.capabilityBroker.execute({
+      sessionId: session.sessionId,
+      toolCallId: "tc-a5-no-authority",
+      toolName: "world_probe",
+      args: {},
+    });
+    expect(result).toMatchObject({
+      outcome: "denied",
+      errorCode: "execution_world_binding_unavailable",
+    });
+    expect(executed).toBe(false);
+    expect((await replayAll(locked)).some((event) => event.type === "operation.requested")).toBe(false);
   });
 });
