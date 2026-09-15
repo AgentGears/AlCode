@@ -40,6 +40,7 @@ import {
   ProgramDispatchServiceV1,
   type ProgramDispatchWorkspaceCoordinatorV1,
   type ProgramExecutionObservationSourceV1,
+  type ProgramExecutionWorldAuthorityV1,
 } from "./program-dispatch.ts";
 import { Phase1RecoveryControllerV1 } from "./program-recovery.ts";
 import type { HostSessionHandle } from "./session-manager.ts";
@@ -87,6 +88,8 @@ export interface ProgramExecutionRuntimeOptionsV1 {
   verifierCatalog?: HostProgramVerifierCatalogV1;
   artifactStore: HostArtifactStore;
   workspaceCoordinator?: ProgramDispatchWorkspaceCoordinatorV1 & PlanningReadBarrierV1;
+  /** Optional for legacy fixtures; production A5 callers bind ProgramAttempts to this exact world authority. */
+  executionWorld?: ProgramExecutionWorldAuthorityV1;
 }
 
 /**
@@ -159,6 +162,7 @@ export class ProgramExecutionRuntimeV1 {
       agentGenerations: this.host.programAgents,
       recovery: this.recovery,
       firstDispatchPlanning: this.creation,
+      ...(options.executionWorld !== undefined ? { executionWorld: options.executionWorld } : {}),
     });
 
     this.scheduler = new ProgramExecutionSchedulerV1({
