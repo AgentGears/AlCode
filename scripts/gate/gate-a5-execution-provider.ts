@@ -50,10 +50,11 @@ checks.push(check(
       "packages/program-state/src/execution-world-validation.test.ts",
       "packages/host-runtime/src/execution-world.test.ts",
       "packages/host-runtime/src/program-execution-world-binding.test.ts",
+      "packages/host-runtime/src/program-dispatch-execution-world-guard.test.ts",
       "packages/host-runtime/src/program-adaptive-execution-world-v1.test.ts",
     );
   },
-  "fresh non-reusable generation identity, policy/provider freshness, durable ProgramAttempt binding, same-bytes ABA rejection, restart projection, and Agent-independent currentness are Host-canonical",
+  "fresh non-reusable generation identity, policy/provider freshness, durable ProgramAttempt binding, fixed/adaptive observation-to-binding race fencing, same-bytes ABA rejection, restart projection, and Agent-independent currentness are Host-canonical",
 ));
 
 checks.push(check(
