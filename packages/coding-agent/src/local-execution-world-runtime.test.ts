@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -18,18 +18,11 @@ import {
 
 const describeLocked = process.platform === "win32" ? describe.skip : describe;
 
-async function replayAll(host: HostRuntime) {
-  const events = [];
-  for await (const event of host.capabilityBroker["store"].replay()) events.push(event);
-  return events;
-}
-
 describeLocked("A5 local execution-world production bootstrap", () => {
   it("routes an ordinary coding capability through the exact active generation and records provenance", async () => {
     const dir = mkdtempSync(join(tmpdir(), "alcode-a5-local-runtime-"));
     const descriptorRoot = join(dir, "descriptor");
     const worldRoot = join(dir, "world");
-    const { mkdirSync } = await import("node:fs");
     mkdirSync(descriptorRoot, { recursive: true });
     mkdirSync(worldRoot, { recursive: true });
     writeFileSync(join(descriptorRoot, "value.txt"), "descriptor\n");
@@ -82,7 +75,9 @@ describeLocked("A5 local execution-world production bootstrap", () => {
       const events = [];
       for await (const event of locked.store.replay()) events.push(event);
       const requested = events.find((event) => event.type === "operation.requested");
-      const executionWorld = (requested?.payload as { executionWorld?: { executionWorldGenerationId?: string } } | undefined)?.executionWorld;
+      const executionWorld = (requested?.payload as {
+        executionWorld?: { executionWorldGenerationId?: string };
+      } | undefined)?.executionWorld;
       expect(executionWorld?.executionWorldGenerationId).toBe(active.world.identity.executionWorldGenerationId);
 
       await retireLocalExecutionWorldV1(active);
