@@ -57,7 +57,7 @@ describeLocked("A2 Host inference provenance boundary", () => {
       generationId: "generation-current",
       capabilities: [DURABLE_TRANSCRIPT_CAPABILITY, INFERENCE_PROVENANCE_CAPABILITY],
       transport: pair.a,
-      waitForExit: () => new Promise(() => undefined),
+      waitForExit: () => new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(() => undefined),
       terminate: () => undefined,
     };
     const received: HostToAgentMessage[] = [];
