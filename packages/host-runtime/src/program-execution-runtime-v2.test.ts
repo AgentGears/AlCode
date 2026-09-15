@@ -156,7 +156,7 @@ describe("A1 adaptive Program runtime V2 authority composition", () => {
 
   it("keeps S02-1 run_code visibility Host-owned, negotiated, and executable-attempt gated", () => {
     expect(source).toContain("capabilities.includes(LOCAL_ORCHESTRATION_CAPABILITY)");
-    expect(source).toContain("programAttempt?.work.satisfactionState");
+    expect(source).toContain("programAttemptBeforeRefresh?.work.satisfactionState");
     expect(source).toContain("shouldAdvertiseRunCodeV1(");
     expect(source).toContain("runCodeAuthorized,\n                localOrchestrationNegotiated");
     expect(source).toContain("includeDynamic || localOrchestrationNegotiated");
