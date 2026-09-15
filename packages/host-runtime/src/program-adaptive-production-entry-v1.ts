@@ -4,7 +4,7 @@ export * from "./program-adaptive-agent-replacement-v3.ts";
 export * from "./program-adaptive-application-current-v2.ts";
 
 import type { ApplicationServicePort } from "@alcode/application-protocol";
-import type { ProgramAgentGenerationAuthorityV1 } from "./program-dispatch.ts";
+import type { ProgramAgentGenerationAuthorityV1, ProgramExecutionWorldAuthorityV1 } from "./program-dispatch.ts";
 import type { ApplicationAgentControl } from "./application-service.ts";
 import { HostApplicationService } from "./application-service.ts";
 import {
@@ -19,6 +19,7 @@ import {
   ProgramAdaptiveApplicationServiceV1,
 } from "./program-adaptive-application-control-v1.ts";
 import { ProgramAdaptiveApplicationCurrentPortV2 } from "./program-adaptive-application-current-v2.ts";
+import { createProgramAdaptiveExecutionWorldCompositionV1 } from "./program-adaptive-execution-world-v1.ts";
 import type { ProgramApplicationPortV1 } from "./program-application.ts";
 import type { Phase1RecoveryLifecycleV1 } from "./program-recovery.ts";
 import {
@@ -26,6 +27,11 @@ import {
   type ProgramAdaptiveProductionRuntimeOptionsV1,
   type ProgramAdaptiveProductionRuntimeV1,
 } from "./program-adaptive-production-v1.ts";
+
+export interface ProgramAdaptiveProductionEntryOptionsV1 extends ProgramAdaptiveProductionRuntimeOptionsV1 {
+  /** A5 exact physical execution-world authority shared with the fixed runtime. */
+  executionWorld?: ProgramExecutionWorldAuthorityV1;
+}
 
 /**
  * Compose Workspace-restart Attempt retirement into the privileged Host startup
@@ -60,12 +66,52 @@ function withAdaptiveWorkspaceRestartRecoveryV3(
  * with one-cut semantic/operational currentness, and Agent replacement recovery
  * with retained-Attempt ownership. Agent execution, scheduling, operation
  * settlement, verification, and Completion remain owned by the base runtime.
+ *
+ * When A5 execution-world authority is supplied, adaptive Attempt issuance and
+ * adaptive Operation admission are joined to the same existing canonical Host
+ * admission queue. The adapter adds provenance/currentness; it does not become
+ * another scheduler, broker, or effect authority.
  */
 export function createProgramAdaptiveProductionRuntimeV1(
-  options: ProgramAdaptiveProductionRuntimeOptionsV1,
+  options: ProgramAdaptiveProductionEntryOptionsV1,
 ): ProgramAdaptiveProductionRuntimeV1 {
-  const runtime = createBaseProgramAdaptiveProductionRuntimeV1(options);
   const fixed = options.fixedTopology;
+  const executionWorldComposition = options.executionWorld === undefined
+    ? undefined
+    : createProgramAdaptiveExecutionWorldCompositionV1(fixed.workspaceStore, options.executionWorld);
+
+  const fixedForBase = executionWorldComposition === undefined
+    ? fixed
+    : new Proxy(fixed, {
+        get(target, property) {
+          if (property === "workspaceStore") return executionWorldComposition.store;
+          if (property === "host") {
+            return new Proxy(target.host, {
+              get(host, hostProperty) {
+                if (hostProperty === "setProgramOperationAuthority") {
+                  return (authority: Parameters<typeof host.setProgramOperationAuthority>[0]) =>
+                    host.setProgramOperationAuthority(
+                      authority === undefined
+                        ? undefined
+                        : executionWorldComposition.wrapOperationAuthority(authority),
+                    );
+                }
+                const value = Reflect.get(host, hostProperty, host) as unknown;
+                return typeof value === "function" ? value.bind(host) : value;
+              },
+            });
+          }
+          const value = Reflect.get(target, property, target) as unknown;
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+
+  const runtime = createBaseProgramAdaptiveProductionRuntimeV1({
+    fixedTopology: fixedForBase,
+    observations: options.observations,
+    artifactStore: options.artifactStore,
+    baselineAuthority: options.baselineAuthority,
+  });
   const store = fixed.workspaceStore;
   const adaptiveApplicationAuthority = new HostProgramAdaptiveApplicationCommandAuthorityV1({
     store,
@@ -87,6 +133,7 @@ export function createProgramAdaptiveProductionRuntimeV1(
       agentGenerations: fixed.host.programAgents as ProgramAgentGenerationAuthorityV1,
       recovery: fixed.recovery,
       firstDispatchPlanning: fixed.creation,
+      ...(options.executionWorld !== undefined ? { executionWorld: options.executionWorld } : {}),
     },
   });
   const replacementAuthority = new ProgramAdaptiveAgentReplacementAuthorityV3({
