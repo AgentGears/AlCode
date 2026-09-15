@@ -20,9 +20,11 @@ import type { WorkspaceEventStore } from "@alcode/storage";
 import { withProgramDispatchExecutionWorldGuardV1 } from "./program-dispatch-execution-world-guard.ts";
 import { ProgramDispatchStaleError } from "./program-dispatch.ts";
 
+const TEST_WORKSPACE_ID = uuidv7();
+
 function world(generation: string) {
   return {
-    workspaceId: "workspace-a5",
+    workspaceId: TEST_WORKSPACE_ID,
     providerKind: "local-trusted",
     executionWorldGenerationId: generation,
     providerDescriptorDigest: "provider-digest",
@@ -36,7 +38,7 @@ function base(generation: string, effectGeneration = 0): ProgramAttemptExecution
     observation: {
       kind: "workspace-observation-v1",
       providerKind: "local-trusted",
-      workspaceIdentity: "workspace-a5",
+      workspaceIdentity: TEST_WORKSPACE_ID,
       coverageDigest: "a5-guard-coverage",
       stateDigest: `state-${generation}-${effectGeneration}`,
       executionWorld: world(generation),
@@ -49,7 +51,7 @@ function drafts(observedGeneration: string | undefined, boundGeneration: string)
   return [
     {
       eventId: "event-transition" as never,
-      workspaceId: "workspace-a5" as never,
+      workspaceId: TEST_WORKSPACE_ID as never,
       sessionId: "session-a5" as never,
       programStateId: "program-a5" as never,
       occurredAt: "2026-09-16T00:00:00.000Z",
@@ -73,7 +75,7 @@ function drafts(observedGeneration: string | undefined, boundGeneration: string)
     },
     {
       eventId: "event-binding" as never,
-      workspaceId: "workspace-a5" as never,
+      workspaceId: TEST_WORKSPACE_ID as never,
       sessionId: "session-a5" as never,
       programStateId: "program-a5" as never,
       occurredAt: "2026-09-16T00:00:00.000Z",
@@ -90,7 +92,7 @@ function storeThatRecords(
   history: PersistedDomainEvent<string, unknown>[] = [],
 ): WorkspaceEventStore {
   return {
-    workspaceId: "workspace-a5",
+    workspaceId: TEST_WORKSPACE_ID,
     append: async (batch: readonly EventDraft<string, unknown>[]) => {
       appended.push([...batch]);
       const persisted = batch.map((draft, index) => ({
@@ -167,7 +169,7 @@ describe("A5 fixed Program dispatch execution-world persistence guard", () => {
       {
         sequence: 1,
         eventId: mkEventId(),
-        workspaceId: asWorkspaceId("workspace-a5"),
+        workspaceId: asWorkspaceId(TEST_WORKSPACE_ID),
         sessionId: sessionId as never,
         programStateId: asEventProgramStateId(String(programStateId)),
         occurredAt: "2026-09-16T00:00:00.000Z",
@@ -179,7 +181,7 @@ describe("A5 fixed Program dispatch execution-world persistence guard", () => {
       {
         sequence: 2,
         eventId: mkEventId(),
-        workspaceId: asWorkspaceId("workspace-a5"),
+        workspaceId: asWorkspaceId(TEST_WORKSPACE_ID),
         sessionId: sessionId as never,
         programStateId: asEventProgramStateId(String(programStateId)),
         occurredAt: "2026-09-16T00:00:00.001Z",
@@ -199,7 +201,7 @@ describe("A5 fixed Program dispatch execution-world persistence guard", () => {
     const settlement: EventDraft<string, unknown>[] = [
       {
         eventId: mkEventId(),
-        workspaceId: asWorkspaceId("workspace-a5"),
+        workspaceId: asWorkspaceId(TEST_WORKSPACE_ID),
         sessionId: sessionId as never,
         programStateId: asEventProgramStateId(String(programStateId)),
         occurredAt: "2026-09-16T00:00:01.000Z",
@@ -210,7 +212,7 @@ describe("A5 fixed Program dispatch execution-world persistence guard", () => {
       },
       {
         eventId: mkEventId(),
-        workspaceId: asWorkspaceId("workspace-a5"),
+        workspaceId: asWorkspaceId(TEST_WORKSPACE_ID),
         sessionId: sessionId as never,
         programStateId: asEventProgramStateId(String(programStateId)),
         occurredAt: "2026-09-16T00:00:01.001Z",
