@@ -59,6 +59,27 @@ function requireWorkspace(
   }
 }
 
+function requireAttemptBaseWorld(
+  state: ProgramState,
+  current: ExecutionWorldOperationProvenanceV1,
+): void {
+  const attempt = state.activeAttempt;
+  if (attempt === null) {
+    throw new ProgramDispatchControlError("Adaptive attempt.issue transition lacks active Attempt state");
+  }
+  const observed = attempt.expectedExecutionBase.observation.executionWorld;
+  if (observed === undefined) {
+    throw new ProgramDispatchStaleError(
+      "Adaptive ProgramAttempt execution base lacks exact execution-world generation",
+    );
+  }
+  if (!sameExecutionWorld(observed, current)) {
+    throw new ProgramDispatchStaleError(
+      "Adaptive ProgramAttempt observation and current execution-world generation diverged before admission",
+    );
+  }
+}
+
 function adaptiveAttemptBindingDraft(
   transition: EventDraft<string, unknown>,
   executionWorld: ExecutionWorldOperationProvenanceV1,
@@ -73,6 +94,7 @@ function adaptiveAttemptBindingDraft(
   if (state === undefined || attempt === null || attempt === undefined) {
     throw new ProgramDispatchControlError("Adaptive attempt.issue transition lacks active Attempt state");
   }
+  requireAttemptBaseWorld(state, executionWorld);
   if (transition.programStateId === undefined || transition.sessionId === undefined) {
     throw new ProgramDispatchControlError("Adaptive attempt.issue transition lacks durable ownership envelope");
   }
