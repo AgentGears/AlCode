@@ -16,32 +16,37 @@ function provenance(generation: string): ExecutionWorldOperationProvenanceV1 {
   };
 }
 
+function binding(generation: string, assertUsable: () => void = () => undefined): ExecutionWorldOperationBindingV1 {
+  const marker = { generation };
+  return {
+    provenance: provenance(generation),
+    assertUsable,
+    getService: (serviceId) => serviceId === "test-service-v1" ? marker : undefined,
+  };
+}
+
 describe("A5 immutable execution-world operation binding", () => {
-  it("keeps an admitted G0 binding on G0 after G1 becomes current", async () => {
+  it("keeps an admitted G0 binding and its services on G0 after G1 becomes current", async () => {
     let current = provenance("g0");
     let g0Usable = true;
     const worlds = { currentOperationProvenance: async () => structuredClone(current) };
     const registry = new ExecutionWorldOperationBindingRegistryV1(worlds);
-    const g0: ExecutionWorldOperationBindingV1 = {
-      provenance: provenance("g0"),
-      assertUsable: () => {
-        if (!g0Usable) throw new Error("g0 unavailable");
-      },
-    };
-    const g1: ExecutionWorldOperationBindingV1 = {
-      provenance: provenance("g1"),
-      assertUsable: () => undefined,
-    };
+    const g0 = binding("g0", () => {
+      if (!g0Usable) throw new Error("g0 unavailable");
+    });
+    const g1 = binding("g1");
     registry.register(g0);
     registry.register(g1);
 
     const admitted = await registry.captureCurrent();
     expect(admitted).toBe(g0);
+    expect(admitted.getService("test-service-v1")).toEqual({ generation: "g0" });
 
     current = provenance("g1");
     expect(await registry.captureCurrent()).toBe(g1);
     expect(admitted).toBe(g0);
     expect(admitted.provenance.executionWorldGenerationId).toBe("g0");
+    expect(admitted.getService("test-service-v1")).toEqual({ generation: "g0" });
 
     g0Usable = false;
     expect(() => admitted.assertUsable()).toThrow("g0 unavailable");
@@ -52,7 +57,7 @@ describe("A5 immutable execution-world operation binding", () => {
     let current = provenance("g0");
     const worlds = { currentOperationProvenance: async () => structuredClone(current) };
     const registry = new ExecutionWorldOperationBindingRegistryV1(worlds);
-    registry.register({ provenance: provenance("g0"), assertUsable: () => undefined });
+    registry.register(binding("g0"));
 
     current = provenance("g1");
     await expect(registry.captureCurrent()).rejects.toBeInstanceOf(
@@ -63,10 +68,7 @@ describe("A5 immutable execution-world operation binding", () => {
   it("rejects replacing a generation with a different runtime binding", () => {
     const worlds = { currentOperationProvenance: async () => provenance("g0") };
     const registry = new ExecutionWorldOperationBindingRegistryV1(worlds);
-    registry.register({ provenance: provenance("g0"), assertUsable: () => undefined });
-    expect(() => registry.register({
-      provenance: provenance("g0"),
-      assertUsable: () => undefined,
-    })).toThrow("already has a different runtime binding");
+    registry.register(binding("g0"));
+    expect(() => registry.register(binding("g0"))).toThrow("already has a different runtime binding");
   });
 });
