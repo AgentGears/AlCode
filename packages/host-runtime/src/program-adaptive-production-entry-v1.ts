@@ -106,12 +106,14 @@ export function createProgramAdaptiveProductionRuntimeV1(
         },
       });
 
-  const runtime = createBaseProgramAdaptiveProductionRuntimeV1({
-    fixedTopology: fixedForBase,
-    observations: options.observations,
-    artifactStore: options.artifactStore,
-    baselineAuthority: options.baselineAuthority,
-  });
+  const runtime = executionWorldComposition === undefined
+    ? createBaseProgramAdaptiveProductionRuntimeV1(options)
+    : createBaseProgramAdaptiveProductionRuntimeV1({
+        fixedTopology: fixedForBase,
+        observations: options.observations,
+        artifactStore: options.artifactStore,
+        baselineAuthority: options.baselineAuthority,
+      });
   const store = fixed.workspaceStore;
   const adaptiveApplicationAuthority = new HostProgramAdaptiveApplicationCommandAuthorityV1({
     store,
