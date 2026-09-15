@@ -69,20 +69,26 @@ governed by one codebase.
 
 The closed product baseline now includes Phases 0.0 through 0.9, Phase 1.0
 Durable ProgramState, Phase 1.1 Default Program Execution, S-01 Replaceable
-Agent Runtime, and P-01 Production Program Agent. P-01 closed at
-`e6a9025b767a8fc9026bcd72670a338e8a37c059` under the authoritative
-`pnpm gate:product-agent` proof surface. These later objectives extend the same
-ownership doctrine rather than amending the ten principles: the Host remains
-canonical; Program/session/Agent lifetimes remain distinct; environmental
-effects and recovery remain Host-governed; verification and completion remain
-Host authority; and clients/Agents remain replaceable consumers of durable
-truth. `verbatim-v1` remains the product default and `graph-v1` remains opt-in.
+Agent Runtime, P-01 Production Program Agent, A1 Adaptive Program semantics,
+P-02 semantic planning + typed verification retry, S-02 ProgramAttempt-aware
+Code Mode, and A2/S-04 Reconstructable Inference Provenance. The current
+closure point is `main@eed99c2fde14e4e0e981c67b873fb91db3ed3c5f`.
 
-The durable forward direction is recorded in `docs/roadmap.md`. A1 — Adaptive
-Program Revision and Progressive Decomposition — is the recommended next design
-objective, but the roadmap does not authorize implementation. P-01 closure does
-not authorize a successor objective. See
-`docs/p-01-production-program-agent-as-built.md` for the current closure record.
+These later objectives extend the same ownership doctrine rather than amending
+the ten principles: the Host remains canonical; Program/session/Agent/inference
+lifetimes remain distinct; environmental effects and recovery remain
+Host-governed; verification and completion remain Host authority; and
+clients/Agents/local orchestration workers remain replaceable consumers of
+durable truth. A2 adds reconstructable inference causality while explicitly
+keeping `InferenceEpochId` non-authorizing. `verbatim-v1` remains the product
+default and `graph-v1` remains opt-in.
+
+The durable forward direction is recorded in `docs/roadmap.md`. The next
+load-bearing roadmap candidate is A5 — Sandboxed Execution Providers / physical
+execution-provider isolation — but the roadmap does not authorize
+implementation. A2 closure does not authorize a successor objective. See
+`docs/a2-inference-provenance-as-built.md` and
+`docs/project-review-2026-09-15.md` for the current closure/review record.
 
 ## Relationship to the prior work
 

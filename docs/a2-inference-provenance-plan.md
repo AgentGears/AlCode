@@ -1,5 +1,7 @@
 # A2 / S-04 — Reconstructable Inference Provenance Plan
 
+> **Closure note (2026-09-15):** This frozen contract was subsequently implemented, reviewed, and closed. Exact reviewed candidate: `f23a6cc54b5d1f48109e1eb4d60854905626c312`; landed `main`: `eed99c2fde14e4e0e981c67b873fb91db3ed3c5f` via PR #318. The original freeze status/baseline below are preserved as historical contract metadata. See [`a2-inference-provenance-as-built.md`](./a2-inference-provenance-as-built.md) for closure evidence.
+
 **Status:** FROZEN DESIGN CONTRACT — implementation not started by this documentation objective  
 **Freeze date:** 2026-09-12  
 **Baseline:** `main@bc321ac350ddf90d28b69abfc254eaa9af8969be`  

@@ -13,22 +13,30 @@ Frozen now: `workspace_id`, `repository_id`/`repositoryId`, `session_id`,
 - `repository_id` (now `repositoryId`) — **PROMOTED and implemented before 0.2**
   (see "Workspace identity" below). A path cannot be "only an attribute" and
   simultaneously the sole durable identity used to recognize moves.
-- `worktree_id` — when subagent isolation uses git worktrees.
-- `task_id` — when a unit of work spans sessions (long-horizon tasks).
+- `worktree_id` — when isolated parallel workspace/subagent execution requires
+  a durable worktree/world identity; expected to be revisited under A7 after
+  A5 establishes the execution-provider/world contract.
+- `task_id` — when a unit of work spans sessions (long-horizon tasks). Durable
+  ProgramState/WorkItem identity now covers canonical Program work; do not add
+  a parallel task identity unless a later product surface demonstrates a
+  distinct need.
 - `turn_id` — when turn-level attribution is needed for receipts/analytics.
-- `model_request_id` — **TRIGGERED by A2/S-04 design work.** The 2026-09-12
-  inference-provenance gap study proves protocol correlation plus the durable
-  context receipt cannot reconstruct exact provider-inference causality. The
-  frozen A2 contract uses a Host-minted non-authorizing `InferenceEpochId` as
-  ALCODE's cross-provider identity; provider-native request/response IDs remain
-  optional provenance rather than foundational authority.
+- `model_request_id` — **PROMOTED/IMPLEMENTED by A2/S-04 as
+  `InferenceEpochId`.** A2 proved that protocol correlation plus the durable
+  context receipt could not reconstruct exact provider-inference causality.
+  The landed implementation uses a Host-minted, fresh, non-authorizing
+  `InferenceEpochId` as ALCODE's cross-provider inference identity; provider-
+  native request/response IDs remain optional observed provenance rather than
+  foundational authority. Closure landed on
+  `main@eed99c2fde14e4e0e981c67b873fb91db3ed3c5f`.
 - **branded/global `tool_call_id` identity** — Phase 0.6 preserves the
   provider/model `toolCallId` end-to-end across assistant content,
   `ToolExecutionContext`, Agent Protocol capability request/result, and durable
-  tool-result transcript state. A2/S-04 now requires durable Operation
-  correlation to that existing identity, including explicit Code Mode parent
-  call/subcall metadata. Promoting `toolCallId` into the foundational branded
-  identity set or event envelope remains optional unless implementation
+  tool-result transcript state. **A2 now also durably correlates model-caused
+  `operation.requested` facts to the exact `InferenceEpochId` + `toolCallId`,
+  and S-02 nested calls carry explicit `parentToolCallId` +
+  `localSubcallIndex`.** Promoting `toolCallId` into the foundational branded
+  identity set or event envelope remains optional unless later implementation
   evidence proves the stronger type-level contract necessary.
 - `artifact_id` — if content-addressed digests are insufficient as handles.
 
@@ -78,7 +86,8 @@ semantic-engine gate and remain backlog items rather than reasons to reopen it.
   `skillReviewAgentPlanner.ts`). Becomes active when the agent has enough
   green sessions to distill from. Hard requirement: forked sub-agent under
   permission sandbox + pending dir for user confirmation (the fix for the
-  qwen #4437 overwrite bug).
+  qwen #4437 overwrite bug). A5/A6 should establish the isolation/promotion
+  boundaries before this becomes a normal product path.
 
 ## Reasoning (deferred from 0.4)
 
@@ -100,17 +109,21 @@ execution, bounded event-sourced cognition work, replaceable-Agent continuity,
 Host-owned durable transcript reconstruction, per-inference Host-owned selective
 context authorization, and a Host-owned public Application Protocol with
 disposable React projections, explicit input admission/cancellation/permission
-semantics, and cursor/snapshot recovery. The following remain deliberately
-outside the closed foundation:
+semantics, and cursor/snapshot recovery. Later objectives added ProgramState,
+adaptive Program semantics, Code Mode, and A2 durable inference provenance.
+The following remain deliberately outside the closed foundation:
 
 - remote Agent transport / public wire encoding;
 - general scheduler or recurring automation;
 - distributed claims / leases / remote workers;
 - browser execution subsystem;
-- task/workflow engine and `task_id` lifecycle;
+- general-purpose workflow engine distinct from canonical ProgramState;
 - remote workspace backends.
 
-Activate only when a later authorized product requirement needs them.
+Physical execution-provider isolation is now the next roadmap **design
+candidate** under A5, but no A5 implementation is authorized by this backlog.
+Activate the other items only when a later authorized product requirement needs
+them.
 
 ## Context projection (deferred from 0.7)
 
@@ -140,7 +153,8 @@ None of these items is unfinished Phase 0.7 work.
 ## GUI (deferred from 0.8)
 
 - Full graph visualization.
-- Multi-agent kanban (agent-teams-ai style) — v2 product direction.
+- Multi-agent kanban (agent-teams-ai style) — later product direction, only
+  after durable delegation/parallel-workspace semantics exist.
 
 ## Integrations (deferred from 0.9)
 
@@ -152,7 +166,10 @@ None of these items is unfinished Phase 0.7 work.
 ## Subagents
 
 - Promote pi's `examples/extensions/subagent/` (1,016 LOC, single/parallel/chain)
-  to first-class when subagent dispatch is needed. Not on Phase 0 critical path.
+  only when a separately authorized A8 delegation objective requires subagent
+  dispatch. The architectural target is not a direct port: durable child work,
+  fresh Agent generations/ProgramAttempts, isolated execution domains, and Host
+  authority remain controlling.
 
 ## Dynamic extension loading (deferred from 0.1A)
 
