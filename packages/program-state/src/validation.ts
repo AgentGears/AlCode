@@ -7,7 +7,11 @@ import {
   utf8Bytes,
   assertValidProgramState as assertCoreValidProgramState,
 } from "./validation-core.ts";
-import type { ProgramEvidenceReference, ProgramState } from "./types.ts";
+import type {
+  ExecutionObservationIdentity,
+  ProgramEvidenceReference,
+  ProgramState,
+} from "./types.ts";
 
 export {
   ProgramInvariantError,
@@ -36,12 +40,82 @@ function requirePositiveGeneration(label: string, value: unknown): number {
   return value as number;
 }
 
+function requireNonEmpty(label: string, value: unknown): string {
+  if (typeof value !== "string" || value.length === 0) {
+    fail("invalid_value", `${label} must be a non-empty string`);
+  }
+  return value;
+}
+
+function assertExecutionWorldObservationCoherence(
+  label: string,
+  observation: ExecutionObservationIdentity,
+): void {
+  const world = observation.executionWorld;
+  if (world === undefined) return; // Historical pre-A5 observations remain valid.
+
+  requireNonEmpty(`${label}.executionWorld.workspaceId`, world.workspaceId);
+  requireNonEmpty(`${label}.executionWorld.providerKind`, world.providerKind);
+  requireNonEmpty(
+    `${label}.executionWorld.executionWorldGenerationId`,
+    world.executionWorldGenerationId,
+  );
+  requireNonEmpty(
+    `${label}.executionWorld.providerDescriptorDigest`,
+    world.providerDescriptorDigest,
+  );
+  requireNonEmpty(
+    `${label}.executionWorld.effectivePolicyDigest`,
+    world.effectivePolicyDigest,
+  );
+
+  if (world.workspaceId !== observation.workspaceIdentity) {
+    fail(
+      "structural_invariant",
+      `${label} execution-world Workspace does not match observation Workspace identity`,
+    );
+  }
+  if (world.providerKind !== observation.providerKind) {
+    fail(
+      "structural_invariant",
+      `${label} execution-world provider does not match observation provider`,
+    );
+  }
+}
+
 /**
  * Validate the core bounded/rebuildable shape plus the authority relations that
  * make current Program truth safe to use for dispatch and verification.
  */
 export function assertValidProgramState(state: ProgramState): void {
   assertCoreValidProgramState(state);
+
+  if (state.acceptedExecutionBase !== null) {
+    assertExecutionWorldObservationCoherence(
+      "acceptedExecutionBase.observation",
+      state.acceptedExecutionBase.observation,
+    );
+  }
+  if (state.activeAttempt !== null) {
+    assertExecutionWorldObservationCoherence(
+      "activeAttempt.initialExecutionBase.observation",
+      state.activeAttempt.initialExecutionBase.observation,
+    );
+    assertExecutionWorldObservationCoherence(
+      "activeAttempt.expectedExecutionBase.observation",
+      state.activeAttempt.expectedExecutionBase.observation,
+    );
+  }
+  if (state.executionBaseMismatch !== null) {
+    assertExecutionWorldObservationCoherence(
+      "executionBaseMismatch.acceptedObservationIdentity",
+      state.executionBaseMismatch.acceptedObservationIdentity,
+    );
+    assertExecutionWorldObservationCoherence(
+      "executionBaseMismatch.currentObservationIdentity",
+      state.executionBaseMismatch.currentObservationIdentity,
+    );
+  }
 
   for (const blocker of state.blockers) {
     if (blocker.state !== "open" && blocker.state !== "resolved") {
