@@ -16,6 +16,7 @@ import {
   HostArtifactStore,
   ProgramTerminalStaleError,
   createProgramExecutionRuntimeV1,
+  type ExecutionWorldOperationBindingAuthorityV1,
   type ProgramExecutionObservationSourceV1,
   type ProgramExecutionWorldAuthorityV1,
 } from "@alcode/host-runtime";
@@ -28,6 +29,12 @@ import { agentErrorStillTargetsLiveConnection } from "./agent-error-arbitration.
 import { recoverAfterAgentReplacement } from "./agent-replacement-recovery.ts";
 import { createLocalWorkspace } from "./capabilities/local-workspace.ts";
 import { createExecutionWorldHostCapabilities } from "./host-capabilities.ts";
+import {
+  createExecutionWorldObservationSourceV1,
+  createExecutionWorldPathStateObserverV1,
+  createExecutionWorldPlanningBindingV1,
+  createExecutionWorldSemanticPlanningBridgeV1,
+} from "./execution-world-observation.ts";
 import {
   activateLocalExecutionWorldV1,
   retireLocalExecutionWorldV1,
@@ -150,6 +157,16 @@ async function main(): Promise<void> {
     workspaceId: String(workspaceEntry.workspaceId),
     repositoryId: workspaceEntry.repositoryId,
   });
+  let activeExecutionWorld: ActiveLocalExecutionWorldV1 | undefined;
+  const executionBindingAuthority: ExecutionWorldOperationBindingAuthorityV1 = {
+    captureCurrent: async () => {
+      if (activeExecutionWorld === undefined) {
+        throw new Error("Execution-world binding is unavailable before provider activation");
+      }
+      return activeExecutionWorld.bindings.captureCurrent();
+    },
+  };
+
   const descriptorWorkspace = createLocalWorkspace({
     workspaceId: String(workspaceEntry.workspaceId),
     repositoryId: workspaceEntry.repositoryId,
@@ -163,8 +180,14 @@ async function main(): Promise<void> {
     repositoryId: descriptorWorkspace.identity.repositoryId,
     processSupervisor: codeIntelligenceProcesses,
   });
+  const semanticPlanning = createExecutionWorldSemanticPlanningBridgeV1(
+    executionBindingAuthority,
+    root,
+    codeIntelligence,
+  );
+  const planningExecutionBinding = createExecutionWorldPlanningBindingV1(executionBindingAuthority);
 
-  const observations: ProgramExecutionObservationSourceV1 = {
+  const preActivationObservations: ProgramExecutionObservationSourceV1 = {
     observe: async () => {
       try {
         let workspaceEffectGeneration = 0;
@@ -193,11 +216,20 @@ async function main(): Promise<void> {
       }
     },
   };
+  const executionWorldObservations = createExecutionWorldObservationSourceV1(
+    locked.store,
+    executionBindingAuthority,
+  );
+  let observationDelegate: ProgramExecutionObservationSourceV1 = preActivationObservations;
+  const observations: ProgramExecutionObservationSourceV1 = {
+    observe: () => observationDelegate.observe(),
+  };
 
   const verifierConfiguration = createDefaultProgramVerifierConfiguration({
     root,
     capabilities,
     observations,
+    pathStateObserver: createExecutionWorldPathStateObserverV1(executionBindingAuthority),
   });
   const artifactStore = new HostArtifactStore({ root: join(dirname(workspaceEntry.dbPath), "artifacts") });
 
@@ -217,7 +249,11 @@ async function main(): Promise<void> {
       capabilities,
       policy: new DefaultHostPolicy({ knownTools: capabilities.map((capability) => capability.name), allowMutations: true }),
     },
-    planningReads: createLocalPlanningReadRegistry(descriptorWorkspace, codeIntelligence),
+    planningReads: createLocalPlanningReadRegistry(
+      descriptorWorkspace,
+      semanticPlanning,
+      planningExecutionBinding,
+    ),
     creationPolicy: {
       current: () => ({ generation: "alcode-cli-policy-v1", digest: "alcode-cli-policy-v1", requirements: [] }),
     },
@@ -262,7 +298,6 @@ async function main(): Promise<void> {
   });
   const attachedAgents: Array<Awaited<ReturnType<typeof runtime.attachAgent>>> = [];
   const unsubscribeAgentErrors: Array<() => void> = [];
-  let activeExecutionWorld: ActiveLocalExecutionWorldV1 | undefined;
   let currentConnectionGeneration = "";
   let agentError: Error | undefined;
   let completedSuccessfully = false;
@@ -278,6 +313,8 @@ async function main(): Promise<void> {
       root,
     });
     runtime.host.capabilityBroker.setExecutionWorldBindingAuthority(activeExecutionWorld.bindings);
+    observationDelegate = executionWorldObservations;
+    await fixedRuntime.recovery.recover();
     if (session.resumed) {
       await adaptiveProduct.admission.recoverAgentReplacement(String(session.sessionId));
     }
