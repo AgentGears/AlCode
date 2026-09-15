@@ -99,7 +99,7 @@ guarantees both systems earned.
 
 Retained (in native form): deterministic reasoning artifacts, explicit verification
 contracts, conservative evidence linking, falsifiers, durable events, operation
-identity, immutable interruption records, effectively-once mutation semantics,
+identity, immutable interruption records, exactly-once mutation semantics,
 reconstruction and resume, critic and diagnostics, projection validation,
 semantic memory model, retrieval and strength contracts, lifecycle and tombstones,
 redaction and admission.
