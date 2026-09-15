@@ -47,15 +47,16 @@ export function resolveProductExecutionProviderKindV1(
   );
 }
 
+/**
+ * Restart reconciliation is provider-selection independent. A prior Host may
+ * have died while another provider kind was active; every known durable world
+ * must therefore be reconciled/fenced before a successor is activated.
+ */
 export async function recoverProductExecutionWorldsAfterHostRestartV1(input: {
-  providerKind: ProductExecutionProviderKindV1;
   worlds: ExecutionWorldServiceV1;
   root: string;
 }): Promise<void> {
-  if (input.providerKind === "local-trusted") {
-    await recoverLocalExecutionWorldsAfterHostRestartV1(input.worlds);
-    return;
-  }
+  await recoverLocalExecutionWorldsAfterHostRestartV1(input.worlds);
   await recoverDockerExecutionWorldsAfterHostRestartV1(input.worlds, input.root);
 }
 
