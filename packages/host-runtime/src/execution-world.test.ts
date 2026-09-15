@@ -50,10 +50,12 @@ function closure(label: string) {
 describeLocked("A5 execution-world generation lifecycle", () => {
   let dir: string;
   let locked: LockedWorkspaceStore | null;
+  let sessionId: string;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "alcode-a5-world-"));
     locked = null;
+    sessionId = uuidv7();
   });
 
   afterEach(() => {
@@ -69,12 +71,14 @@ describeLocked("A5 execution-world generation lifecycle", () => {
     const prepared = await service.prepareActivation({
       activationRequestId: "local-start-1",
       workspaceId,
+      sessionId,
       providerDescriptor: localProvider,
       effectivePolicy: localPolicy,
     });
     const retry = await service.prepareActivation({
       activationRequestId: "local-start-1",
       workspaceId,
+      sessionId,
       providerDescriptor: localProvider,
       effectivePolicy: localPolicy,
     });
@@ -89,6 +93,7 @@ describeLocked("A5 execution-world generation lifecycle", () => {
     });
     expect(active.state).toBe("active");
     expect(active.isCurrent).toBe(true);
+    expect(active.lifecycleSessionId).toBe(sessionId);
     expect(await service.currentOperationProvenance()).toEqual(prepared);
   });
 
@@ -98,18 +103,14 @@ describeLocked("A5 execution-world generation lifecycle", () => {
     const workspaceId = String(locked.store.workspaceId);
 
     const g0 = await service.prepareActivation({
-      activationRequestId: "g0",
-      workspaceId,
-      providerDescriptor: localProvider,
-      effectivePolicy: localPolicy,
+      activationRequestId: "g0", workspaceId, sessionId,
+      providerDescriptor: localProvider, effectivePolicy: localPolicy,
     });
     await service.observeActivation({ executionWorldGenerationId: g0.executionWorldGenerationId, evidence: readiness("same-bytes") });
 
     const g1 = await service.prepareActivation({
-      activationRequestId: "g1",
-      workspaceId,
-      providerDescriptor: localProvider,
-      effectivePolicy: localPolicy,
+      activationRequestId: "g1", workspaceId, sessionId,
+      providerDescriptor: localProvider, effectivePolicy: localPolicy,
     });
     expect(g1.executionWorldGenerationId).not.toBe(g0.executionWorldGenerationId);
     await service.observeActivation({ executionWorldGenerationId: g1.executionWorldGenerationId, evidence: readiness("same-bytes") });
@@ -125,10 +126,8 @@ describeLocked("A5 execution-world generation lifecycle", () => {
     locked = await openStore(dir);
     const service = new ExecutionWorldServiceV1(locked.store, new CanonicalAdmissionQueue(locked.store));
     const world = await service.prepareActivation({
-      activationRequestId: "close-me",
-      workspaceId: String(locked.store.workspaceId),
-      providerDescriptor: localProvider,
-      effectivePolicy: localPolicy,
+      activationRequestId: "close-me", workspaceId: String(locked.store.workspaceId), sessionId,
+      providerDescriptor: localProvider, effectivePolicy: localPolicy,
     });
     await service.observeActivation({ executionWorldGenerationId: world.executionWorldGenerationId, evidence: readiness("close") });
     const retiring = await service.requestRetirement(world.executionWorldGenerationId);
@@ -148,10 +147,8 @@ describeLocked("A5 execution-world generation lifecycle", () => {
     locked = await openStore(dir);
     const first = new ExecutionWorldServiceV1(locked.store, new CanonicalAdmissionQueue(locked.store));
     const world = await first.prepareActivation({
-      activationRequestId: "restart",
-      workspaceId: String(locked.store.workspaceId),
-      providerDescriptor: localProvider,
-      effectivePolicy: localPolicy,
+      activationRequestId: "restart", workspaceId: String(locked.store.workspaceId), sessionId,
+      providerDescriptor: localProvider, effectivePolicy: localPolicy,
     });
     await first.observeActivation({ executionWorldGenerationId: world.executionWorldGenerationId, evidence: readiness("restart") });
     const before = await first.rebuild();
@@ -166,12 +163,8 @@ describeLocked("A5 execution-world generation lifecycle", () => {
     locked = await openStore(dir);
     const service = new ExecutionWorldServiceV1(locked.store, new CanonicalAdmissionQueue(locked.store));
     await expect(service.prepareActivation({
-      activationRequestId: "secret",
-      workspaceId: String(locked.store.workspaceId),
-      providerDescriptor: {
-        ...localProvider,
-        semanticConfig: { apiKey: "must-not-persist" },
-      },
+      activationRequestId: "secret", workspaceId: String(locked.store.workspaceId), sessionId,
+      providerDescriptor: { ...localProvider, semanticConfig: { apiKey: "must-not-persist" } },
       effectivePolicy: localPolicy,
     })).rejects.toThrow("Forbidden execution semantic configuration key");
   });
@@ -180,10 +173,8 @@ describeLocked("A5 execution-world generation lifecycle", () => {
     locked = await openStore(dir);
     const service = new ExecutionWorldServiceV1(locked.store, new CanonicalAdmissionQueue(locked.store));
     const input = {
-      activationRequestId: "stable-request",
-      workspaceId: String(locked.store.workspaceId),
-      providerDescriptor: localProvider,
-      effectivePolicy: localPolicy,
+      activationRequestId: "stable-request", workspaceId: String(locked.store.workspaceId), sessionId,
+      providerDescriptor: localProvider, effectivePolicy: localPolicy,
     };
     await service.prepareActivation(input);
     await expect(service.prepareActivation({
