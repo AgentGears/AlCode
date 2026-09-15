@@ -53,6 +53,7 @@ export function resolveProductExecutionProviderKindV1(
  * must therefore be reconciled/fenced before a successor is activated.
  */
 export async function recoverProductExecutionWorldsAfterHostRestartV1(input: {
+  providerKind?: ProductExecutionProviderKindV1;
   worlds: ExecutionWorldServiceV1;
   root: string;
 }): Promise<void> {
