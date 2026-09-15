@@ -3,9 +3,16 @@ import type {
   ExecutionWorldServiceV1,
 } from "./execution-world.ts";
 
+/**
+ * Host-internal, provider-neutral service lookup on one exact physical world.
+ * Service identifiers are semantic adapter contracts, never Agent-provided
+ * authority. A missing service means the admitted generation cannot satisfy the
+ * requested execution surface and the trusted adapter must fail closed.
+ */
 export interface ExecutionWorldOperationBindingV1 {
   readonly provenance: ExecutionWorldOperationProvenanceV1;
   assertUsable(): Promise<void> | void;
+  getService(serviceId: string): unknown;
 }
 
 export interface ExecutionWorldOperationBindingAuthorityV1 {
