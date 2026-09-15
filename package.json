@@ -26,6 +26,7 @@
     "gate:product-agent": "tsx scripts/gate/gate-product-agent.ts",
     "gate:s02-code-mode": "tsx scripts/gate/gate-s02-code-mode.ts",
     "gate:a2-inference-provenance": "tsx scripts/gate/gate-a2-inference-provenance.ts",
+    "gate:a5-execution-provider": "tsx scripts/gate/gate-a5-execution-provider.ts",
     "pi:verify": "tsx scripts/import-pi.ts verify",
     "pi:import": "tsx scripts/import-pi.ts import",
     "build": "tsc -b",
