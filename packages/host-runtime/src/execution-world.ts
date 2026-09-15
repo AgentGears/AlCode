@@ -1,5 +1,6 @@
 import { digestOf } from "@alcode/context";
 import {
+  asSessionId,
   asWorkspaceId,
   mkEventId,
   uuidv7,
@@ -68,6 +69,7 @@ export interface ExecutionWorldProjectionV1 {
   providerDescriptor: ExecutionProviderDescriptorV1;
   effectivePolicy: ExecutionContainmentPolicyDescriptorV1;
   activationRequestId: string;
+  lifecycleSessionId: string;
   state: ExecutionWorldLifecycleStateV1;
   isCurrent: boolean;
   preparedAt: string;
@@ -81,13 +83,14 @@ export interface ExecutionWorldProjectionV1 {
 }
 
 export interface ExecutionWorldProjectionSetV1 {
-  currentGenerationId?: string;
+  currentGenerationId: string | undefined;
   generations: Map<string, ExecutionWorldProjectionV1>;
 }
 
 export interface PrepareExecutionWorldActivationInputV1 {
   activationRequestId: string;
   workspaceId: string;
+  sessionId: string;
   providerDescriptor: ExecutionProviderDescriptorV1;
   effectivePolicy: ExecutionContainmentPolicyDescriptorV1;
 }
@@ -178,10 +181,6 @@ function effectivePolicyDigest(policy: ExecutionContainmentPolicyDescriptorV1): 
   return digestOf(policy);
 }
 
-function toOperationProvenance(identity: ExecutionWorldIdentityV1): ExecutionWorldOperationProvenanceV1 {
-  return structuredClone(identity);
-}
-
 async function replayAll(store: WorkspaceEventStore): Promise<PersistedDomainEvent<string, unknown>[]> {
   const events: PersistedDomainEvent<string, unknown>[] = [];
   for await (const event of store.replay()) events.push(event);
@@ -214,6 +213,7 @@ export function projectExecutionWorldsV1(
         providerDescriptor: structuredClone(payload.providerDescriptor) as ExecutionProviderDescriptorV1,
         effectivePolicy: structuredClone(payload.effectivePolicy) as ExecutionContainmentPolicyDescriptorV1,
         activationRequestId: String(payload.activationRequestId ?? ""),
+        lifecycleSessionId: String(event.sessionId),
         state: "prepared",
         isCurrent: false,
         preparedAt: event.occurredAt,
@@ -233,14 +233,12 @@ export function projectExecutionWorldsV1(
       currentGenerationId = generationId;
       continue;
     }
-
     if (event.type === "execution.world.retirement.requested") {
       generation.state = "retiring";
       generation.retirementRequestedAt ??= event.occurredAt;
       if (currentGenerationId === generationId) currentGenerationId = undefined;
       continue;
     }
-
     if (event.type === "execution.world.closure.observed") {
       generation.state = "closed";
       generation.closedAt = event.occurredAt;
@@ -248,7 +246,6 @@ export function projectExecutionWorldsV1(
       if (currentGenerationId === generationId) currentGenerationId = undefined;
       continue;
     }
-
     if (event.type === "execution.world.lost") {
       generation.state = "lost_or_unknown";
       generation.lostAt ??= event.occurredAt;
@@ -271,13 +268,7 @@ export class ExecutionWorldControlError extends Error {
   }
 }
 
-/**
- * A5 Host authority for execution-world identity and lifecycle evidence.
- *
- * The service deliberately exposes no Agent-facing execution token. Historical
- * projections are provenance only. Capability/Program/Operation authority stays
- * in the existing Host subsystems.
- */
+/** Host-owned A5 execution-world identity/lifecycle authority. */
 export class ExecutionWorldServiceV1 {
   constructor(
     private readonly store: WorkspaceEventStore,
@@ -285,8 +276,8 @@ export class ExecutionWorldServiceV1 {
   ) {}
 
   async prepareActivation(input: PrepareExecutionWorldActivationInputV1): Promise<ExecutionWorldIdentityV1> {
-    if (!boundedNonEmpty(input.activationRequestId)) {
-      throw new ExecutionWorldControlError("Activation request identity is required");
+    if (!boundedNonEmpty(input.activationRequestId) || !boundedNonEmpty(input.sessionId)) {
+      throw new ExecutionWorldControlError("Activation request and lifecycle Session identities are required");
     }
     if (input.workspaceId !== String(this.store.workspaceId)) {
       throw new ExecutionWorldControlError("Execution-world Workspace does not match the canonical store");
@@ -304,6 +295,7 @@ export class ExecutionWorldServiceV1 {
         const payload = record(existing.payload);
         const identity = structuredClone(payload.identity) as ExecutionWorldIdentityV1;
         if (identity.workspaceId !== input.workspaceId
+            || String(existing.sessionId) !== input.sessionId
             || identity.providerKind !== input.providerDescriptor.providerKind
             || identity.providerDescriptorDigest !== descriptorDigest
             || identity.effectivePolicyDigest !== policyDigest) {
@@ -324,6 +316,7 @@ export class ExecutionWorldServiceV1 {
         eventId: mkEventId(),
         idempotencyKey,
         workspaceId: asWorkspaceId(this.store.workspaceId),
+        sessionId: asSessionId(input.sessionId),
         occurredAt: new Date().toISOString(),
         type: "execution.world.activation.prepared",
         payload: {
@@ -350,32 +343,31 @@ export class ExecutionWorldServiceV1 {
     validateNativeId(input.evidence.providerNativeInstanceId);
     const idempotencyKey = `execution-world:activation:observed:${input.executionWorldGenerationId}`;
 
-    return this.admission.enqueue(async () => {
+    await this.admission.enqueue(async () => {
       const events = await replayAll(this.store);
-      const existing = events.find((event) => event.idempotencyKey === idempotencyKey);
-      if (existing === undefined) {
-        const projection = projectExecutionWorldsV1(events).generations.get(input.executionWorldGenerationId);
-        if (projection === undefined || projection.state !== "prepared") {
-          throw new ExecutionWorldControlError("Execution-world activation can only be observed from prepared state");
-        }
-        input.guard?.assertCurrent();
-        const draft: EventDraft<string, unknown> = {
-          eventId: mkEventId(),
-          idempotencyKey,
-          workspaceId: asWorkspaceId(this.store.workspaceId),
-          occurredAt: new Date().toISOString(),
-          type: "execution.world.activation.observed",
-          payload: {
-            executionWorldGenerationId: input.executionWorldGenerationId,
-            evidence: structuredClone(input.evidence),
-          },
-          payloadSchemaVersion: 1,
-          producer: { kind: "runtime", component: "host-execution-world" },
-        };
-        await this.store.append([draft]);
+      if (events.some((event) => event.idempotencyKey === idempotencyKey)) return;
+      const generation = projectExecutionWorldsV1(events).generations.get(input.executionWorldGenerationId);
+      if (generation === undefined || generation.state !== "prepared") {
+        throw new ExecutionWorldControlError("Execution-world activation can only be observed from prepared state");
       }
-      return this.requireGeneration(input.executionWorldGenerationId);
+      input.guard?.assertCurrent();
+      const draft: EventDraft<string, unknown> = {
+        eventId: mkEventId(),
+        idempotencyKey,
+        workspaceId: asWorkspaceId(this.store.workspaceId),
+        sessionId: asSessionId(generation.lifecycleSessionId),
+        occurredAt: new Date().toISOString(),
+        type: "execution.world.activation.observed",
+        payload: {
+          executionWorldGenerationId: input.executionWorldGenerationId,
+          evidence: structuredClone(input.evidence),
+        },
+        payloadSchemaVersion: 1,
+        producer: { kind: "runtime", component: "host-execution-world" },
+      };
+      await this.store.append([draft]);
     });
+    return this.requireGeneration(input.executionWorldGenerationId);
   }
 
   async requestRetirement(executionWorldGenerationId: string): Promise<ExecutionWorldProjectionV1> {
@@ -388,9 +380,9 @@ export class ExecutionWorldServiceV1 {
         throw new ExecutionWorldControlError("Only an active execution-world generation may be retired");
       }
       const draft: EventDraft<string, unknown> = {
-        eventId: mkEventId(),
-        idempotencyKey,
+        eventId: mkEventId(), idempotencyKey,
         workspaceId: asWorkspaceId(this.store.workspaceId),
+        sessionId: asSessionId(generation.lifecycleSessionId),
         occurredAt: new Date().toISOString(),
         type: "execution.world.retirement.requested",
         payload: { executionWorldGenerationId },
@@ -420,15 +412,12 @@ export class ExecutionWorldServiceV1 {
         throw new ExecutionWorldControlError("Execution-world closure requires retiring or lost/unknown state");
       }
       const draft: EventDraft<string, unknown> = {
-        eventId: mkEventId(),
-        idempotencyKey,
+        eventId: mkEventId(), idempotencyKey,
         workspaceId: asWorkspaceId(this.store.workspaceId),
+        sessionId: asSessionId(generation.lifecycleSessionId),
         occurredAt: new Date().toISOString(),
         type: "execution.world.closure.observed",
-        payload: {
-          executionWorldGenerationId: input.executionWorldGenerationId,
-          evidence: structuredClone(input.evidence),
-        },
+        payload: { executionWorldGenerationId: input.executionWorldGenerationId, evidence: structuredClone(input.evidence) },
         payloadSchemaVersion: 1,
         producer: { kind: "runtime", component: "host-execution-world" },
       };
@@ -448,15 +437,12 @@ export class ExecutionWorldServiceV1 {
         throw new ExecutionWorldControlError("Unknown or already closed execution-world generation");
       }
       const draft: EventDraft<string, unknown> = {
-        eventId: mkEventId(),
-        idempotencyKey,
+        eventId: mkEventId(), idempotencyKey,
         workspaceId: asWorkspaceId(this.store.workspaceId),
+        sessionId: asSessionId(generation.lifecycleSessionId),
         occurredAt: new Date().toISOString(),
         type: "execution.world.lost",
-        payload: {
-          executionWorldGenerationId: input.executionWorldGenerationId,
-          reasonCode: input.reasonCode,
-        },
+        payload: { executionWorldGenerationId: input.executionWorldGenerationId, reasonCode: input.reasonCode },
         payloadSchemaVersion: 1,
         producer: { kind: "runtime", component: "host-execution-world" },
       };
@@ -489,7 +475,6 @@ export class ExecutionWorldServiceV1 {
   }
 
   async currentOperationProvenance(): Promise<ExecutionWorldOperationProvenanceV1> {
-    const current = await this.requireCurrent();
-    return toOperationProvenance(current.identity);
+    return structuredClone((await this.requireCurrent()).identity);
   }
 }
