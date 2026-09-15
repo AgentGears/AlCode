@@ -37,6 +37,7 @@ import {
 } from "./execution-world-observation.ts";
 import {
   activateLocalExecutionWorldV1,
+  recoverLocalExecutionWorldsAfterHostRestartV1,
   retireLocalExecutionWorldV1,
   type ActiveLocalExecutionWorldV1,
 } from "./local-execution-world-runtime.ts";
@@ -303,6 +304,7 @@ async function main(): Promise<void> {
   let completedSuccessfully = false;
   try {
     await runtime.host.startup();
+    await recoverLocalExecutionWorldsAfterHostRestartV1(executionWorldService);
     const session = await runtime.host.sessions.openOrResume();
     activeExecutionWorld = await activateLocalExecutionWorldV1({
       worlds: executionWorldService,
