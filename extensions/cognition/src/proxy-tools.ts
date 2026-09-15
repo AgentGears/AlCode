@@ -55,6 +55,9 @@ export function createProtocolProxyTool<TAuthority extends ProgramAttemptAuthori
         toolName: options.name,
         args: input,
         ...(context.signal !== undefined ? { signal: context.signal } : {}),
+        ...(context.inferenceEpochId !== undefined ? { inferenceEpochId: context.inferenceEpochId } : {}),
+        ...(context.parentToolCallId !== undefined ? { parentToolCallId: context.parentToolCallId } : {}),
+        ...(context.localSubcallIndex !== undefined ? { localSubcallIndex: context.localSubcallIndex } : {}),
         ...(options.expectedCapabilityRevision !== undefined
           ? { expectedCapabilityRevision: options.expectedCapabilityRevision }
           : {}),

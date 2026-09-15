@@ -14,6 +14,11 @@ export interface CognitionCapabilityRequest {
   /** Agent-local cancellation only; never serialized as Host authority. */
   signal?: AbortSignal;
   programAttemptAuthority?: ProgramAttemptAuthorityV1;
+  /** A2 causal provenance only; never accepted as capability authority. */
+  inferenceEpochId?: string;
+  /** Explicit S-02 lineage; never inferred durably from toolCallId spelling. */
+  parentToolCallId?: string;
+  localSubcallIndex?: number;
 }
 
 /** Transitional semantic request used only by V2-aware Agent protocol clients. */
@@ -30,6 +35,7 @@ export interface CognitionAssistantRecord {
   errorMessage?: string;
   timestamp: number;
   durable: boolean;
+  inferenceEpochId?: string;
 }
 
 export interface CognitionToolResultRecord {

@@ -3,6 +3,10 @@ import type {
   CapabilityRequest,
   ContextUpdate,
   HostToAgentMessage,
+  InferencePrepared,
+  InferencePreparedAck,
+  InferenceTerminal,
+  InferenceTerminalAck,
   ProgramAttemptAuthorityV1,
   ProgramAttemptProjectionV1,
   ProgramProgressResult,
@@ -47,13 +51,17 @@ export interface ProgramProgressResultV2 extends Omit<ProgramProgressResult, "ve
 export type AgentToHostMessageV2Aware = AgentToHostMessage
   | CapabilityRequestV2
   | ProgramProgressProposalV2
-  | ProgramRevisionProposalWireV1;
+  | ProgramRevisionProposalWireV1
+  | InferencePrepared
+  | InferenceTerminal;
 export type HostToAgentMessageV2Aware = HostToAgentMessage
   | ContextUpdateV2
   | ProgramAttemptExecuteV2
   | ProgramProgressResultV2
   | ProgramRevisionPlanWireV1
-  | ProgramRevisionProposalResultWireV1;
+  | ProgramRevisionProposalResultWireV1
+  | InferencePreparedAck
+  | InferenceTerminalAck;
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -89,11 +97,53 @@ function isProgramProgressResultV2(value: unknown): value is ProgramProgressResu
   return true;
 }
 
+function isInferencePrepared(value: unknown): value is InferencePrepared {
+  return isObject(value)
+    && value.type === "inference.prepared"
+    && typeof value.requestId === "string" && value.requestId.length > 0
+    && typeof value.sessionId === "string" && value.sessionId.length > 0
+    && typeof value.inferenceEpochId === "string" && value.inferenceEpochId.length > 0;
+}
+
+function isInferenceTerminal(value: unknown): value is InferenceTerminal {
+  if (!isObject(value)
+      || value.type !== "inference.terminal"
+      || typeof value.requestId !== "string" || value.requestId.length === 0
+      || typeof value.sessionId !== "string" || value.sessionId.length === 0
+      || typeof value.inferenceEpochId !== "string" || value.inferenceEpochId.length === 0
+      || !["completed", "provider_error", "aborted"].includes(String(value.outcome))) return false;
+  if (value.stopReason !== undefined && !["stop", "length", "tool_use", "error", "aborted"].includes(String(value.stopReason))) return false;
+  if (value.providerObservation !== undefined) {
+    if (!isObject(value.providerObservation)) return false;
+    if (value.providerObservation.requestId !== undefined && typeof value.providerObservation.requestId !== "string") return false;
+    if (value.providerObservation.responseId !== undefined && typeof value.providerObservation.responseId !== "string") return false;
+  }
+  return true;
+}
+
+function isInferencePreparedAck(value: unknown): value is InferencePreparedAck {
+  return isObject(value)
+    && value.type === "inference.prepared.ack"
+    && typeof value.requestId === "string" && value.requestId.length > 0
+    && typeof value.sessionId === "string" && value.sessionId.length > 0
+    && typeof value.inferenceEpochId === "string" && value.inferenceEpochId.length > 0;
+}
+
+function isInferenceTerminalAck(value: unknown): value is InferenceTerminalAck {
+  return isObject(value)
+    && value.type === "inference.terminal.ack"
+    && typeof value.requestId === "string" && value.requestId.length > 0
+    && typeof value.sessionId === "string" && value.sessionId.length > 0
+    && typeof value.inferenceEpochId === "string" && value.inferenceEpochId.length > 0;
+}
+
 export function isAgentToHostMessageV2Aware(value: unknown): value is AgentToHostMessageV2Aware {
   return isAgentToHostMessage(value)
     || isCapabilityRequestV2(value)
     || isProgramProgressProposalV2(value)
-    || isProgramRevisionProposalWireV1(value);
+    || isProgramRevisionProposalWireV1(value)
+    || isInferencePrepared(value)
+    || isInferenceTerminal(value);
 }
 
 export function isHostToAgentMessageV2Aware(value: unknown): value is HostToAgentMessageV2Aware {
@@ -102,7 +152,9 @@ export function isHostToAgentMessageV2Aware(value: unknown): value is HostToAgen
     || isProgramAttemptExecuteV2(value)
     || isProgramProgressResultV2(value)
     || isProgramRevisionPlanWireV1(value)
-    || isProgramRevisionProposalResultWireV1(value);
+    || isProgramRevisionProposalResultWireV1(value)
+    || isInferencePreparedAck(value)
+    || isInferenceTerminalAck(value);
 }
 
 export function assertAgentToHostMessageV2Aware(value: unknown): asserts value is AgentToHostMessageV2Aware {

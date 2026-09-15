@@ -152,6 +152,12 @@ export interface CapabilityBrokerRequest {
   args: unknown;
   expectedCapabilityRevision?: string;
   program?: ProgramCapabilityOperationContextV1;
+  /** Host-validated inference causality only; never capability or Program authority. */
+  inferenceEpochId?: string;
+  /** Explicit S-02 outer tool-call parent for a local Code Mode sub-dispatch. */
+  parentToolCallId?: string;
+  /** Deterministic invocation ordinal paired with parentToolCallId. */
+  localSubcallIndex?: number;
   /** Host-only stable Program verification provenance; never Agent-authored. */
   programVerificationInvocation?: HostProgramVerificationInvocationV1;
   /** Host-only execution-completion policy selected by the admitted verifier spec. */
@@ -338,6 +344,25 @@ function providerBindingKey(providerId: string, revision: string): string {
   return `${providerId}\u0000${revision}`;
 }
 
+function inferenceProvenanceError(request: CapabilityBrokerRequest): string | undefined {
+  if (!request.toolCallId) return "Capability request requires a non-empty toolCallId";
+  if (request.inferenceEpochId !== undefined && !request.inferenceEpochId) {
+    return "Inference provenance inferenceEpochId must be non-empty";
+  }
+  const hasParent = request.parentToolCallId !== undefined;
+  const hasIndex = request.localSubcallIndex !== undefined;
+  if (hasParent !== hasIndex) {
+    return "Code Mode inference provenance requires parentToolCallId and localSubcallIndex together";
+  }
+  if (hasParent && !request.parentToolCallId) {
+    return "Code Mode inference provenance parentToolCallId must be non-empty";
+  }
+  if (hasIndex && (!Number.isSafeInteger(request.localSubcallIndex) || request.localSubcallIndex! < 0)) {
+    return "Code Mode inference provenance localSubcallIndex must be a non-negative safe integer";
+  }
+  return undefined;
+}
+
 export class CapabilityBroker {
   private readonly byName = new Map<string, RegisteredCapability>();
   private readonly dynamicProviders = new Map<string, DynamicProviderRegistration>();
@@ -460,6 +485,15 @@ export class CapabilityBroker {
   }
 
   async execute(request: CapabilityBrokerRequest): Promise<CapabilityBrokerResult> {
+    const provenanceError = inferenceProvenanceError(request);
+    if (provenanceError !== undefined) {
+      return this.finish(request, {
+        outcome: "denied",
+        errorCode: "inference_provenance_invalid",
+        error: provenanceError,
+      });
+    }
+
     const registration = this.byName.get(request.toolName);
     if (!registration) {
       return this.finish(request, request.expectedCapabilityRevision !== undefined
@@ -591,9 +625,13 @@ export class CapabilityBroker {
         occurredAt: new Date().toISOString(), type: "operation.requested",
         payload: {
           operationId: operationId as string,
+          toolCallId: request.toolCallId,
           toolName: request.toolName,
           args: frozenArgs,
           isReadOnly,
+          ...(request.inferenceEpochId !== undefined ? { inferenceEpochId: request.inferenceEpochId } : {}),
+          ...(request.parentToolCallId !== undefined ? { parentToolCallId: request.parentToolCallId } : {}),
+          ...(request.localSubcallIndex !== undefined ? { localSubcallIndex: request.localSubcallIndex } : {}),
           ...(persistedWorkspaceAccessClass !== undefined ? {
             workspaceAccessClass: persistedWorkspaceAccessClass,
             workspaceAccessClassifier: { id: "host-capability-workspace-access-v1", version: 1 },

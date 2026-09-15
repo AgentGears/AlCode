@@ -11,13 +11,20 @@
 
 import type {
   ModelProvider,
+  ModelProviderDescriptor,
+  ModelProviderObservation,
   ModelRequest,
   ModelStream,
   ModelEvent,
   Message,
   ToolDefinition,
 } from "@alcode/agent-core";
-import { ProviderError, type ProviderConfig } from "./index.ts";
+import {
+  ProviderError,
+  createProviderDescriptor,
+  providerEndpointDigest,
+  type ProviderConfig,
+} from "./index.ts";
 
 // ---------------------------------------------------------------------------
 // Anthropic request types (owned, not imported)
@@ -212,10 +219,23 @@ interface PendingToolCall {
  * calls, done/stop-reason), and handles errors via ProviderError.
  */
 export class AnthropicProvider implements ModelProvider {
+  readonly descriptor: ModelProviderDescriptor;
   private readonly config: ProviderConfig;
 
   constructor(config: ProviderConfig) {
     this.config = config;
+    const baseURL = config.baseURL ?? "https://api.anthropic.com";
+    this.descriptor = createProviderDescriptor({
+      provider: "anthropic",
+      model: config.model,
+      adapter: "alcode-anthropic-messages",
+      adapterVersion: 1,
+      semanticConfig: {
+        maxOutputTokens: config.maxTokens ?? 8192,
+        temperature: config.temperature ?? null,
+        endpointDigest: providerEndpointDigest(baseURL),
+      },
+    });
   }
 
   async stream(request: ModelRequest): Promise<ModelStream> {
@@ -279,6 +299,10 @@ export class AnthropicProvider implements ModelProvider {
       throw new ProviderError("No response body from Anthropic API", "anthropic");
     }
 
+    const providerObservation: ModelProviderObservation = {};
+    const nativeRequestId = response.headers.get("request-id") ?? response.headers.get("x-request-id");
+    if (nativeRequestId) providerObservation.requestId = nativeRequestId;
+
     // Single-pass SSE parse: collect ModelEvents as we go.
     const events: ModelEvent[] = [];
     const pendingTools = new Map<number, PendingToolCall>();
@@ -295,9 +319,15 @@ export class AnthropicProvider implements ModelProvider {
       try { data = JSON.parse(sse.data); } catch { continue; }
 
       switch (sse.event) {
-        case "message_start":
+        case "message_start": {
           sawMessageStart = true;
+          const message = data.message;
+          if (typeof message === "object" && message !== null && !Array.isArray(message)) {
+            const id = (message as Record<string, unknown>).id;
+            if (typeof id === "string" && id.length > 0) providerObservation.responseId = id;
+          }
           break;
+        }
 
         case "content_block_start": {
           const idx = data.index as number;
@@ -358,7 +388,10 @@ export class AnthropicProvider implements ModelProvider {
     }
 
     events.push({ type: "done", stopReason });
-    return streamFromEvents(events);
+    return streamFromEvents(
+      events,
+      Object.keys(providerObservation).length > 0 ? providerObservation : undefined,
+    );
   }
 }
 
@@ -366,8 +399,9 @@ export class AnthropicProvider implements ModelProvider {
 // Stream helper
 // ---------------------------------------------------------------------------
 
-function streamFromEvents(events: ModelEvent[]): ModelStream {
+function streamFromEvents(events: ModelEvent[], providerObservation?: ModelProviderObservation): ModelStream {
   return {
+    ...(providerObservation !== undefined ? { providerObservation: structuredClone(providerObservation) } : {}),
     [Symbol.asyncIterator]() {
       let i = 0;
       return {

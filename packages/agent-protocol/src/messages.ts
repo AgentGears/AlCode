@@ -8,6 +8,7 @@ export const AGENT_PROTOCOL_VERSION = 1 as const;
 export const DURABLE_TRANSCRIPT_CAPABILITY = "durable_transcript_v1" as const;
 export const GRAPH_CONTEXT_CAPABILITY = "graph_context_v1" as const;
 export const DYNAMIC_CAPABILITY_BINDING_CAPABILITY = "dynamic_capability_binding_v1" as const;
+export const INFERENCE_PROVENANCE_CAPABILITY = "inference_provenance_v1" as const;
 export const PROGRAM_STATE_CAPABILITY = "program_state_v1" as const;
 export const PROGRAM_EXECUTION_CAPABILITY = "program_execution_v1" as const;
 export const PROGRAM_EXECUTION_MESSAGE_VERSION = 1 as const;
@@ -18,6 +19,9 @@ export const PROGRAM_PROGRESS_MAX_EVIDENCE = 32;
 export const PROGRAM_PROGRESS_MAX_ADVISORIES = 16;
 export const PROGRAM_PROGRESS_ADVISORY_REASON_MAX_BYTES = 4 * 1024;
 export const PROGRAM_RETRY_FAILURE_REASON_MAX_BYTES = 4 * 1024;
+export const INFERENCE_PROVIDER_DESCRIPTOR_MAX_BYTES = 16 * 1024;
+export const INFERENCE_PROVIDER_ID_MAX_BYTES = 512;
+export const INFERENCE_PROVIDER_OBSERVATION_ID_MAX_BYTES = 1024;
 export const VERBATIM_COMPILER_VERSION = "verbatim-v1" as const;
 
 export type ProtocolRequestId = string;
@@ -52,6 +56,25 @@ export interface InferenceToolCatalog {
   digest: string;
   tools: AuthorizedToolDescriptor[];
 }
+
+export type InferenceProviderSemanticConfigValueV1 = string | number | boolean | null;
+
+/** Agent/provider-adapter provenance; secret-free and never remote-provider attestation. */
+export interface InferenceProviderDescriptorV1 {
+  provider: string;
+  model: string;
+  adapter: string;
+  adapterVersion: number;
+  semanticConfig: Record<string, InferenceProviderSemanticConfigValueV1>;
+  semanticConfigDigest: string;
+}
+
+export interface InferenceProviderObservationV1 {
+  requestId?: string;
+  responseId?: string;
+}
+
+export type InferenceTerminalOutcomeV1 = "completed" | "provider_error" | "aborted";
 
 /** Host-owned exact current ProgramAttempt authority carried inside a bounded projection. */
 export interface ProgramAttemptAuthorityV1 {
@@ -228,15 +251,17 @@ export interface ProgramProgressProposal {
 }
 
 export interface AgentHello { type: "agent.hello"; protocolVersion: typeof AGENT_PROTOCOL_VERSION; generationId: AgentGenerationId; capabilities: string[]; }
-export interface AssistantMessageProduced { type: "assistant.message"; requestId: ProtocolRequestId; sessionId: string; text: string; content?: TranscriptAssistantMessage["content"]; stopReason?: TranscriptAssistantMessage["stopReason"]; errorMessage?: string; timestamp?: number; }
+export interface AssistantMessageProduced { type: "assistant.message"; requestId: ProtocolRequestId; sessionId: string; text: string; content?: TranscriptAssistantMessage["content"]; stopReason?: TranscriptAssistantMessage["stopReason"]; errorMessage?: string; timestamp?: number; inferenceEpochId?: string; }
 export interface ToolResultProduced { type: "tool.result"; requestId: ProtocolRequestId; sessionId: string; toolCallId: string; toolName: string; content: TranscriptToolResultMessage["content"]; isError: boolean; timestamp: number; operationId?: string; }
-export interface CapabilityRequest { type: "capability.request"; requestId: ProtocolRequestId; sessionId: string; toolCallId: string; toolName: string; args: unknown; expectedCapabilityRevision?: string; programAttemptAuthority?: ProgramAttemptAuthorityV1; }
-export interface ContextRefreshRequest { type: "context.refresh.request"; requestId: ProtocolRequestId; sessionId: string; }
+export interface CapabilityRequest { type: "capability.request"; requestId: ProtocolRequestId; sessionId: string; toolCallId: string; toolName: string; args: unknown; expectedCapabilityRevision?: string; programAttemptAuthority?: ProgramAttemptAuthorityV1; inferenceEpochId?: string; parentToolCallId?: string; localSubcallIndex?: number; }
+export interface ContextRefreshRequest { type: "context.refresh.request"; requestId: ProtocolRequestId; sessionId: string; providerDescriptor?: InferenceProviderDescriptorV1; }
+export interface InferencePrepared { type: "inference.prepared"; requestId: ProtocolRequestId; sessionId: string; inferenceEpochId: string; }
+export interface InferenceTerminal { type: "inference.terminal"; requestId: ProtocolRequestId; sessionId: string; inferenceEpochId: string; outcome: InferenceTerminalOutcomeV1; stopReason?: TranscriptAssistantMessage["stopReason"]; providerObservation?: InferenceProviderObservationV1; }
 export interface CriterionEvidence { type: "criterion.evidence"; requestId: ProtocolRequestId; sessionId: string; evidenceType: string; data?: unknown; }
 export interface AgentIdle { type: "agent.idle"; requestId: ProtocolRequestId; sessionId: string; reason: "stop" | "max_steps" | "cancelled"; }
 export interface AgentError { type: "agent.error"; requestId: ProtocolRequestId; sessionId?: string; message: string; }
 
-export type AgentToHostMessage = AgentHello | AssistantMessageProduced | ToolResultProduced | CapabilityRequest | ProgramPlanningReadRequest | ProgramProposalSubmitted | ProgramProgressProposal | ContextRefreshRequest | CriterionEvidence | AgentIdle | AgentError;
+export type AgentToHostMessage = AgentHello | AssistantMessageProduced | ToolResultProduced | CapabilityRequest | ProgramPlanningReadRequest | ProgramProposalSubmitted | ProgramProgressProposal | ContextRefreshRequest | InferencePrepared | InferenceTerminal | CriterionEvidence | AgentIdle | AgentError;
 
 export interface ProgramPlanningBegin {
   type: "program.planning.begin";
@@ -320,16 +345,20 @@ export interface ContextUpdate {
   sourceEventSequence: number;
   systemPrompt: string;
   messages: TranscriptMessage[];
+  /** Host-minted causal identity present only when A2 provenance was negotiated. */
+  inferenceEpochId?: string;
   /** Present only when the Host and Agent negotiated dynamic capability binding. */
   toolCatalog?: InferenceToolCatalog;
   /** Present only when the Agent negotiated `program_state_v1` and has a current Attempt. */
   programAttempt?: ProgramAttemptProjectionV1;
 }
 
+export interface InferencePreparedAck { type: "inference.prepared.ack"; requestId: ProtocolRequestId; sessionId: string; inferenceEpochId: string; }
+export interface InferenceTerminalAck { type: "inference.terminal.ack"; requestId: ProtocolRequestId; sessionId: string; inferenceEpochId: string; }
 export interface TranscriptAdmitted { type: "transcript.admitted"; requestId: ProtocolRequestId; sessionId: string; eventId: string; sequence: number; }
 export interface CapabilityResult { type: "capability.result"; requestId: ProtocolRequestId; sessionId: string; toolCallId: string; toolName: string; operationId?: string; outcome: "succeeded" | "failed" | "cancelled" | "timed_out" | "denied" | "stale"; result?: unknown; error?: string; errorCode?: string; }
 export interface Cancel { type: "cancel"; requestId: ProtocolRequestId; sessionId: string; reason?: string; }
 export interface Shutdown { type: "shutdown"; requestId: ProtocolRequestId; sessionId?: string; reason: "completed" | "cancelled" | "host_shutdown" | "replaced"; }
 
-export type HostToAgentMessage = HostHello | SessionOpen | SessionResume | InputAdmitted | ProgramPlanningBegin | ProgramPlanningReadResult | ProgramProposalResult | ProgramProgressResult | ProgramAttemptExecute | ContextProvide | ContextUpdate | TranscriptAdmitted | CapabilityResult | Cancel | Shutdown;
+export type HostToAgentMessage = HostHello | SessionOpen | SessionResume | InputAdmitted | ProgramPlanningBegin | ProgramPlanningReadResult | ProgramProposalResult | ProgramProgressResult | ProgramAttemptExecute | ContextProvide | ContextUpdate | InferencePreparedAck | InferenceTerminalAck | TranscriptAdmitted | CapabilityResult | Cancel | Shutdown;
 export type AgentProtocolMessage = AgentToHostMessage | HostToAgentMessage;

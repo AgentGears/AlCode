@@ -10,6 +10,9 @@ import {
   type ContextUpdate,
   type ContextUpdateV2,
   type HostToAgentMessageV2Aware,
+  type InferenceProviderDescriptorV1,
+  type InferenceProviderObservationV1,
+  type InferenceTerminalOutcomeV1,
   type ProgramAttemptAuthorityAny,
   type ProgramCreationProposalWireV1,
   type ProgramPlanningReadResult,
@@ -51,6 +54,14 @@ export interface ProgramProgressRequestV2Aware {
   requestAwaitingVerification: boolean;
 }
 
+export interface InferenceTerminalClientRecordV2Aware {
+  sessionId: string;
+  inferenceEpochId: string;
+  outcome: InferenceTerminalOutcomeV1;
+  stopReason?: "stop" | "length" | "tool_use" | "error" | "aborted";
+  providerObservation?: InferenceProviderObservationV1;
+}
+
 export type ContextUpdateAny = ContextUpdate | ContextUpdateV2;
 export type ProgramProgressResultAny = ProgramProgressResult | ProgramProgressResultV2;
 export type HostMessageHandlerV2Aware = (message: HostToAgentMessageV2Aware) => void | Promise<void>;
@@ -58,7 +69,13 @@ export type HostMessageHandlerV2Aware = (message: HostToAgentMessageV2Aware) => 
 export interface AgentProtocolClientV2 extends CognitionHostClientV2Aware {
   announceHello(generationId: string, capabilities: readonly string[]): Promise<void>;
   reportError(message: string, sessionId?: string): Promise<void>;
-  requestContextUpdate(sessionId: string, signal: AbortSignal): Promise<ContextUpdateAny>;
+  requestContextUpdate(
+    sessionId: string,
+    providerDescriptorOrSignal: InferenceProviderDescriptorV1 | AbortSignal,
+    signal?: AbortSignal,
+  ): Promise<ContextUpdateAny>;
+  prepareInference(sessionId: string, inferenceEpochId: string, signal?: AbortSignal): Promise<void>;
+  reportInferenceTerminal(record: InferenceTerminalClientRecordV2Aware): Promise<void>;
   requestProgramPlanningRead(request: ProgramPlanningReadClientRequestV2Aware): Promise<ProgramPlanningReadResult>;
   submitProgramProposal(request: ProgramProposalRequestV2Aware): Promise<ProgramProposalResult>;
   submitProgramProgress(request: ProgramProgressRequestV2Aware): Promise<ProgramProgressResultAny>;
@@ -121,15 +138,66 @@ class AgentProtocolBridgeV2 implements AgentProtocolClientV2 {
     });
   }
 
-  requestContextUpdate(sessionId: string, signal: AbortSignal): Promise<ContextUpdateAny> {
+  requestContextUpdate(
+    sessionId: string,
+    providerDescriptorOrSignal: InferenceProviderDescriptorV1 | AbortSignal,
+    maybeSignal?: AbortSignal,
+  ): Promise<ContextUpdateAny> {
+    const providerDescriptor = providerDescriptorOrSignal instanceof AbortSignal
+      ? undefined
+      : providerDescriptorOrSignal;
+    const signal = providerDescriptorOrSignal instanceof AbortSignal
+      ? providerDescriptorOrSignal
+      : maybeSignal;
+    if (signal === undefined) return Promise.reject(new Error("Context refresh requires an AbortSignal"));
     const requestId = randomUUID();
     return this.request(
       requestId,
-      { type: "context.refresh.request", requestId, sessionId },
+      {
+        type: "context.refresh.request",
+        requestId,
+        sessionId,
+        ...(providerDescriptor !== undefined ? { providerDescriptor: structuredClone(providerDescriptor) } : {}),
+      },
       (message): message is ContextUpdateAny => message.type === "context.update"
         && message.requestId === requestId
         && message.sessionId === sessionId,
       { signal, timeoutMs: 10_000, timeoutMessage: "Context refresh timed out" },
+    );
+  }
+
+  async prepareInference(sessionId: string, inferenceEpochId: string, signal?: AbortSignal): Promise<void> {
+    const requestId = randomUUID();
+    await this.request(
+      requestId,
+      { type: "inference.prepared", requestId, sessionId, inferenceEpochId },
+      (message) => message.type === "inference.prepared.ack"
+        && message.requestId === requestId
+        && message.sessionId === sessionId
+        && message.inferenceEpochId === inferenceEpochId,
+      signal !== undefined ? { signal } : {},
+    );
+  }
+
+  async reportInferenceTerminal(record: InferenceTerminalClientRecordV2Aware): Promise<void> {
+    const requestId = randomUUID();
+    await this.request(
+      requestId,
+      {
+        type: "inference.terminal",
+        requestId,
+        sessionId: record.sessionId,
+        inferenceEpochId: record.inferenceEpochId,
+        outcome: record.outcome,
+        ...(record.stopReason !== undefined ? { stopReason: record.stopReason } : {}),
+        ...(record.providerObservation !== undefined
+          ? { providerObservation: structuredClone(record.providerObservation) }
+          : {}),
+      },
+      (message) => message.type === "inference.terminal.ack"
+        && message.requestId === requestId
+        && message.sessionId === record.sessionId
+        && message.inferenceEpochId === record.inferenceEpochId,
     );
   }
 
@@ -218,19 +286,29 @@ class AgentProtocolBridgeV2 implements AgentProtocolClientV2 {
         ...(request.programAttemptAuthority !== undefined
           ? { programAttemptAuthority: structuredClone(request.programAttemptAuthority) }
           : {}),
+        ...(request.inferenceEpochId !== undefined ? { inferenceEpochId: request.inferenceEpochId } : {}),
+        ...(request.parentToolCallId !== undefined ? { parentToolCallId: request.parentToolCallId } : {}),
+        ...(request.localSubcallIndex !== undefined ? { localSubcallIndex: request.localSubcallIndex } : {}),
       } as AgentToHostMessageV2Aware,
       (message): message is CapabilityResult => message.type === "capability.result"
         && message.requestId === requestId
         && message.sessionId === request.sessionId
         && message.toolCallId === request.toolCallId
         && message.toolName === request.toolName,
+      request.signal !== undefined ? { signal: request.signal } : {},
     );
   }
 
   async recordAssistant(record: CognitionAssistantRecord): Promise<void> {
     const requestId = randomUUID();
     if (!record.durable) {
-      await this.send({ type: "assistant.message", requestId, sessionId: record.sessionId, text: record.text });
+      await this.send({
+        type: "assistant.message",
+        requestId,
+        sessionId: record.sessionId,
+        text: record.text,
+        ...(record.inferenceEpochId !== undefined ? { inferenceEpochId: record.inferenceEpochId } : {}),
+      });
       return;
     }
     await this.request<TranscriptAdmitted>(
@@ -244,6 +322,7 @@ class AgentProtocolBridgeV2 implements AgentProtocolClientV2 {
         stopReason: record.stopReason,
         ...(record.errorMessage !== undefined ? { errorMessage: record.errorMessage } : {}),
         timestamp: record.timestamp,
+        ...(record.inferenceEpochId !== undefined ? { inferenceEpochId: record.inferenceEpochId } : {}),
       },
       (message): message is TranscriptAdmitted => message.type === "transcript.admitted"
         && message.requestId === requestId
@@ -305,7 +384,7 @@ class AgentProtocolBridgeV2 implements AgentProtocolClientV2 {
   private request<TResponse extends HostToAgentMessageV2Aware>(
     requestId: string,
     outgoing: AgentToHostMessageV2Aware,
-    matches: (message: HostToAgentMessageV2Aware) => message is TResponse,
+    matches: (message: HostToAgentMessageV2Aware) => boolean,
     options: RequestOptions = {},
   ): Promise<TResponse> {
     if (this.closed) return Promise.reject(new AgentProtocolBridgeV2ClosedError());
@@ -380,6 +459,8 @@ function createSemanticClientFacadeV2(bridge: AgentProtocolBridgeV2): AgentProto
     announceHello: bridge.announceHello.bind(bridge),
     reportError: bridge.reportError.bind(bridge),
     requestContextUpdate: bridge.requestContextUpdate.bind(bridge),
+    prepareInference: bridge.prepareInference.bind(bridge),
+    reportInferenceTerminal: bridge.reportInferenceTerminal.bind(bridge),
     requestProgramPlanningRead: bridge.requestProgramPlanningRead.bind(bridge),
     submitProgramProposal: bridge.submitProgramProposal.bind(bridge),
     submitProgramProgress: bridge.submitProgramProgress.bind(bridge),
