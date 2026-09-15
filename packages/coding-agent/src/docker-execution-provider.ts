@@ -1,8 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { digestOf } from "@alcode/context";
-import type {
-  ExecutionWorldOperationBindingV1,
-} from "@alcode/host-runtime";
+import type { ExecutionWorldOperationBindingV1 } from "@alcode/host-runtime";
 import type {
   ExecutionContainmentPolicyDescriptorV1,
   ExecutionProviderDescriptorV1,
@@ -181,7 +179,12 @@ function runProcess(
 
 async function docker(
   args: readonly string[],
-  options: { timeoutMs?: number; signal?: AbortSignal; maxOutputBytes?: number; allowFailure?: boolean } = {},
+  options: {
+    timeoutMs?: number;
+    signal?: AbortSignal;
+    maxOutputBytes?: number;
+    allowFailure?: boolean;
+  } = {},
 ): Promise<ProcessResult> {
   let result: ProcessResult;
   try {
@@ -231,7 +234,9 @@ function exactProviderSemantics(identity: ExecutionWorldIdentityV1): void {
   if (identity.providerKind !== DOCKER_ISOLATED_EXECUTION_PROVIDER_V1.providerKind
       || identity.providerDescriptorDigest !== digestOf(DOCKER_ISOLATED_EXECUTION_PROVIDER_V1)
       || identity.effectivePolicyDigest !== digestOf(DOCKER_ISOLATED_EXECUTION_POLICY_V1)) {
-    throw new DockerExecutionProviderError("Docker execution-world identity does not match isolated-v1 provider/policy semantics");
+    throw new DockerExecutionProviderError(
+      "Docker execution-world identity does not match isolated-v1 provider/policy semantics",
+    );
   }
 }
 
@@ -256,7 +261,7 @@ function target(value, allowRoot = false) {
   return { absolute, rel: rel === '' ? '.' : rel.split(path.sep).join('/') };
 }
 function glob(pattern) {
-  const source = String(pattern).replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.');
+  const source = String(pattern).replace(/[.+^$(){}|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.');
   return new RegExp('^' + source + '$');
 }
 async function list(value) {
@@ -267,7 +272,12 @@ async function list(value) {
     if (!input.includeHidden && entry.name.startsWith('.')) continue;
     const absolute = path.join(t.absolute, entry.name);
     const stat = await fs.lstat(absolute);
-    out.push({ name: entry.name, path: path.relative(root, absolute).split(path.sep).join('/'), isDirectory: entry.isDirectory(), size: stat.size, modified: stat.mtime.toISOString() });
+    out.push({
+      name: entry.name,
+      path: path.relative(root, absolute).split(path.sep).join('/'),
+      isDirectory: entry.isDirectory(),
+      size: stat.size,
+    });
   }
   out.sort((a,b) => a.isDirectory !== b.isDirectory ? (a.isDirectory ? -1 : 1) : a.name.localeCompare(b.name));
   return out;
@@ -297,12 +307,15 @@ async function digest() {
       const relative = prefix ? prefix + '/' + entry.name : entry.name;
       const stat = await fs.lstat(absolute);
       if (stat.isSymbolicLink()) hash.update('L\0' + relative + '\0' + await fs.readlink(absolute) + '\0');
-      else if (stat.isDirectory()) { hash.update('D\0' + relative + '\0'); await walk(absolute, relative); }
-      else if (stat.isFile()) {
+      else if (stat.isDirectory()) {
+        hash.update('D\0' + relative + '\0');
+        await walk(absolute, relative);
+      } else if (stat.isFile()) {
         const content = await fs.readFile(absolute);
         bytes += content.byteLength;
         if (bytes > maxDigestBytes) throw new Error('workspace observation byte bound exceeded');
-        hash.update('F\0' + relative + '\0' + content.byteLength + '\0'); hash.update(content);
+        hash.update('F\0' + relative + '\0' + content.byteLength + '\0');
+        hash.update(content);
       } else hash.update('O\0' + relative + '\0' + stat.mode + '\0');
     }
   }
@@ -312,29 +325,96 @@ async function digest() {
 (async () => {
   let result;
   if (op === 'read') {
-    const t = target(input.path); const max = Number.isSafeInteger(input.maxBytes) && input.maxBytes > 0 ? input.maxBytes : 1000000;
-    try { const content = await fs.readFile(t.absolute); result = { content: content.subarray(0,max).toString('utf8') + (content.length > max ? '\n[output truncated]' : ''), truncated: content.length > max, byteCount: content.length }; }
-    catch (e) { if (e && e.code === 'ENOENT') result = { content:'', truncated:false, byteCount:0, notFound:true }; else throw e; }
+    const t = target(input.path);
+    const max = Number.isSafeInteger(input.maxBytes) && input.maxBytes > 0 ? input.maxBytes : 1000000;
+    try {
+      const content = await fs.readFile(t.absolute);
+      result = {
+        content: content.subarray(0,max).toString('utf8') + (content.length > max ? '\n[output truncated]' : ''),
+        truncated: content.length > max,
+        byteCount: content.length,
+      };
+    } catch (e) {
+      if (e && e.code === 'ENOENT') result = { content:'', truncated:false, byteCount:0, notFound:true };
+      else throw e;
+    }
   } else if (op === 'write') {
-    const t = target(input.path); if (input.createDirs) await fs.mkdir(path.dirname(t.absolute), { recursive:true }); await fs.writeFile(t.absolute, String(input.content), 'utf8'); result = { bytesWritten: Buffer.byteLength(String(input.content),'utf8') };
+    const t = target(input.path);
+    if (input.createDirs) await fs.mkdir(path.dirname(t.absolute), { recursive:true });
+    await fs.writeFile(t.absolute, String(input.content), 'utf8');
+    result = { bytesWritten: Buffer.byteLength(String(input.content),'utf8') };
   } else if (op === 'edit') {
-    const t = target(input.path); const content = await fs.readFile(t.absolute,'utf8'); const oldValue = String(input.oldString); const newValue = String(input.newString);
-    if (input.replaceAll) { const count = content.split(oldValue).length - 1; if (count > 0) await fs.writeFile(t.absolute, content.split(oldValue).join(newValue),'utf8'); result = { replacements:count }; }
-    else { const index = content.indexOf(oldValue); if (index < 0) result = { replacements:0 }; else { await fs.writeFile(t.absolute, content.slice(0,index)+newValue+content.slice(index+oldValue.length),'utf8'); result = { replacements:1 }; } }
+    const t = target(input.path);
+    const content = await fs.readFile(t.absolute,'utf8');
+    const oldValue = String(input.oldString);
+    const newValue = String(input.newString);
+    if (input.replaceAll) {
+      const count = content.split(oldValue).length - 1;
+      if (count > 0) await fs.writeFile(t.absolute, content.split(oldValue).join(newValue),'utf8');
+      result = { replacements:count };
+    } else {
+      const index = content.indexOf(oldValue);
+      if (index < 0) result = { replacements:0 };
+      else {
+        await fs.writeFile(t.absolute, content.slice(0,index)+newValue+content.slice(index+oldValue.length),'utf8');
+        result = { replacements:1 };
+      }
+    }
   } else if (op === 'list') result = await list(input.path);
   else if (op === 'grep') {
-    const t = target(input.path || '.', true); const maximum = Number.isSafeInteger(input.maxResults) && input.maxResults > 0 ? input.maxResults : 100; const results=[];
-    const flags = input.ignoreCase ? 'i' : ''; const source = input.isRegex ? String(input.pattern) : String(input.pattern).replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); const matcher = new RegExp(source,flags); const include = input.include ? glob(input.include) : null;
-    await walkFiles(t.absolute,false,async (absolute,entry) => { if (results.length >= maximum || (include && !include.test(entry.name))) return; try { const text=await fs.readFile(absolute,'utf8'); const lines=text.split('\n'); for(let i=0;i<lines.length && results.length<maximum;i++){ if(matcher.test(lines[i])) results.push({ path:path.relative(root,absolute).split(path.sep).join('/'), line:i+1, column:1, text:lines[i] }); } } catch {} }); result=results;
+    const t = target(input.path || '.', true);
+    const maximum = Number.isSafeInteger(input.maxResults) && input.maxResults > 0 ? input.maxResults : 100;
+    const results=[];
+    const flags = input.ignoreCase ? 'i' : '';
+    const source = input.isRegex
+      ? String(input.pattern)
+      : String(input.pattern).replace(/[.*+?^$(){}|[\]\\]/g,'\\$&');
+    const matcher = new RegExp(source,flags);
+    const include = input.include ? glob(input.include) : null;
+    await walkFiles(t.absolute,false,async (absolute,entry) => {
+      if (results.length >= maximum || (include && !include.test(entry.name))) return;
+      try {
+        const text=await fs.readFile(absolute,'utf8');
+        const lines=text.split('\n');
+        for(let i=0;i<lines.length && results.length<maximum;i++) {
+          if(matcher.test(lines[i])) results.push({
+            path:path.relative(root,absolute).split(path.sep).join('/'),
+            line:i+1,
+            column:1,
+            text:lines[i],
+          });
+        }
+      } catch {}
+    });
+    result=results;
   } else if (op === 'find') {
-    const t=target(input.path,true); const matcher=glob(input.pattern); const maximum=Number.isSafeInteger(input.maxResults)&&input.maxResults>0?input.maxResults:Number.MAX_SAFE_INTEGER; const results=[];
-    await walkFiles(t.absolute,Boolean(input.includeHidden),async (absolute,entry)=>{ if(results.length<maximum && matcher.test(entry.name)) results.push(path.relative(root,absolute).split(path.sep).join('/')); }); result=results.sort();
+    const t=target(input.path,true);
+    const matcher=glob(input.pattern);
+    const maximum=Number.isSafeInteger(input.maxResults)&&input.maxResults>0?input.maxResults:Number.MAX_SAFE_INTEGER;
+    const results=[];
+    await walkFiles(t.absolute,Boolean(input.includeHidden),async (absolute,entry)=>{
+      if(results.length<maximum && matcher.test(entry.name)) {
+        results.push(path.relative(root,absolute).split(path.sep).join('/'));
+      }
+    });
+    result=results.sort();
   } else if (op === 'pathstate') {
-    const t=target(input.path); try { const stat=await fs.lstat(t.absolute); result=stat.isSymbolicLink()?'symlink':stat.isFile()?'file':stat.isDirectory()?'directory':null; if(result===null) throw new Error('unsupported path state'); } catch(e){ if(e&&e.code==='ENOENT') result='absent'; else throw e; }
+    const t=target(input.path);
+    try {
+      const stat=await fs.lstat(t.absolute);
+      result=stat.isSymbolicLink()?'symlink':stat.isFile()?'file':stat.isDirectory()?'directory':null;
+      if(result===null) throw new Error('unsupported path state');
+    } catch(e) {
+      if(e&&e.code==='ENOENT') result='absent';
+      else throw e;
+    }
   } else if (op === 'digest') result=await digest();
   else throw new Error('unknown bridge operation');
   process.stdout.write(JSON.stringify({ ok:true, result }));
-})().catch(error => { process.stdout.write(JSON.stringify({ ok:false, error: error instanceof Error ? error.message : String(error) })); process.exitCode=1; });
+})().catch(error => {
+  process.stdout.write(JSON.stringify({ ok:false, error: error instanceof Error ? error.message : String(error) }));
+  process.exitCode=1;
+});
 `;
 
 function parseBridge<T>(result: ProcessResult, operation: string): T {
@@ -348,7 +428,7 @@ function parseBridge<T>(result: ProcessResult, operation: string): T {
   }
   if (result.exitCode !== 0 || payload.ok !== true) {
     throw new DockerExecutionProviderError(
-      `isolated-v1 ${operation} failed: ${payload.error ?? result.stderr.trim() ?? "unknown error"}`,
+      `isolated-v1 ${operation} failed: ${payload.error || result.stderr.trim() || "unknown error"}`,
     );
   }
   return payload.result as T;
@@ -375,9 +455,16 @@ interface DockerInspect {
 
 async function inspect(containerId: string): Promise<DockerInspect> {
   const result = await docker(["inspect", containerId], { maxOutputBytes: BRIDGE_RESULT_BYTES });
-  const parsed = JSON.parse(result.stdout) as DockerInspect[];
+  let parsed: DockerInspect[];
+  try {
+    parsed = JSON.parse(result.stdout) as DockerInspect[];
+  } catch {
+    throw new DockerExecutionProviderError("Docker inspect returned malformed JSON");
+  }
   if (!Array.isArray(parsed) || parsed.length !== 1 || parsed[0] === undefined) {
-    throw new DockerExecutionProviderError("Docker inspect did not return exactly one execution-world container");
+    throw new DockerExecutionProviderError(
+      "Docker inspect did not return exactly one execution-world container",
+    );
   }
   return parsed[0];
 }
@@ -404,14 +491,19 @@ function validateInspect(
       || !Number.isFinite(host.NanoCpus) || Number(host.NanoCpus) <= 0
       || !Number.isFinite(host.Memory) || Number(host.Memory) <= 0
       || !Number.isFinite(host.PidsLimit) || Number(host.PidsLimit) <= 0) {
-    throw new DockerExecutionProviderError("Docker execution world does not enforce the required isolated-v1 controls");
+    throw new DockerExecutionProviderError(
+      "Docker execution world does not enforce the required isolated-v1 controls",
+    );
   }
-  const workspaceMounts = (value.Mounts ?? []).filter((mount) => mount.Destination === DOCKER_ISOLATED_WORKSPACE_ROOT_V1);
+  const workspaceMounts = (value.Mounts ?? [])
+    .filter((mount) => mount.Destination === DOCKER_ISOLATED_WORKSPACE_ROOT_V1);
   if (workspaceMounts.length !== 1
       || workspaceMounts[0]?.Type !== "bind"
       || workspaceMounts[0]?.Source !== hostRoot
       || workspaceMounts[0]?.RW !== true) {
-    throw new DockerExecutionProviderError("Docker execution world does not expose exactly the declared Workspace bind mount");
+    throw new DockerExecutionProviderError(
+      "Docker execution world does not expose exactly the declared Workspace bind mount",
+    );
   }
   if (value.State?.Running !== true) {
     throw new DockerExecutionProviderError("Docker execution-world container is not running");
@@ -437,9 +529,15 @@ async function readiness(containerId: string, identity: ExecutionWorldIdentityV1
 }
 
 async function ensureImage(): Promise<void> {
-  const present = await docker(["image", "inspect", DOCKER_ISOLATED_EXECUTION_IMAGE_V1], { allowFailure: true });
+  const present = await docker(
+    ["image", "inspect", DOCKER_ISOLATED_EXECUTION_IMAGE_V1],
+    { allowFailure: true },
+  );
   if (present.exitCode === 0) return;
-  await docker(["pull", DOCKER_ISOLATED_EXECUTION_IMAGE_V1], { timeoutMs: 5 * 60_000 });
+  await docker(
+    ["pull", DOCKER_ISOLATED_EXECUTION_IMAGE_V1],
+    { timeoutMs: 5 * 60_000 },
+  );
 }
 
 async function positiveAbsence(containerId: string): Promise<boolean> {
@@ -567,8 +665,10 @@ export async function createDockerExecutionWorldV1(
       // the exact same container instance after every terminal operation so no
       // process from that Operation can survive into the next Host action.
       try {
-        requireOpen();
-        await docker(["restart", "--time", "0", containerId], { timeoutMs: DOCKER_CONTROL_TIMEOUT_MS });
+        await docker(
+          ["restart", "--time", "0", containerId],
+          { timeoutMs: DOCKER_CONTROL_TIMEOUT_MS },
+        );
         const inspected = await inspect(containerId);
         validateInspect(inspected, input.identity, input.root);
         await readiness(containerId, input.identity);
@@ -606,9 +706,7 @@ export async function createDockerExecutionWorldV1(
   };
   const binding: ExecutionWorldOperationBindingV1 = {
     provenance: structuredClone(input.identity),
-    assertUsable: () => {
-      requireOpen();
-    },
+    assertUsable: () => { requireOpen(); },
     getService(serviceId) {
       if (serviceId === CODING_WORKSPACE_EXECUTION_SERVICE_V1) return workspace;
       if (serviceId === CODING_WORKSPACE_OBSERVATION_SERVICE_V1) return observations;
@@ -627,21 +725,17 @@ export async function createDockerExecutionWorldV1(
     operationBinding: () => binding,
     isOpen: () => open,
     close: async () => {
-      if (!open) {
-        if (!await positiveAbsence(containerId)) {
-          throw new DockerExecutionProviderError("Closed isolated-v1 binding still has a provider container");
+      open = false;
+      await exclusive(async () => {
+        if (await positiveAbsence(containerId)) return;
+        const removal = await docker(["rm", "-f", containerId], { allowFailure: true });
+        if (removal.exitCode !== 0
+            && !/No such (object|container)/i.test(`${removal.stdout}\n${removal.stderr}`)) {
+          throw new DockerExecutionProviderError(`Docker teardown failed: ${removal.stderr.trim()}`);
         }
-      } else {
-        open = false;
-        await exclusive(async () => {
-          const removal = await docker(["rm", "-f", containerId], { allowFailure: true });
-          if (removal.exitCode !== 0 && !/No such (object|container)/i.test(`${removal.stdout}\n${removal.stderr}`)) {
-            throw new DockerExecutionProviderError(`Docker teardown failed: ${removal.stderr.trim()}`);
-          }
-        });
-        if (!await positiveAbsence(containerId)) {
-          throw new DockerExecutionProviderError("Docker teardown did not prove exact container absence");
-        }
+      });
+      if (!await positiveAbsence(containerId)) {
+        throw new DockerExecutionProviderError("Docker teardown did not prove exact container absence");
       }
       return {
         closureEvidenceDigest: digestOf({
