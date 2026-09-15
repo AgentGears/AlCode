@@ -10,6 +10,7 @@ export {
   type HostCapabilityResult,
   type HostCapabilityContext,
   type WorkspaceAccessClassV1,
+  type HostCapabilityExecutionScopeV1,
   type HostCapabilityQuiescenceV1,
   type HostCapabilityQuiescenceRecoveryInputV1,
   type HostCapabilityReconciliationInputV1,
