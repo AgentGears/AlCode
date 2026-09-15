@@ -36,12 +36,14 @@ checks.push(check(
     typecheck("@alcode/host-runtime");
     vitest(
       "packages/agent-core/src/inference-lifecycle.test.ts",
+      "packages/agent-core/src/inference-preparation-a2.test.ts",
       "packages/ai/src/index.test.ts",
       "packages/host-runtime/src/inference-provenance-a2.test.ts",
+      "packages/host-runtime/src/inference-provenance-a2-reconstruction.test.ts",
       "packages/host-runtime/src/inference-provenance-protocol-a2.test.ts",
     );
   },
-  "fresh Host epochs, exact provider descriptors, prepared-before-inference lifecycle, uncertainty preservation, exact assistant correlation, provider-neutral fixtures, replacement cuts, and canonical replay rebuild are proven without remote-provider attestation",
+  "fresh Host epochs, executable preparation-before-provider fencing, exact provider descriptors, uncertainty preservation, complete restart reconstruction, exact assistant correlation, provider-neutral fixtures, replacement cuts, and dynamic binding snapshot identity are proven without remote-provider attestation",
 ));
 
 checks.push(check(
