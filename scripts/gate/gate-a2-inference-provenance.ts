@@ -65,12 +65,13 @@ checks.push(check(
   () => {
     vitest(
       "packages/coding-agent/src/agent-replacement.integration.test.ts",
+      "packages/host-runtime/src/inference-provenance-host-boundary-a2.test.ts",
       "packages/host-runtime/src/program-agent-s02-4.test.ts",
       "packages/host-runtime/src/program-adaptive-operation-s02-4.test.ts",
       "packages/host-runtime/src/program-execution-runtime-v2.test.ts",
     );
   },
-  "stale ProgramAttempt authority, Agent replacement, capability routing, adaptive execution and already-admitted Host Operation truth remain decisive independently of inference provenance",
+  "forged epochs fail before Operation admission, while stale ProgramAttempt authority, Agent replacement, capability routing, adaptive execution and already-admitted Host Operation truth remain decisive independently of inference provenance",
 ));
 
 checks.push(check(
