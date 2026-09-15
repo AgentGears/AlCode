@@ -31,6 +31,7 @@ import {
   ProgramExecutionApplicationPortV1,
   ProgramExecutionSchedulerV1,
 } from "./program-execution-scheduler.ts";
+import { withProgramDispatchExecutionWorldGuardV1 } from "./program-dispatch-execution-world-guard.ts";
 import {
   ProgramPlanningControlError,
   ProgramPlanningServiceV1,
@@ -154,8 +155,11 @@ export class ProgramExecutionRuntimeV1 {
       capabilities: options.host.capabilities,
     });
 
+    const dispatchStore = options.executionWorld === undefined
+      ? this.store
+      : withProgramDispatchExecutionWorldGuardV1(this.store);
     this.dispatch = new ProgramDispatchServiceV1({
-      store: this.store,
+      store: dispatchStore,
       admission: this.host.admission,
       workspaceCoordinator: this.workspaceCoordinator,
       observations: options.observations,
