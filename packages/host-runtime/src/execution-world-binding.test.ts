@@ -44,7 +44,7 @@ describe("A5 immutable execution-world operation binding", () => {
     expect(admitted.provenance.executionWorldGenerationId).toBe("g0");
 
     g0Usable = false;
-    await expect(admitted.assertUsable()).rejects.toThrow("g0 unavailable");
+    expect(() => admitted.assertUsable()).toThrow("g0 unavailable");
     expect(admitted.provenance.executionWorldGenerationId).toBe("g0");
   });
 
