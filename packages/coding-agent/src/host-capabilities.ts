@@ -5,8 +5,13 @@
 // Agent Protocol proxy tools.
 
 import type { AgentTool } from "@alcode/agent-core";
-import type { HostCapability, HostCapabilityResult } from "@alcode/host-runtime";
+import type {
+  HostCapability,
+  HostCapabilityContext,
+  HostCapabilityResult,
+} from "@alcode/host-runtime";
 import type { Workspace } from "./capabilities/types.ts";
+import { CODING_WORKSPACE_EXECUTION_SERVICE_V1 } from "./execution-provider.ts";
 import { createBashTool } from "./tools/bash.ts";
 import { createEditTool } from "./tools/edit.ts";
 import { createFindTool } from "./tools/find.ts";
@@ -20,14 +25,89 @@ import { createWriteTool } from "./tools/write.ts";
 // payload at the single model-facing boundary.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyAgentTool = AgentTool<any, any>;
+type OwnedToolFactory = (workspace: Workspace) => AnyAgentTool;
 
 const OPERATION_SCOPED_PROOF_CONTRACT_ID = "host-capability-promise-v1";
 const OPERATION_SCOPED_PROOF_CONTRACT_VERSION = 1;
+
+const DEFAULT_TOOL_FACTORIES: readonly OwnedToolFactory[] = [
+  (workspace) => createReadTool(workspace.filesystem),
+  (workspace) => createWriteTool(workspace.filesystem),
+  (workspace) => createEditTool(workspace.filesystem),
+  (workspace) => createGrepTool(workspace.filesystem),
+  (workspace) => createLsTool(workspace.filesystem),
+  (workspace) => createFindTool(workspace.filesystem),
+  (workspace) => createBashTool({ workingDirectory: workspace.identity.root }),
+];
 
 function extractNumber(details: unknown, key: string): number | null | undefined {
   if (typeof details !== "object" || details === null || Array.isArray(details)) return undefined;
   const value = (details as Record<string, unknown>)[key];
   return typeof value === "number" || value === null ? value : undefined;
+}
+
+async function executeOwnedTool(
+  tool: AnyAgentTool,
+  args: unknown,
+  context: HostCapabilityContext,
+): Promise<HostCapabilityResult> {
+  const isReadOnly = tool.isReadOnly ?? false;
+  const result = await tool.execute(
+    args,
+    context.signal ? { signal: context.signal } : {},
+  );
+  const text = result.content
+    .filter((block) => block.type === "text")
+    .map((block) => block.text)
+    .join("\n");
+  const exitCode = extractNumber(result.details, "exitCode");
+  const quiescenceProof = !isReadOnly && context.quiescenceContract !== undefined
+    ? {
+        containmentInstanceId: context.quiescenceContract.containmentInstanceId,
+        proofContractId: context.quiescenceContract.proofContractId,
+        proofContractVersion: context.quiescenceContract.proofContractVersion,
+        proofKind: "operation_containment_ended" as const,
+        evidence: {
+          kind: "operation_scope_ended",
+          containmentInstanceId: context.quiescenceContract.containmentInstanceId,
+        },
+      }
+    : undefined;
+  return {
+    result: {
+      content: result.content,
+      details: result.details,
+    },
+    ...(result.executionOutcome !== undefined ? { outcome: result.executionOutcome } : {}),
+    stdout: text,
+    ...(exitCode !== undefined ? { exitCode } : {}),
+    ...(quiescenceProof !== undefined ? { quiescenceProof } : {}),
+  };
+}
+
+function isWorkspace(value: unknown): value is Workspace {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const candidate = value as Partial<Workspace>;
+  return typeof candidate.identity === "object" && candidate.identity !== null
+    && typeof candidate.filesystem === "object" && candidate.filesystem !== null
+    && typeof candidate.terminal === "object" && candidate.terminal !== null;
+}
+
+function requireCapturedWorkspace(context: HostCapabilityContext): Workspace {
+  const binding = context.executionWorldBinding;
+  if (binding === undefined) {
+    throw new Error("Workspace-world coding capability lacks its captured execution binding");
+  }
+  const service = binding.getService(CODING_WORKSPACE_EXECUTION_SERVICE_V1);
+  if (!isWorkspace(service)) {
+    throw new Error(
+      `Execution-world generation ${binding.provenance.executionWorldGenerationId} lacks coding Workspace service`,
+    );
+  }
+  if (service.identity.workspaceId !== binding.provenance.workspaceId) {
+    throw new Error("Execution-world coding Workspace service identity does not match captured provenance");
+  }
+  return service;
 }
 
 export function agentToolAsHostCapability<TInput, TResult>(
@@ -47,51 +127,30 @@ export function agentToolAsHostCapability<TInput, TResult>(
         proofContractVersion: OPERATION_SCOPED_PROOF_CONTRACT_VERSION,
       },
     } : {}),
-    async execute(args, context): Promise<HostCapabilityResult> {
-      const result = await tool.execute(
-        args as TInput,
-        context.signal ? { signal: context.signal } : {},
-      );
-      const text = result.content
-        .filter((block) => block.type === "text")
-        .map((block) => block.text)
-        .join("\n");
-      const exitCode = extractNumber(result.details, "exitCode");
-      const quiescenceProof = !isReadOnly && context.quiescenceContract !== undefined
-        ? {
-            containmentInstanceId: context.quiescenceContract.containmentInstanceId,
-            proofContractId: context.quiescenceContract.proofContractId,
-            proofContractVersion: context.quiescenceContract.proofContractVersion,
-            proofKind: "operation_containment_ended" as const,
-            evidence: {
-              kind: "operation_scope_ended",
-              containmentInstanceId: context.quiescenceContract.containmentInstanceId,
-            },
-          }
-        : undefined;
-      return {
-        result: {
-          content: result.content,
-          details: result.details,
-        },
-        ...(result.executionOutcome !== undefined ? { outcome: result.executionOutcome } : {}),
-        stdout: text,
-        ...(exitCode !== undefined ? { exitCode } : {}),
-        ...(quiescenceProof !== undefined ? { quiescenceProof } : {}),
-      };
-    },
+    execute: (args, context) => executeOwnedTool(tool as AnyAgentTool, args, context),
   };
 }
 
 export function createDefaultHostCapabilities(workspace: Workspace): HostCapability[] {
-  const tools: AnyAgentTool[] = [
-    createReadTool(workspace.filesystem),
-    createWriteTool(workspace.filesystem),
-    createEditTool(workspace.filesystem),
-    createGrepTool(workspace.filesystem),
-    createLsTool(workspace.filesystem),
-    createFindTool(workspace.filesystem),
-    createBashTool({ workingDirectory: workspace.identity.root }),
-  ];
-  return tools.map((tool) => agentToolAsHostCapability(tool));
+  return DEFAULT_TOOL_FACTORIES.map((factory) => agentToolAsHostCapability(factory(workspace)));
+}
+
+/**
+ * A5 production adapter: metadata is derived from the ordinary owned tools, but
+ * every execution re-resolves the exact Workspace service from the immutable
+ * Operation binding captured by the Host. The descriptor Workspace is never an
+ * execution fallback.
+ */
+export function createExecutionWorldHostCapabilities(descriptorWorkspace: Workspace): HostCapability[] {
+  return DEFAULT_TOOL_FACTORIES.map((factory) => {
+    const descriptor = agentToolAsHostCapability(factory(descriptorWorkspace));
+    return {
+      ...descriptor,
+      executionScope: "workspace_world" as const,
+      async execute(args: unknown, context: HostCapabilityContext): Promise<HostCapabilityResult> {
+        const workspace = requireCapturedWorkspace(context);
+        return executeOwnedTool(factory(workspace), args, context);
+      },
+    };
+  });
 }
