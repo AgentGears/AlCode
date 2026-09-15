@@ -17,15 +17,22 @@ import {
   ProgramTerminalStaleError,
   createProgramExecutionRuntimeV1,
   type ProgramExecutionObservationSourceV1,
+  type ProgramExecutionWorldAuthorityV1,
 } from "@alcode/host-runtime";
 import { createProgramAdaptiveProductionRuntimeV1 } from "@alcode/host-runtime/adaptive-production-v1";
 import { createOwnedLocalCodeIntelligenceService } from "@alcode/host-runtime/code-intelligence";
+import { ExecutionWorldServiceV1 } from "@alcode/host-runtime/execution-world";
 import { openLockedWorkspaceStore } from "@alcode/storage";
 import { WorkspaceRegistry } from "@alcode/workspace";
 import { agentErrorStillTargetsLiveConnection } from "./agent-error-arbitration.ts";
 import { recoverAfterAgentReplacement } from "./agent-replacement-recovery.ts";
-import { createDefaultHostCapabilities } from "./host-capabilities.ts";
 import { createLocalWorkspace } from "./capabilities/local-workspace.ts";
+import { createExecutionWorldHostCapabilities } from "./host-capabilities.ts";
+import {
+  activateLocalExecutionWorldV1,
+  retireLocalExecutionWorldV1,
+  type ActiveLocalExecutionWorldV1,
+} from "./local-execution-world-runtime.ts";
 import { createLocalPlanningReadRegistry } from "./planning-read-catalog.ts";
 import { createDefaultProgramVerifierConfiguration } from "./verification-profile.ts";
 
@@ -143,17 +150,17 @@ async function main(): Promise<void> {
     workspaceId: String(workspaceEntry.workspaceId),
     repositoryId: workspaceEntry.repositoryId,
   });
-  const workspace = createLocalWorkspace({
+  const descriptorWorkspace = createLocalWorkspace({
     workspaceId: String(workspaceEntry.workspaceId),
     repositoryId: workspaceEntry.repositoryId,
     root,
   });
-  const capabilities = createDefaultHostCapabilities(workspace);
+  const capabilities = createExecutionWorldHostCapabilities(descriptorWorkspace);
   const codeIntelligenceProcesses = new ExternalProcessSupervisor({ maxProcesses: 1 });
   const codeIntelligence = createOwnedLocalCodeIntelligenceService({
     root,
-    workspaceId: workspace.identity.workspaceId,
-    repositoryId: workspace.identity.repositoryId,
+    workspaceId: descriptorWorkspace.identity.workspaceId,
+    repositoryId: descriptorWorkspace.identity.repositoryId,
     processSupervisor: codeIntelligenceProcesses,
   });
 
@@ -194,13 +201,23 @@ async function main(): Promise<void> {
   });
   const artifactStore = new HostArtifactStore({ root: join(dirname(workspaceEntry.dbPath), "artifacts") });
 
+  let executionWorldService: ExecutionWorldServiceV1 | undefined;
+  const executionWorldAuthority: ProgramExecutionWorldAuthorityV1 = {
+    currentOperationProvenance: async () => {
+      if (executionWorldService === undefined) {
+        throw new Error("CLI execution-world authority was used before Host initialization");
+      }
+      return executionWorldService.currentOperationProvenance();
+    },
+  };
+
   const fixedRuntime = createProgramExecutionRuntimeV1({
     host: {
       store: locked,
       capabilities,
       policy: new DefaultHostPolicy({ knownTools: capabilities.map((capability) => capability.name), allowMutations: true }),
     },
-    planningReads: createLocalPlanningReadRegistry(workspace, codeIntelligence),
+    planningReads: createLocalPlanningReadRegistry(descriptorWorkspace, codeIntelligence),
     creationPolicy: {
       current: () => ({ generation: "alcode-cli-policy-v1", digest: "alcode-cli-policy-v1", requirements: [] }),
     },
@@ -213,7 +230,10 @@ async function main(): Promise<void> {
     operationSpecs: verifierConfiguration.operationSpecs,
     verifierCatalog: verifierConfiguration.verifierCatalog,
     artifactStore,
+    executionWorld: executionWorldAuthority,
   });
+  executionWorldService = new ExecutionWorldServiceV1(locked.store, fixedRuntime.host.admission);
+
   const adaptiveProduct = createProgramAdaptiveProductionRuntimeV1({
     fixedTopology: fixedRuntime,
     observations,
@@ -241,12 +261,22 @@ async function main(): Promise<void> {
   });
   const attachedAgents: Array<Awaited<ReturnType<typeof runtime.attachAgent>>> = [];
   const unsubscribeAgentErrors: Array<() => void> = [];
+  let activeExecutionWorld: ActiveLocalExecutionWorldV1 | undefined;
   let currentConnectionGeneration = "";
   let agentError: Error | undefined;
   let completedSuccessfully = false;
   try {
     await runtime.host.startup();
     const session = await runtime.host.sessions.openOrResume();
+    activeExecutionWorld = await activateLocalExecutionWorldV1({
+      worlds: executionWorldService,
+      activationRequestId: `alcode-cli-${randomUUID()}`,
+      workspaceId: String(workspaceEntry.workspaceId),
+      sessionId: String(session.sessionId),
+      repositoryId: workspaceEntry.repositoryId,
+      root,
+    });
+    runtime.host.capabilityBroker.setExecutionWorldBindingAuthority(activeExecutionWorld.bindings);
     if (session.resumed) {
       await adaptiveProduct.admission.recoverAgentReplacement(String(session.sessionId));
     }
@@ -470,6 +500,11 @@ async function main(): Promise<void> {
     await codeIntelligence.dispose().catch(() => undefined);
     await codeIntelligenceProcesses.stopAll().catch(() => undefined);
     await supervisor.shutdown(completedSuccessfully ? "completed" : "cancelled").catch(() => undefined);
+    runtime.host.capabilityBroker.setExecutionWorldBindingAuthority(undefined);
+    if (activeExecutionWorld !== undefined) {
+      await retireLocalExecutionWorldV1(activeExecutionWorld).catch(() => undefined);
+      activeExecutionWorld = undefined;
+    }
     locked.close();
   }
 }
