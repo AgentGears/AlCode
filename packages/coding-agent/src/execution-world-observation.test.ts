@@ -25,10 +25,14 @@ import type {
   SemanticPlanningQueryResult,
 } from "./semantic-planning-read.ts";
 
-function provenance(workspaceId: string, generation: string): ExecutionWorldOperationProvenanceV1 {
+function provenance(
+  workspaceId: string,
+  generation: string,
+  providerKind = "local-trusted",
+): ExecutionWorldOperationProvenanceV1 {
   return {
     workspaceId,
-    providerKind: "local-trusted",
+    providerKind,
     executionWorldGenerationId: generation,
     providerDescriptorDigest: "provider-digest",
     effectivePolicyDigest: "policy-digest",
@@ -65,6 +69,7 @@ function binding(input: {
   generation: string;
   root: string;
   value: string;
+  providerKind?: string;
   stateDigest?: string;
   pathState?: "file" | "directory" | "symlink" | "absent";
 }): ExecutionWorldOperationBindingV1 {
@@ -74,7 +79,7 @@ function binding(input: {
     observePathState: async () => input.pathState ?? "file",
   };
   return {
-    provenance: provenance(input.workspaceId, input.generation),
+    provenance: provenance(input.workspaceId, input.generation, input.providerKind),
     assertUsable: () => undefined,
     getService(serviceId) {
       if (serviceId === CODING_WORKSPACE_EXECUTION_SERVICE_V1) return boundWorkspace;
@@ -204,6 +209,55 @@ describe("A5 generation-bound planning and observation bridges", () => {
     );
     await expect(bridge.query({ type: "symbol_search", query: "x" })).rejects.toThrow(
       "CodeIntelligence is unavailable",
+    );
+    expect(queried).toBe(false);
+  });
+
+  it("fails Host-local semantic planning closed for an isolated provider even when path labels match", async () => {
+    const workspaceId = "018f0000-0000-7000-8000-00000000a535";
+    const current = authority(binding({
+      workspaceId,
+      generation: "g-isolated",
+      root: "/same-label",
+      value: "stable",
+      providerKind: "isolated-v1",
+    }));
+    let queried = false;
+    const service: SemanticPlanningCodeIntelligence = {
+      isRevisionTrackedPath: () => true,
+      async query<Q extends SemanticPlanningQuery>(): Promise<{
+        workspaceId: string;
+        repositoryId: string;
+        revision: { epoch: string; generation: number; fingerprint: string };
+        complete: boolean;
+        current: boolean;
+        observedAt: string;
+        provider: { name: string; version: string };
+        value: SemanticPlanningQueryResult<Q>;
+        diagnostics: string[];
+      }> {
+        queried = true;
+        return {
+          workspaceId,
+          repositoryId: "repo-a5",
+          revision: { epoch: "e", generation: 1, fingerprint: "f" },
+          complete: true,
+          current: true,
+          observedAt: new Date(0).toISOString(),
+          provider: { name: "fake", version: "1" },
+          value: ({ symbols: [] } as unknown) as SemanticPlanningQueryResult<Q>,
+          diagnostics: [],
+        };
+      },
+    };
+    const bridge = createExecutionWorldSemanticPlanningBridgeV1(
+      current.authority,
+      "/same-label",
+      service,
+    );
+
+    await expect(bridge.query({ type: "symbol_search", query: "x" })).rejects.toThrow(
+      "cannot prove Host-local semantic freshness",
     );
     expect(queried).toBe(false);
   });
