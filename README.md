@@ -4,11 +4,11 @@ A memory-native, verifier-driven coding agent and durable autonomous software-en
 
 ALCODE replaces a prior host-dependent plugin topology (Ola + Ouroboros as ZCode MCP sidecars) with an owned, integrated product in which memory, reasoning, tools, model access, persistence, UI, durable Program state, execution, verification, recovery, and inference provenance are governed by one codebase. The append-only event log is the canonical durable record; the Host owns admission, policy, execution lifecycle, recovery, transcript/context truth, Program truth, verification, and completion, while the Agent and Experience Plane consume Host-owned protocols and disposable projections.
 
-**Status:** the closed product baseline now includes Phases 0.0–0.9, Phase 1.0 Durable ProgramState, Phase 1.1 Default Program Execution, S-01 Replaceable Agent Runtime, P-01 Production Program Agent, A1 Adaptive Program semantics, P-02 semantic planning + typed verification retry, S-02 Code Mode / ProgramAttempt-aware local orchestration, and A2/S-04 Reconstructable Inference Provenance. The current `main` closure point is `eed99c2fde14e4e0e981c67b873fb91db3ed3c5f` (`feat(a2): durable inference provenance and causal tool correlation (#318)`).
+**Status:** the closed product baseline includes Phases 0.0–0.9, Phase 1.0 Durable ProgramState, Phase 1.1 Default Program Execution, S-01 Replaceable Agent Runtime, P-01 Production Program Agent, A1 Adaptive Program semantics, P-02 semantic planning + typed verification retry, S-02 Code Mode / ProgramAttempt-aware local orchestration, and A2/S-04 Reconstructable Inference Provenance. The closed A2 product point is `eed99c2fde14e4e0e981c67b873fb91db3ed3c5f` (`feat(a2): durable inference provenance and causal tool correlation (#318)`). Current repository `main` is `4c324c9b34d500ff103dd7afd93fcf08d5c0a30b`, which additionally contains the A5 forcing study, candidate execution-provider plan, and design-review resolution as documentation only.
 
 The runtime is no longer fixed-topology. Canonical Program meaning can evolve through A1 semantic revisions and WorkItem generations; P-02 gives the planner bounded Host-governed semantic code observations and typed verifier retry closure; S-02 allows one provider inference to perform bounded local orchestration while every environmental sub-dispatch still crosses ordinary Host capability/ProgramAttempt authority and receives an independent Host Operation identity; A2 makes the exact provider-inference → assistant/tool → Operation causal chain reconstructable without turning inference history into current authority.
 
-The next load-bearing roadmap candidate is **A5 — Sandboxed Execution Providers / physical execution-provider isolation**. This is roadmap direction only: A5 requires a separately authorized bounded design/freeze before implementation.
+The next load-bearing roadmap candidate is **A5 — Sandboxed Execution Providers / physical execution-provider isolation**. The forcing study, candidate plan, and design-review corrections are now recorded, but the A5 contract remains **NOT FROZEN / NO IMPLEMENTATION AUTHORITY** until separately approved.
 
 `verbatim-v1` remains the product default; `graph-v1` remains opt-in.
 
@@ -17,18 +17,22 @@ The next load-bearing roadmap candidate is **A5 — Sandboxed Execution Provider
 ## Read first
 
 1. [`docs/constitution.md`](docs/constitution.md) — the frozen architectural principles.
-2. [`docs/roadmap.md`](docs/roadmap.md) — durable architecture direction and current sequencing.
+2. [`docs/roadmap.md`](docs/roadmap.md) — durable architecture direction and sequencing.
 3. [`docs/rules.md`](docs/rules.md) — hard runtime, storage, effect, cognition, context, Application, and extension rules.
 4. [`docs/event-contract.md`](docs/event-contract.md) — canonical event envelope, producer, identity, versioning, and ownership semantics.
-5. [`docs/a1-adaptive-program-freeze.md`](docs/a1-adaptive-program-freeze.md) — frozen A1 adaptive Program contract.
-6. [`docs/p-01-production-program-agent-as-built.md`](docs/p-01-production-program-agent-as-built.md) — Production Program Agent closure.
-7. [`docs/p02-macos-closure-evidence.md`](docs/p02-macos-closure-evidence.md) — P-02 platform closure evidence.
-8. [`docs/s02-code-mode-as-built.md`](docs/s02-code-mode-as-built.md) — S-02 Code Mode as-built closure record.
-9. [`docs/a2-inference-provenance-gap-study.md`](docs/a2-inference-provenance-gap-study.md) — forcing evidence for A2.
-10. [`docs/a2-inference-provenance-plan.md`](docs/a2-inference-provenance-plan.md) — frozen A2/S-04 contract.
-11. [`docs/a2-inference-provenance-as-built.md`](docs/a2-inference-provenance-as-built.md) — A2/S-04 implementation and closure mapping.
-12. [`docs/project-review-2026-09-15.md`](docs/project-review-2026-09-15.md) — post-A2 comprehensive status/trajectory review.
-13. [`docs/backlog.md`](docs/backlog.md) — deferred work with reactivation conditions.
+5. [`docs/truth-boundary-invariants-2026-09-15.md`](docs/truth-boundary-invariants-2026-09-15.md) — cross-cutting admission, replay, uncertainty, provenance, and successor-review laws.
+6. [`docs/a1-adaptive-program-freeze.md`](docs/a1-adaptive-program-freeze.md) — frozen A1 adaptive Program contract.
+7. [`docs/p-01-production-program-agent-as-built.md`](docs/p-01-production-program-agent-as-built.md) — Production Program Agent closure.
+8. [`docs/p02-macos-closure-evidence.md`](docs/p02-macos-closure-evidence.md) — P-02 platform closure evidence.
+9. [`docs/s02-code-mode-as-built.md`](docs/s02-code-mode-as-built.md) — S-02 Code Mode as-built closure record.
+10. [`docs/a2-inference-provenance-gap-study.md`](docs/a2-inference-provenance-gap-study.md) — forcing evidence for A2.
+11. [`docs/a2-inference-provenance-plan.md`](docs/a2-inference-provenance-plan.md) — frozen A2/S-04 contract.
+12. [`docs/a2-inference-provenance-as-built.md`](docs/a2-inference-provenance-as-built.md) — A2/S-04 implementation and closure mapping.
+13. [`docs/a5-execution-provider-gap-study.md`](docs/a5-execution-provider-gap-study.md) — forcing evidence for the current A5 candidate.
+14. [`docs/a5-execution-provider-plan.md`](docs/a5-execution-provider-plan.md) — candidate A5 semantic contract; not frozen.
+15. [`docs/a5-execution-provider-design-review-2026-09-15.md`](docs/a5-execution-provider-design-review-2026-09-15.md) — bounded A5 design-review corrections.
+16. [`docs/project-review-2026-09-15.md`](docs/project-review-2026-09-15.md) — post-A2 comprehensive status/trajectory review at the A2 closure point.
+17. [`docs/backlog.md`](docs/backlog.md) — deferred work with reactivation conditions.
 
 Historical Phase plans and closure records remain under `docs/` and retain their original frozen/closure roles.
 
@@ -123,6 +127,8 @@ Completion Oracle
 
 `InferenceEpoch` is deliberately a causal/provenance layer, not another authority level: current execution still requires ProgramAttempt/capability/execution-base validity and environmental truth still belongs to Host Operations.
 
+The cross-cutting successor-review discipline is summarized in [`docs/truth-boundary-invariants-2026-09-15.md`](docs/truth-boundary-invariants-2026-09-15.md): mutable authority must be validated at canonical admission, already-admitted replay must be recognized before consumable one-shot preconditions are revalidated, failure must preserve external observations already obtained, and provenance/identity must never silently become authority.
+
 ## Closed milestones
 
 ```text
@@ -143,7 +149,9 @@ Every closed objective is backed by executable proof and/or an exact closure rec
 
 The repository is now at the boundary between a powerful adaptive single-Agent Program runtime with reconstructable inference causality and later provider-diverse execution environments, reusable procedures, parallel workspaces, delegation, and remote workers.
 
-The next load-bearing roadmap candidate is **A5 — Sandboxed Execution Providers**: define a provider-neutral execution-world boundary that preserves current ProgramAttempt authority, execution-base freshness, Host Operation/effect uncertainty, teardown/quiescence, and Host canonical control while allowing the existing local path and an isolated backend to inhabit the same semantic contract.
+The current load-bearing roadmap candidate is **A5 — Sandboxed Execution Providers**: define a provider-neutral execution-world boundary that preserves current ProgramAttempt authority, execution-base freshness, Host Operation/effect uncertainty, teardown/quiescence, and Host canonical control while allowing the existing local path and an isolated backend to inhabit the same semantic contract.
+
+The A5 forcing study, candidate semantic plan, and bounded design-review corrections are present on `main`. They remain design evidence only: A5 implementation is **not** authorized until the candidate contract is separately approved/frozen.
 
 A5 is intentionally before reusable learned procedures, isolated parallel workspaces, durable delegation/subagents, and remote execution. The roadmap remains:
 
@@ -157,4 +165,4 @@ A5 physical execution-provider isolation
   → A11 research/runtime ecosystem maturity
 ```
 
-A3 semantic SDLC capability expansion remains demand-driven alongside these stages. A5 implementation is **not** authorized merely by appearing here; a bounded design/freeze remains a separate client decision.
+A3 semantic SDLC capability expansion remains demand-driven alongside these stages.
