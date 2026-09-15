@@ -1,6 +1,9 @@
 # A2/S-04 Reconstructable Inference Provenance — As Built
 
-Status: implementation candidate for the frozen A2/S-04 contract. Closure is determined only by the permanent exact-head gate and review; this document does not create authority or substitute for executable evidence.
+**Status:** **CLOSED — frozen AC-A2-01 through AC-A2-12 implemented, reviewed, merged, and post-merge verified**  
+**Reviewed candidate head:** `f23a6cc54b5d1f48109e1eb4d60854905626c312`  
+**Landed main:** `eed99c2fde14e4e0e981c67b873fb91db3ed3c5f` (`feat(a2): durable inference provenance and causal tool correlation (#318)`)  
+**Landed tree:** `8a695ff31afc98f24454e561d47ef3a5a9536ecb`
 
 ## Scope
 
@@ -20,7 +23,7 @@ For each negotiated provider inference, the Host mints a fresh `InferenceEpochId
 - the exact binding-bearing capability snapshot and its digest;
 - current ProgramAttempt authority and execution-base provenance when a ProgramAttempt exists.
 
-Authorization runs under canonical admission. A context receipt must still be the exact current canonical cut, and a synchronous final guard checks the current Agent generation and capability catalog immediately before append. A changed cut fails closed and requires a fresh context refresh.
+Authorization runs under canonical admission. A context receipt must still be the exact current canonical cut, and a synchronous final guard checks the current Agent generation and capability catalog immediately before append. The adaptive path also rechecks ProgramAttempt coherence. A changed cut fails closed and requires a fresh context refresh.
 
 Historical inference provenance is never accepted as ProgramAttempt, capability, verification, effect, recovery, or Completion authority.
 
@@ -44,7 +47,7 @@ The rebuildable invocation states are `authorized`, `prepared_indeterminate`, `r
 
 Assistant events emitted by the Agent carry the exact inference epoch. At the negotiated Host protocol boundary, an `assistant.message` without `inferenceEpochId` is rejected before durable transcript admission. The transcript admission service validates any supplied epoch against the same Session, Agent generation, and prepared lifecycle before appending it.
 
-This Host-side requirement was added during exact-head review because Agent-side propagation alone was insufficient to guarantee AC-A2-05 at the trust boundary.
+This Host-side requirement was added during implementation review because Agent-side propagation alone was insufficient to guarantee exact durable assistant correlation at the trust boundary.
 
 ## Tool-call and Operation correlation
 
@@ -68,12 +71,42 @@ The repository exposes:
 pnpm gate:a2-inference-provenance
 ```
 
-The gate typechecks the affected protocol/provider/Host/Agent surfaces, runs the A2 adversarial inference tests (including the negotiated assistant-correlation fence), exercises direct and Code Mode causal routing, checks stale-generation/Program authority fences, and composes the permanent S-02 Code Mode/product-agent predecessor gate.
+The gate typechecks the affected protocol/provider/Host/Agent surfaces, runs the A2 adversarial inference tests, exercises exact preparation-before-provider ordering, uncertainty/rebuild semantics, direct and Code Mode causal routing, complete restart reconstruction, dynamic-binding ABA lineage, assistant-correlation fencing, stale-generation/Program authority fences, forged-epoch rejection before Operation admission, and composes the permanent S-02 Code Mode/product-agent predecessor gate.
 
-The GitHub workflow `A2 Inference Provenance` checks out the exact PR head and runs this permanent gate. Merge is permitted only after the exact candidate head passes the frozen A2 gate, declared predecessor compatibility, relevant CI, and final review.
+The GitHub workflow `A2 Inference Provenance` checks out the exact candidate head and runs this permanent gate.
 
-## Review disposition
+## Closure evidence
 
-The implementation review found one bounded trust-boundary defect: negotiated A2 assistant messages were propagated with an epoch by the first-party Agent, but the Host did not require the field when A2 had been negotiated. The correction makes the Host reject uncorrelated assistant output and adds permanent gate coverage for that invariant.
+Exact candidate head `f23a6cc54b5d1f48109e1eb4d60854905626c312` passed the required PR workflow surface, including the permanent A2 gate and declared predecessor/compatibility workflows. The final architecture review rechecked:
 
-Review disposition for that finding: **Proceed with a bounded correction.** No expansion of the frozen A2/S-04 scope is implied.
+- provider preparation ordering;
+- provider-invocation uncertainty preservation;
+- coherent inference authorization cuts;
+- secret-free provider semantics;
+- assistant and Operation causal reconstruction;
+- explicit Code Mode parentage;
+- non-attribution of Host-only work;
+- restart reconstruction equality;
+- stale/forged/historical provenance authority fences.
+
+Final review disposition on the exact candidate head: **Proceed as written.**
+
+PR #318 was then squash-merged to `main` as `eed99c2fde14e4e0e981c67b873fb91db3ed3c5f`. The post-merge `A2 Inference Provenance` workflow ran on that exact landed commit and completed successfully, including the permanent A2 gate.
+
+## Review history
+
+Implementation review found and corrected several bounded defects before closure, including:
+
+- a terminal Agent report incorrectly implying provider response observation;
+- missing Host enforcement for negotiated assistant `InferenceEpochId`;
+- an initial global/prototype provenance interception approach that was replaced by explicit end-to-end broker request correlation;
+- an inference authorization-cut race across context/ProgramAttempt/capability observations;
+- protocol matcher/type and predecessor-test regressions exposed by exact-head CI.
+
+These corrections preserved the frozen contract rather than expanding it.
+
+## Final disposition
+
+A2/S-04 is closed. The implementation satisfies the frozen requirement that inference provenance explain exact causal history without granting, renewing, transferring, or proving current execution authority.
+
+**Final disposition: Proceed as written.**
