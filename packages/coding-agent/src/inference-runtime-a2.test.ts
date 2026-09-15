@@ -159,19 +159,19 @@ describe("A2 inference-scoped causal tool correlation", () => {
         toolName: "inspect",
         inferenceEpochId: "epoch-a2-code-mode",
         parentToolCallId: "opaque-outer-id",
-        localSubcallIndex: 0,
+        localSubcallIndex: 1,
       },
       {
         toolName: "echo",
         inferenceEpochId: "epoch-a2-code-mode",
         parentToolCallId: "opaque-outer-id",
-        localSubcallIndex: 1,
+        localSubcallIndex: 2,
       },
       {
         toolName: "mutate",
         inferenceEpochId: "epoch-a2-code-mode",
         parentToolCallId: "opaque-outer-id",
-        localSubcallIndex: 2,
+        localSubcallIndex: 3,
       },
     ]);
     expect(new Set(calls.map((call) => call.toolCallId)).size).toBe(3);
