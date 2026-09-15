@@ -71,12 +71,13 @@ describeLocked("A5 CapabilityBroker captured execution-world admission", () => {
     let executed = false;
     const capability: HostCapability = {
       name: "world_probe",
-      executionScope: "workspace_world",
-      workspaceAccessClass: "no_workspace_access",
+      workspaceAccessClass: "read_only",
       async execute(_args, context) {
         executed = true;
         return {
-          result: { generation: context.executionWorld?.provenance.executionWorldGenerationId ?? null },
+          result: {
+            generation: context.executionWorldBinding?.provenance.executionWorldGenerationId ?? null,
+          },
           outcome: "succeeded",
         };
       },
@@ -109,7 +110,7 @@ describeLocked("A5 CapabilityBroker captured execution-world admission", () => {
       assertUsable: () => undefined,
     };
     bindings.register(g0Binding);
-    host.capabilityBroker.setExecutionWorldBindingRegistry(bindings);
+    host.capabilityBroker.setExecutionWorldBindingAuthority(bindings);
 
     const dispatch = new ProgramDispatchServiceV1({
       store: locked.store,
