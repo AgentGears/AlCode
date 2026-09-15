@@ -109,6 +109,7 @@ describeLocked("A5 CapabilityBroker captured execution-world admission", () => {
     const g0Binding: ExecutionWorldOperationBindingV1 = {
       provenance: g0,
       assertUsable: () => undefined,
+      getService: () => undefined,
     };
     bindings.register(g0Binding);
     host.capabilityBroker.setExecutionWorldBindingAuthority(bindings);
