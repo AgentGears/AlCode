@@ -668,8 +668,13 @@ export class ProgramDispatchServiceV1 {
         const events = await replayAll(this.options.store);
         const canonicalProgram = currentProgramOperationContextFromEvents(events, input.sessionId);
         const program = input.program ?? canonicalProgram;
+        if (input.executionWorld !== undefined && this.options.executionWorld === undefined) {
+          throw new ProgramDispatchControlError(
+            "Captured Operation execution-world binding cannot be validated without execution-world authority",
+          );
+        }
         const needExecutionWorld = this.options.executionWorld !== undefined &&
-          (program !== null && program !== undefined || input.workspaceAccessClass !== "no_workspace_access");
+          (program !== null && program !== undefined || input.executionWorld !== undefined);
         const currentExecutionWorld = needExecutionWorld
           ? await this.options.executionWorld!.currentOperationProvenance()
           : null;
@@ -684,6 +689,16 @@ export class ProgramDispatchServiceV1 {
               throw new ProgramDispatchStaleError(`Outstanding Workspace writer barrier: ${writers.join(",")}`);
             }
           }
+          let admittedExecutionWorld: ExecutionWorldOperationProvenanceV1 | null = null;
+          if (input.executionWorld !== undefined) {
+            requireExecutionWorldWorkspace(this.options.store, input.executionWorld);
+            if (currentExecutionWorld === null || !sameExecutionWorld(input.executionWorld, currentExecutionWorld)) {
+              throw new ProgramDispatchStaleError(
+                "Captured Operation execution-world generation is stale at admission",
+              );
+            }
+            admittedExecutionWorld = input.executionWorld;
+          }
           const ordinary = input.drafts.map((draft, index) => {
             if (String(draft.workspaceId) !== this.options.store.workspaceId) {
               throw new ProgramDispatchControlError("Root operation draft belongs to another Workspace");
@@ -697,10 +712,10 @@ export class ProgramDispatchServiceV1 {
             if (draft.programStateId !== undefined) {
               throw new ProgramDispatchControlError("Ordinary root operation may not carry ProgramStateId");
             }
-            if (index === 0 && input.workspaceAccessClass !== "no_workspace_access" && currentExecutionWorld !== null) {
+            if (index === 0 && admittedExecutionWorld !== null) {
               return {
                 ...draft,
-                payload: { ...record(draft.payload), executionWorld: structuredClone(currentExecutionWorld) },
+                payload: { ...record(draft.payload), executionWorld: structuredClone(admittedExecutionWorld) },
               };
             }
             return draft;
@@ -777,8 +792,11 @@ export class ProgramDispatchServiceV1 {
           if (currentExecutionWorld === null || !sameExecutionWorld(attemptExecutionWorld, currentExecutionWorld)) {
             throw new ProgramDispatchStaleError("ProgramAttempt execution-world generation is stale");
           }
-          if (input.executionWorld !== undefined && !sameExecutionWorld(input.executionWorld, attemptExecutionWorld)) {
-            throw new ProgramDispatchStaleError("Captured Operation execution binding does not match ProgramAttempt generation");
+          if (input.executionWorld !== undefined) {
+            requireExecutionWorldWorkspace(this.options.store, input.executionWorld);
+            if (!sameExecutionWorld(input.executionWorld, attemptExecutionWorld)) {
+              throw new ProgramDispatchStaleError("Captured Operation execution binding does not match ProgramAttempt generation");
+            }
           }
         }
 
@@ -808,7 +826,7 @@ export class ProgramDispatchServiceV1 {
               payload: {
                 ...record(draft.payload),
                 ...ownership,
-                ...(input.workspaceAccessClass !== "no_workspace_access" && attemptExecutionWorld !== null
+                ...(input.executionWorld !== undefined && attemptExecutionWorld !== null
                   ? { executionWorld: structuredClone(attemptExecutionWorld) }
                   : {}),
               },
