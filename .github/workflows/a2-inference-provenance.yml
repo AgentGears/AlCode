@@ -60,4 +60,13 @@ jobs:
       - name: Run permanent A2 gate on exact candidate head
         env:
           ALCODE_GATE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-        run: pnpm gate:a2-inference-provenance
+        run: |
+          set -o pipefail
+          pnpm gate:a2-inference-provenance 2>&1 | tee a2-gate.log
+      - name: Upload A2 gate log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a2-gate-log-${{ github.run_id }}-${{ github.run_attempt }}
+          path: a2-gate.log
+          if-no-files-found: warn
