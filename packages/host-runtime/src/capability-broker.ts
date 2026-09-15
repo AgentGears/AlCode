@@ -73,6 +73,7 @@ export interface HostCapabilityContext {
 }
 
 export type WorkspaceAccessClassV1 = "no_workspace_access" | "read_only" | "may_write";
+export type HostCapabilityExecutionScopeV1 = "host" | "workspace_world";
 
 export interface HostCapabilityQuiescenceRecoveryInputV1 {
   operationId: string;
@@ -126,6 +127,8 @@ export interface HostCapability {
   /** Legacy trusted metadata; explicit workspaceAccessClass is authoritative. */
   isReadOnly?: boolean;
   workspaceAccessClass?: WorkspaceAccessClassV1;
+  /** Physical execution authority is independent of logical Workspace access. */
+  executionScope?: HostCapabilityExecutionScopeV1;
   /** Host-owned containment proof contract for Program-linked may_write execution. */
   quiescence?: HostCapabilityQuiescenceV1;
   /** Optional stable Host-owned historical effect reconciliation contract. */
@@ -537,7 +540,15 @@ export class CapabilityBroker {
     const capability = registration.capability;
     const frozenArgs = freezeCanonical(request.args);
     const workspaceAccessClass = workspaceAccessClassOf(capability);
+    const worldScoped = capability.executionScope === "workspace_world";
     const isReadOnly = workspaceAccessClass !== "may_write";
+    if (worldScoped && this.executionWorldBindingAuthority === undefined) {
+      return this.finish(request, {
+        outcome: "denied",
+        errorCode: "execution_world_binding_unavailable",
+        error: `Workspace-world capability lacks Host execution-world binding authority: ${request.toolName}`,
+      });
+    }
     const approvalKey = this.approvalKey(request.sessionId, request.toolName);
     const alreadyApproved = this.alwaysApproved.has(approvalKey);
 
@@ -691,8 +702,8 @@ export class CapabilityBroker {
     let executionWorldBinding: ExecutionWorldOperationBindingV1 | undefined;
     try {
       if (this.programOperationAuthority !== undefined) {
-        if (workspaceAccessClass !== "no_workspace_access" && this.executionWorldBindingAuthority !== undefined) {
-          executionWorldBinding = await this.executionWorldBindingAuthority.captureCurrent();
+        if (worldScoped) {
+          executionWorldBinding = await this.executionWorldBindingAuthority!.captureCurrent();
         }
         const routed = await this.programOperationAuthority.appendRoutedRootOperation({
           sessionId: request.sessionId,
@@ -736,8 +747,8 @@ export class CapabilityBroker {
             }
           }
           let admittedDrafts = preDrafts;
-          if (workspaceAccessClass !== "no_workspace_access" && this.executionWorldBindingAuthority !== undefined) {
-            executionWorldBinding = await this.executionWorldBindingAuthority.captureCurrent();
+          if (worldScoped) {
+            executionWorldBinding = await this.executionWorldBindingAuthority!.captureCurrent();
             admittedDrafts = stampExecutionWorld(preDrafts, executionWorldBinding);
           }
           return { status: "appended" as const, events: await this.store.append(admittedDrafts) };
