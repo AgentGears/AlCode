@@ -26,6 +26,12 @@ export {
   validateHostCapabilityOperationScopedQuiescenceProofV1,
 } from "./capability-broker.ts";
 export {
+  ExecutionWorldOperationBindingRegistryV1,
+  ExecutionWorldOperationBindingControlError,
+  type ExecutionWorldOperationBindingV1,
+  type ExecutionWorldOperationBindingAuthorityV1,
+} from "./execution-world-binding.ts";
+export {
   HostApplicationService,
   type HostApplicationServiceOptions,
   type ApplicationAgentControl,
@@ -180,6 +186,7 @@ export {
   type ProgramAgentGenerationAuthorityV1,
   type ProgramRecoveryAuthorityV1,
   type ProgramFirstDispatchPlanningBridgeV1,
+  type ProgramExecutionWorldAuthorityV1,
   type ProgramDispatchServiceOptionsV1,
   type ProgramRootOperationContextV1,
   type ProgramRootOperationInputV1,
@@ -187,6 +194,7 @@ export {
   type ProgramRoutedRootOperationResultV1,
   type ProgramRootOperationAuthorityV1,
   resolveCurrentProgramOperationContext,
+  resolveProgramAttemptExecutionWorldBindingV1,
 } from "./program-dispatch.ts";
 
 export {
