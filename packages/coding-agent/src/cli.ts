@@ -238,6 +238,7 @@ async function main(): Promise<void> {
     fixedTopology: fixedRuntime,
     observations,
     artifactStore,
+    executionWorld: executionWorldAuthority,
     baselineAuthority: {
       forWorkItem: ({ programState }) => ({
         allowedRepositoryRoots: ["."],
