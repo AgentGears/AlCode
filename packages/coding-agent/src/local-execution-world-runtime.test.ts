@@ -13,6 +13,7 @@ import { createLocalWorkspace } from "./capabilities/local-workspace.ts";
 import { createExecutionWorldHostCapabilities } from "./host-capabilities.ts";
 import {
   activateLocalExecutionWorldV1,
+  recoverLocalExecutionWorldsAfterHostRestartV1,
   retireLocalExecutionWorldV1,
 } from "./local-execution-world-runtime.ts";
 
@@ -82,6 +83,59 @@ describeLocked("A5 local execution-world production bootstrap", () => {
 
       await retireLocalExecutionWorldV1(active);
       expect((await worlds.requireGeneration(active.world.identity.executionWorldGenerationId)).state).toBe("closed");
+    } finally {
+      locked.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses complete process-local absence after restart to close G0 before activating fresh G1", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "alcode-a5-local-restart-"));
+    const worldRoot = join(dir, "world");
+    mkdirSync(worldRoot, { recursive: true });
+    const locked = await openLockedWorkspaceStore({
+      databasePath: join(dir, "workspace.sqlite"),
+      lockPath: join(dir, "workspace.lock"),
+      workspaceId: asWorkspaceId(uuidv7()),
+      repositoryId: "a5-local-restart",
+    });
+    try {
+      const host = new HostRuntime({
+        store: locked,
+        capabilities: [],
+        policy: new DefaultHostPolicy({ knownTools: [] }),
+      });
+      await host.startup();
+      const session = await host.openOrResumeSession();
+      const worlds = new ExecutionWorldServiceV1(locked.store, host.admission);
+      const g0 = await activateLocalExecutionWorldV1({
+        worlds,
+        activationRequestId: "restart-g0",
+        workspaceId: String(locked.store.workspaceId),
+        sessionId: String(session.sessionId),
+        repositoryId: "a5-local-restart",
+        root: worldRoot,
+      });
+      const g0Id = g0.world.identity.executionWorldGenerationId;
+
+      // Simulate a new Host process: durable history remains, but no runtime
+      // binding registry from the old process is carried into recovery.
+      const recovered = await recoverLocalExecutionWorldsAfterHostRestartV1(worlds);
+      expect(recovered).toContain(g0Id);
+      expect((await worlds.requireGeneration(g0Id)).state).toBe("closed");
+
+      const g1 = await activateLocalExecutionWorldV1({
+        worlds,
+        activationRequestId: "restart-g1",
+        workspaceId: String(locked.store.workspaceId),
+        sessionId: String(session.sessionId),
+        repositoryId: "a5-local-restart",
+        root: worldRoot,
+      });
+      expect(g1.world.identity.executionWorldGenerationId).not.toBe(g0Id);
+      expect((await worlds.requireCurrent()).identity.executionWorldGenerationId)
+        .toBe(g1.world.identity.executionWorldGenerationId);
+      await retireLocalExecutionWorldV1(g1);
     } finally {
       locked.close();
       rmSync(dir, { recursive: true, force: true });
