@@ -31,6 +31,33 @@ function provenance(workspaceId: string, generation: string): ExecutionWorldOper
   };
 }
 
+function attemptState(
+  workspaceId: string,
+  programAttemptId: string,
+  workItemId: string,
+  executionWorld: ExecutionWorldOperationProvenanceV1,
+) {
+  const executionBase = {
+    workspaceEffectGeneration: 0,
+    observation: {
+      kind: "workspace-observation-v1" as const,
+      providerKind: executionWorld.providerKind,
+      workspaceIdentity: workspaceId,
+      coverageDigest: "a5-adaptive-world",
+      stateDigest: "same-bytes",
+      executionWorld: structuredClone(executionWorld),
+    },
+  };
+  return {
+    activeAttempt: {
+      programAttemptId,
+      workItemId,
+      initialExecutionBase: structuredClone(executionBase),
+      expectedExecutionBase: executionBase,
+    },
+  };
+}
+
 async function replayAll(locked: LockedWorkspaceStore) {
   const events = [];
   for await (const event of locked.store.replay()) events.push(event);
@@ -78,9 +105,7 @@ describeLocked("A5 adaptive execution-world composition", () => {
       type: "program.transitioned",
       payload: {
         transitionKind: "attempt.issue",
-        state: {
-          activeAttempt: { programAttemptId, workItemId },
-        },
+        state: attemptState(workspaceId, programAttemptId, workItemId, current),
       },
       payloadSchemaVersion: 1,
       producer: { kind: "runtime", component: "program-adaptive-admission-v2" },
@@ -158,5 +183,40 @@ describeLocked("A5 adaptive execution-world composition", () => {
     events = await replayAll(locked);
     expect(events.some((event) =>
       event.type === "operation.requested" && String(event.operationId) === "op-stale")).toBe(false);
+  });
+
+  it("rejects adaptive Attempt issuance when its observed G0 base races current G1", async () => {
+    locked = await openLockedWorkspaceStore({
+      databasePath: join(dir, "workspace-race.sqlite"),
+      lockPath: join(dir, "workspace-race.lock"),
+      workspaceId: asWorkspaceId(uuidv7()),
+      repositoryId: "a5-adaptive-world-race",
+    });
+    const workspaceId = String(locked.store.workspaceId);
+    const g0 = provenance(workspaceId, "g0");
+    const g1 = provenance(workspaceId, "g1");
+    const composition = createProgramAdaptiveExecutionWorldCompositionV1(
+      locked.store,
+      { currentOperationProvenance: async () => structuredClone(g1) },
+    );
+    const sessionId = asSessionId(uuidv7());
+    const programStateId = asProgramStateId(uuidv7());
+
+    await expect(composition.store.append([{
+      eventId: mkEventId(),
+      workspaceId: asWorkspaceId(workspaceId),
+      sessionId,
+      programStateId,
+      occurredAt: new Date().toISOString(),
+      type: "program.transitioned",
+      payload: {
+        transitionKind: "attempt.issue",
+        state: attemptState(workspaceId, "attempt-race", "work-race", g0),
+      },
+      payloadSchemaVersion: 1,
+      producer: { kind: "runtime", component: "program-adaptive-admission-v2" },
+    }])).rejects.toBeInstanceOf(ProgramDispatchStaleError);
+
+    expect(await replayAll(locked)).toHaveLength(0);
   });
 });
