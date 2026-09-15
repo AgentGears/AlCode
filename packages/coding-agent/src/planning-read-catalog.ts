@@ -26,6 +26,13 @@ const SEARCH_FILE_MAX_BYTES = 64 * 1024;
 const SEARCH_PATTERN_MAX_CHARS = 1_024;
 const SEARCH_LINE_MAX_CHARS = 2_000;
 
+export interface LocalPlanningExecutionBindingV1 {
+  resolveWorkspace(): Promise<{
+    workspace: Workspace;
+    providerBindingRevision: string;
+  }>;
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new PlanningReadError("Planning read arguments must be a JSON object");
@@ -112,7 +119,28 @@ function descriptor(
   };
 }
 
-function treeContract(workspace: Workspace): PlanningReadContractV1 {
+async function resolvePlanningWorkspace(
+  descriptorWorkspace: Workspace,
+  binding: LocalPlanningExecutionBindingV1 | undefined,
+): Promise<{ workspace: Workspace; providerBindingRevision: string }> {
+  if (binding === undefined) {
+    return { workspace: descriptorWorkspace, providerBindingRevision: "local-planning-fs@1" };
+  }
+  const resolved = await binding.resolveWorkspace();
+  if (resolved.workspace.identity.workspaceId !== descriptorWorkspace.identity.workspaceId
+      || resolved.workspace.identity.repositoryId !== descriptorWorkspace.identity.repositoryId) {
+    throw new PlanningReadError("Execution-world planning binding belongs to another Workspace or repository");
+  }
+  if (typeof resolved.providerBindingRevision !== "string" || resolved.providerBindingRevision.length === 0) {
+    throw new PlanningReadError("Execution-world planning binding lacks provider revision provenance");
+  }
+  return resolved;
+}
+
+function treeContract(
+  workspace: Workspace,
+  binding?: LocalPlanningExecutionBindingV1,
+): PlanningReadContractV1 {
   return {
     readContractId: "workspace.list_tree",
     readContractVersion: 1,
@@ -127,6 +155,8 @@ function treeContract(workspace: Workspace): PlanningReadContractV1 {
       };
     },
     async execute(canonicalArgs) {
+      const resolved = await resolvePlanningWorkspace(workspace, binding);
+      const activeWorkspace = resolved.workspace;
       const args = asRecord(canonicalArgs);
       const rootPath = String(args.path);
       const maxDepth = Number(args.depth);
@@ -139,7 +169,7 @@ function treeContract(workspace: Workspace): PlanningReadContractV1 {
           complete = false;
           return;
         }
-        const listed = await workspace.filesystem.list({ path, includeHidden: false });
+        const listed = await activeWorkspace.filesystem.list({ path, includeHidden: false });
         const canonical = listed
           .map((entry) => ({
             path: entry.path.split(sep).join("/"),
@@ -165,14 +195,17 @@ function treeContract(workspace: Workspace): PlanningReadContractV1 {
       return {
         result: { path: rootPath, entries, complete },
         complete: true,
-        coverageIdentity: `local-workspace:${workspace.identity.workspaceId}`,
-        providerBindingRevision: "local-planning-fs@1",
+        coverageIdentity: `local-workspace:${activeWorkspace.identity.workspaceId}`,
+        providerBindingRevision: resolved.providerBindingRevision,
       };
     },
   };
 }
 
-function readTextContract(workspace: Workspace): PlanningReadContractV1 {
+function readTextContract(
+  workspace: Workspace,
+  binding?: LocalPlanningExecutionBindingV1,
+): PlanningReadContractV1 {
   return {
     readContractId: "workspace.read_text",
     readContractVersion: 1,
@@ -186,10 +219,11 @@ function readTextContract(workspace: Workspace): PlanningReadContractV1 {
       };
     },
     async execute(canonicalArgs) {
+      const resolved = await resolvePlanningWorkspace(workspace, binding);
       const args = asRecord(canonicalArgs);
       const path = String(args.path);
       const maxBytes = Number(args.maxBytes);
-      const read = await workspace.filesystem.read({ path, maxBytes });
+      const read = await resolved.workspace.filesystem.read({ path, maxBytes });
       return {
         result: {
           path,
@@ -199,8 +233,8 @@ function readTextContract(workspace: Workspace): PlanningReadContractV1 {
           complete: !read.truncated,
         },
         complete: true,
-        coverageIdentity: `local-workspace:${workspace.identity.workspaceId}`,
-        providerBindingRevision: "local-planning-fs@1",
+        coverageIdentity: `local-workspace:${resolved.workspace.identity.workspaceId}`,
+        providerBindingRevision: resolved.providerBindingRevision,
       };
     },
   };
@@ -214,7 +248,10 @@ function globRegex(pattern: string): RegExp {
   return new RegExp(`^${source}$`);
 }
 
-function searchTextContract(workspace: Workspace): PlanningReadContractV1 {
+function searchTextContract(
+  workspace: Workspace,
+  binding?: LocalPlanningExecutionBindingV1,
+): PlanningReadContractV1 {
   return {
     readContractId: "workspace.search_text",
     readContractVersion: 1,
@@ -231,6 +268,8 @@ function searchTextContract(workspace: Workspace): PlanningReadContractV1 {
       };
     },
     async execute(canonicalArgs) {
+      const resolved = await resolvePlanningWorkspace(workspace, binding);
+      const activeWorkspace = resolved.workspace;
       const args = asRecord(canonicalArgs);
       const maxResults = Number(args.maxResults);
       const include = args.include === null ? null : globRegex(String(args.include));
@@ -251,7 +290,7 @@ function searchTextContract(workspace: Workspace): PlanningReadContractV1 {
           complete = false;
           return;
         }
-        const listed = (await workspace.filesystem.list({ path, includeHidden: false }))
+        const listed = (await activeWorkspace.filesystem.list({ path, includeHidden: false }))
           .map((entry) => ({ ...entry, path: entry.path.split(sep).join("/") }))
           .sort((a, b) => compareText(a.path, b.path));
         for (const entry of listed) {
@@ -270,7 +309,7 @@ function searchTextContract(workspace: Workspace): PlanningReadContractV1 {
             complete = false;
             return;
           }
-          const read = await workspace.filesystem.read({ path: entry.path, maxBytes: SEARCH_FILE_MAX_BYTES });
+          const read = await activeWorkspace.filesystem.read({ path: entry.path, maxBytes: SEARCH_FILE_MAX_BYTES });
           if (read.notFound) continue;
           if (read.truncated) complete = false;
           const lines = read.content.split("\n");
@@ -310,8 +349,8 @@ function searchTextContract(workspace: Workspace): PlanningReadContractV1 {
           complete,
         },
         complete: true,
-        coverageIdentity: `local-workspace:${workspace.identity.workspaceId}`,
-        providerBindingRevision: "local-planning-fs@1",
+        coverageIdentity: `local-workspace:${activeWorkspace.identity.workspaceId}`,
+        providerBindingRevision: resolved.providerBindingRevision,
       };
     },
   };
@@ -320,6 +359,7 @@ function searchTextContract(workspace: Workspace): PlanningReadContractV1 {
 export function createLocalPlanningReadRegistry(
   workspace: Workspace,
   codeIntelligence?: SemanticPlanningCodeIntelligence,
+  executionBinding?: LocalPlanningExecutionBindingV1,
 ): PlanningReadRegistry {
   const semantic = codeIntelligence === undefined
     ? { contracts: [] as PlanningReadContractV1[], catalog: [] as ProgramPlanningReadDescriptorV1[] }
@@ -330,9 +370,9 @@ export function createLocalPlanningReadRegistry(
         service: codeIntelligence,
       });
   const contracts = [
-    treeContract(workspace),
-    readTextContract(workspace),
-    searchTextContract(workspace),
+    treeContract(workspace, executionBinding),
+    readTextContract(workspace, executionBinding),
+    searchTextContract(workspace, executionBinding),
     ...semantic.contracts,
   ];
   const catalog: ProgramPlanningReadDescriptorV1[] = [
