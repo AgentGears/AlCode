@@ -9,6 +9,7 @@ import type { Workspace } from "./capabilities/types.ts";
 import {
   CODING_WORKSPACE_EXECUTION_SERVICE_V1,
   CODING_WORKSPACE_OBSERVATION_SERVICE_V1,
+  LOCAL_TRUSTED_EXECUTION_PROVIDER_V1,
   type CodingWorkspaceObservationServiceV1,
 } from "./execution-provider.ts";
 import type { LocalPlanningExecutionBindingV1 } from "./planning-read-catalog.ts";
@@ -173,6 +174,11 @@ export function createExecutionWorldSemanticPlanningBridgeV1(
       options?: { signal?: AbortSignal },
     ): Promise<SemanticPlanningObservation<SemanticPlanningQueryResult<Q>>> {
       const before = await authority.captureCurrent();
+      if (before.provenance.providerKind !== LOCAL_TRUSTED_EXECUTION_PROVIDER_V1.providerKind) {
+        throw new PlanningReadError(
+          "CodeIntelligence is unavailable because the current execution provider cannot prove Host-local semantic freshness",
+        );
+      }
       const workspace = requireWorkspace(before);
       if (workspace.identity.root !== expectedRoot) {
         throw new PlanningReadError(
