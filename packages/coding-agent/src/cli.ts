@@ -35,13 +35,13 @@ import {
   createExecutionWorldPlanningBindingV1,
   createExecutionWorldSemanticPlanningBridgeV1,
 } from "./execution-world-observation.ts";
-import {
-  activateLocalExecutionWorldV1,
-  recoverLocalExecutionWorldsAfterHostRestartV1,
-  retireLocalExecutionWorldV1,
-  type ActiveLocalExecutionWorldV1,
-} from "./local-execution-world-runtime.ts";
 import { createLocalPlanningReadRegistry } from "./planning-read-catalog.ts";
+import {
+  activateProductExecutionWorldV1,
+  recoverProductExecutionWorldsAfterHostRestartV1,
+  resolveProductExecutionProviderKindV1,
+  type ActiveProductExecutionWorldV1,
+} from "./product-execution-world-runtime.ts";
 import { createDefaultProgramVerifierConfiguration } from "./verification-profile.ts";
 
 const SYSTEM_PROMPT = "You are ALCODE, a memory-native coding agent.";
@@ -158,7 +158,8 @@ async function main(): Promise<void> {
     workspaceId: String(workspaceEntry.workspaceId),
     repositoryId: workspaceEntry.repositoryId,
   });
-  let activeExecutionWorld: ActiveLocalExecutionWorldV1 | undefined;
+  const executionProviderKind = resolveProductExecutionProviderKindV1();
+  let activeExecutionWorld: ActiveProductExecutionWorldV1 | undefined;
   const executionBindingAuthority: ExecutionWorldOperationBindingAuthorityV1 = {
     captureCurrent: async () => {
       if (activeExecutionWorld === undefined) {
@@ -304,11 +305,16 @@ async function main(): Promise<void> {
   let completedSuccessfully = false;
   try {
     await runtime.host.startup();
-    await recoverLocalExecutionWorldsAfterHostRestartV1(executionWorldService);
-    const session = await runtime.host.sessions.openOrResume();
-    activeExecutionWorld = await activateLocalExecutionWorldV1({
+    await recoverProductExecutionWorldsAfterHostRestartV1({
+      providerKind: executionProviderKind,
       worlds: executionWorldService,
-      activationRequestId: `alcode-cli-${randomUUID()}`,
+      root,
+    });
+    const session = await runtime.host.sessions.openOrResume();
+    activeExecutionWorld = await activateProductExecutionWorldV1({
+      providerKind: executionProviderKind,
+      worlds: executionWorldService,
+      activationRequestId: `alcode-cli-${executionProviderKind}-${randomUUID()}`,
       workspaceId: String(workspaceEntry.workspaceId),
       sessionId: String(session.sessionId),
       repositoryId: workspaceEntry.repositoryId,
@@ -542,7 +548,7 @@ async function main(): Promise<void> {
     await supervisor.shutdown(completedSuccessfully ? "completed" : "cancelled").catch(() => undefined);
     runtime.host.capabilityBroker.setExecutionWorldBindingAuthority(undefined);
     if (activeExecutionWorld !== undefined) {
-      await retireLocalExecutionWorldV1(activeExecutionWorld).catch(() => undefined);
+      await activeExecutionWorld.retire().catch(() => undefined);
       activeExecutionWorld = undefined;
     }
     locked.close();
