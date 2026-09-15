@@ -92,6 +92,27 @@ async function replayAll(locked: LockedWorkspaceStore) {
   return events;
 }
 
+function requestedDraft(
+  workspaceId: string,
+  sessionId: SessionId,
+  operationId: ReturnType<typeof mkOperationId>,
+  workspaceAccessClass: "no_workspace_access" | "read_only" | "may_write",
+): EventDraft<string, unknown> {
+  return {
+    eventId: mkEventId(),
+    idempotencyKey: `operation.requested:${String(operationId)}`,
+    correlationId: String(operationId),
+    workspaceId: asWorkspaceId(workspaceId),
+    sessionId,
+    operationId,
+    occurredAt: new Date().toISOString(),
+    type: "operation.requested",
+    payload: { operationId: String(operationId), workspaceAccessClass },
+    payloadSchemaVersion: 1,
+    producer: { kind: "runtime", component: "program-execution-world-binding-test" },
+  };
+}
+
 describeLocked("A5 ProgramAttempt execution-world binding", () => {
   let dir: string;
   let locked: LockedWorkspaceStore | null;
@@ -176,22 +197,7 @@ describeLocked("A5 ProgramAttempt execution-world binding", () => {
     )).toEqual(g0);
 
     const operationId = mkOperationId();
-    const requested: EventDraft<string, unknown> = {
-      eventId: mkEventId(),
-      idempotencyKey: `operation.requested:${String(operationId)}`,
-      correlationId: String(operationId),
-      workspaceId: asWorkspaceId(workspaceId),
-      sessionId: session.sessionId,
-      operationId,
-      occurredAt: new Date().toISOString(),
-      type: "operation.requested",
-      payload: {
-        operationId: String(operationId),
-        workspaceAccessClass: "read_only",
-      },
-      payloadSchemaVersion: 1,
-      producer: { kind: "runtime", component: "program-execution-world-binding-test" },
-    };
+    const requested = requestedDraft(workspaceId, session.sessionId, operationId, "read_only");
     const program = {
       programStateId: String(initial.programStateId),
       expectedProgramRevision: issued.state.revision,
@@ -236,14 +242,7 @@ describeLocked("A5 ProgramAttempt execution-world binding", () => {
       workspaceAccessClass: "read_only",
       program,
       executionWorld: g0,
-      drafts: [{
-        ...requested,
-        eventId: mkEventId(),
-        idempotencyKey: `operation.requested:${String(staleOperationId)}`,
-        correlationId: String(staleOperationId),
-        operationId: staleOperationId,
-        payload: { operationId: String(staleOperationId), workspaceAccessClass: "read_only" },
-      }],
+      drafts: [requestedDraft(workspaceId, session.sessionId, staleOperationId, "read_only")],
     })).rejects.toBeInstanceOf(ProgramDispatchStaleError);
 
     const after = await replayAll(locked);
@@ -266,5 +265,91 @@ describeLocked("A5 ProgramAttempt execution-world binding", () => {
       ...program,
       sessionId: session.sessionId,
     })).rejects.toBeInstanceOf(ProgramDispatchStaleError);
+  });
+
+  it("rejects a stale captured ordinary binding and derives provenance from execution scope, not workspace access", async () => {
+    locked = await openLockedWorkspaceStore({
+      databasePath: join(dir, "workspace.sqlite"),
+      lockPath: join(dir, "workspace.lock"),
+      workspaceId: asWorkspaceId(uuidv7()),
+      repositoryId: uuidv7(),
+    });
+    const admission = new CanonicalAdmissionQueue(locked.store);
+    const sessions = new HostSessionManager(locked, admission);
+    const session = await sessions.openOrResume();
+    const workspaceId = String(locked.store.workspaceId);
+    const worlds = new ExecutionWorldServiceV1(locked.store, admission);
+
+    const g0 = await worlds.prepareActivation({
+      activationRequestId: "ordinary-g0",
+      workspaceId,
+      sessionId: String(session.sessionId),
+      providerDescriptor: provider,
+      effectivePolicy: policy,
+    });
+    await worlds.observeActivation({
+      executionWorldGenerationId: g0.executionWorldGenerationId,
+      evidence: readiness("ordinary-same-bytes"),
+    });
+
+    const dispatch = new ProgramDispatchServiceV1({
+      store: locked.store,
+      admission,
+      workspaceCoordinator: { runExclusive: (work) => work() },
+      observations: { observe: async () => ({ status: "complete", base: base(workspaceId) }) },
+      agentGenerations: { isCurrent: () => true },
+      recovery: { isClear: () => true },
+      firstDispatchPlanning: { recheckAcceptedPlanningBase: async () => undefined },
+      executionWorld: worlds,
+    });
+
+    const g1 = await worlds.prepareActivation({
+      activationRequestId: "ordinary-g1",
+      workspaceId,
+      sessionId: String(session.sessionId),
+      providerDescriptor: provider,
+      effectivePolicy: policy,
+    });
+    await worlds.observeActivation({
+      executionWorldGenerationId: g1.executionWorldGenerationId,
+      evidence: readiness("ordinary-same-bytes"),
+    });
+
+    const staleOperationId = mkOperationId();
+    await expect(dispatch.appendRoutedRootOperation({
+      sessionId: session.sessionId,
+      operationId: String(staleOperationId),
+      workspaceAccessClass: "no_workspace_access",
+      executionWorld: g0,
+      drafts: [requestedDraft(workspaceId, session.sessionId, staleOperationId, "no_workspace_access")],
+    })).rejects.toThrow("Captured Operation execution-world generation is stale at admission");
+
+    const worldScopedOperationId = mkOperationId();
+    const worldScoped = await dispatch.appendRoutedRootOperation({
+      sessionId: session.sessionId,
+      operationId: String(worldScopedOperationId),
+      workspaceAccessClass: "no_workspace_access",
+      executionWorld: g1,
+      drafts: [requestedDraft(workspaceId, session.sessionId, worldScopedOperationId, "no_workspace_access")],
+    });
+    expect(worldScoped.status).toBe("appended");
+    if (worldScoped.status !== "appended") throw new Error("expected world-scoped ordinary Operation");
+    expect((worldScoped.events[0]?.payload as Record<string, unknown>).executionWorld).toEqual(g1);
+
+    const hostScopedOperationId = mkOperationId();
+    const hostScoped = await dispatch.appendRoutedRootOperation({
+      sessionId: session.sessionId,
+      operationId: String(hostScopedOperationId),
+      workspaceAccessClass: "read_only",
+      drafts: [requestedDraft(workspaceId, session.sessionId, hostScopedOperationId, "read_only")],
+    });
+    expect(hostScoped.status).toBe("appended");
+    if (hostScoped.status !== "appended") throw new Error("expected host-scoped ordinary Operation");
+    expect((hostScoped.events[0]?.payload as Record<string, unknown>).executionWorld).toBeUndefined();
+
+    const events = await replayAll(locked);
+    expect(events.some((event) =>
+      event.type === "operation.requested" && String(event.operationId ?? "") === String(staleOperationId),
+    )).toBe(false);
   });
 });
