@@ -81,7 +81,7 @@ checks.push(check(
 ));
 
 checks.push(check(
-  "a5.ac11-13.physical-isolation-s02-a2",
+  "a5.ac11-13-14.physical-isolation-s02-a2-recovery",
   () => {
     if (process.platform !== "linux") {
       throw new Error("The blocking A5 physical-isolation gate requires the supported Linux Docker platform");
@@ -89,10 +89,11 @@ checks.push(check(
     execFileSync("docker", ["version"], { stdio: "inherit", env: process.env });
     dockerVitest(
       "packages/coding-agent/src/docker-execution-provider.integration.test.ts",
+      "packages/coding-agent/src/docker-execution-world-recovery.integration.test.ts",
       "packages/coding-agent/src/cli-a5-isolated-s02.integration.test.ts",
     );
   },
-  "the real Docker isolated-v1 backend proves mount/env/network/resource/process-tree containment and one S02 run_code read-edit-read sequence whose A2 nested Operations plus Host verification all bind the same exact isolated generation",
+  "the real Docker isolated-v1 backend proves mount/env/network/resource/process-tree containment, positive restart reconciliation across activation/teardown loss windows, and one S02 run_code read-edit-read sequence whose A2 nested Operations plus Host verification all bind the same exact isolated generation",
 ));
 
 checks.push(check(
@@ -109,7 +110,7 @@ const receipt = buildReceipt({
   inputs: [
     { name: "A5 frozen AC-A5-01 through AC-A5-15" },
     { name: "A5 frozen adversarial execution-world scenarios" },
-    { name: "Linux Docker isolated-v1 physical containment proof" },
+    { name: "Linux Docker isolated-v1 physical containment/recovery proof" },
     { name: "A2 -> S02 -> product-agent predecessor gate chain" },
   ],
   checks,
