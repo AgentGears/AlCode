@@ -1,3 +1,4 @@
+import { digestOf } from "@alcode/context";
 import {
   ExecutionWorldOperationBindingRegistryV1,
   type ExecutionWorldOperationBindingV1,
@@ -24,6 +25,56 @@ export interface ActivateLocalExecutionWorldInputV1 {
   sessionId: string;
   repositoryId: string;
   root: string;
+}
+
+/**
+ * Reconcile durable local-trusted generations after a Host process restart.
+ *
+ * The local provider's runtime binding exists only in the Host process that
+ * created it; it cannot survive process death. A fresh Host process therefore
+ * has complete positive absence for the exact old in-memory binding. This
+ * recovery is deliberately limited to this adapter and must run before any new
+ * local binding is created in the current process.
+ */
+export async function recoverLocalExecutionWorldsAfterHostRestartV1(
+  worlds: ExecutionWorldServiceV1,
+): Promise<string[]> {
+  const projection = await worlds.rebuild();
+  const recovered: string[] = [];
+  for (const generation of projection.generations.values()) {
+    if (generation.state === "closed") continue;
+    if (generation.providerDescriptor.providerKind !== LOCAL_TRUSTED_EXECUTION_PROVIDER_V1.providerKind
+        || generation.providerDescriptor.adapter !== LOCAL_TRUSTED_EXECUTION_PROVIDER_V1.adapter) {
+      continue;
+    }
+
+    const generationId = generation.identity.executionWorldGenerationId;
+    let current = generation;
+    if (current.state === "prepared" || current.state === "active") {
+      current = await worlds.markLost({
+        executionWorldGenerationId: generationId,
+        reasonCode: "local_host_restart_binding_absent",
+      });
+    }
+    if (current.state !== "retiring" && current.state !== "lost_or_unknown") {
+      throw new Error(`Local restart recovery cannot close execution world from ${current.state}`);
+    }
+
+    await worlds.observeClosure({
+      executionWorldGenerationId: generationId,
+      evidence: {
+        closureEvidenceDigest: digestOf({
+          contract: "local-execution-world-restart-absence-v1",
+          executionWorldGenerationId: generationId,
+          adapter: generation.providerDescriptor.adapter,
+          bindingUnavailable: true,
+        }),
+        bindingUnavailable: true,
+      },
+    });
+    recovered.push(generationId);
+  }
+  return recovered;
 }
 
 /**
