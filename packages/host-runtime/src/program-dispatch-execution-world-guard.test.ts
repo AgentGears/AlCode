@@ -58,7 +58,7 @@ function drafts(observedGeneration: string | undefined, boundGeneration: string)
 function storeThatRecords(appended: EventDraft<string, unknown>[][]): WorkspaceEventStore {
   return {
     workspaceId: "workspace-a5",
-    append: async (batch) => {
+    append: async (batch: readonly EventDraft<string, unknown>[]) => {
       appended.push([...batch]);
       return batch.map((draft, index) => ({ ...draft, sequence: index + 1 })) as PersistedDomainEvent<string, unknown>[];
     },
