@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentTool } from "@alcode/agent-core";
 import type { ExecutionWorldOperationBindingV1 } from "@alcode/host-runtime";
 import { createLocalWorkspace } from "./capabilities/local-workspace.ts";
+import type { Workspace } from "./capabilities/types.ts";
 import {
   agentToolAsHostCapability,
   createExecutionWorldHostCapabilities,
@@ -107,6 +108,77 @@ describe("Program-backed Host capability adapters", () => {
       rmSync(descriptorRoot, { recursive: true, force: true });
       rmSync(g0Root, { recursive: true, force: true });
       rmSync(g1Root, { recursive: true, force: true });
+    }
+  });
+
+  it("routes bash through the captured execution-world terminal instead of Host cwd execution", async () => {
+    const descriptorRoot = mkdtempSync(join(tmpdir(), "alcode-a5-bash-descriptor-"));
+    try {
+      const descriptorWorkspace = createLocalWorkspace({
+        workspaceId: "workspace-a5-bash",
+        repositoryId: "repo-a5-bash",
+        root: descriptorRoot,
+      });
+      let executedCommand = "";
+      const boundWorkspace: Workspace = {
+        identity: {
+          workspaceId: "workspace-a5-bash",
+          repositoryId: "repo-a5-bash",
+          root: "/physical-world-label",
+        },
+        filesystem: descriptorWorkspace.filesystem,
+        terminal: {
+          execute: async (request) => {
+            executedCommand = request.command;
+            return {
+              stdout: "physical-world-terminal\n",
+              stderr: "",
+              exitCode: 0,
+              durationMs: 3,
+              timedOut: false,
+              cancelled: false,
+              truncated: false,
+            };
+          },
+        },
+      };
+      const binding: ExecutionWorldOperationBindingV1 = {
+        provenance: {
+          workspaceId: "workspace-a5-bash",
+          providerKind: "isolated-test",
+          executionWorldGenerationId: "g-bash",
+          providerDescriptorDigest: "provider-digest",
+          effectivePolicyDigest: "policy-digest",
+        },
+        assertUsable: () => undefined,
+        getService: (serviceId) => serviceId === CODING_WORKSPACE_EXECUTION_SERVICE_V1 ? boundWorkspace : undefined,
+      };
+      const bash = createExecutionWorldHostCapabilities(descriptorWorkspace)
+        .find((candidate) => candidate.name === "bash");
+      if (bash === undefined) throw new Error("missing bash capability");
+
+      const result = await bash.execute(
+        { command: "echo physical" },
+        {
+          executionWorldBinding: binding,
+          quiescenceContract: {
+            containment: "operation_scoped_containment",
+            proofContractId: "host-capability-promise-v1",
+            proofContractVersion: 1,
+            containmentInstanceId: "containment-bash",
+          },
+        },
+      );
+
+      expect(executedCommand).toBe("echo physical");
+      expect(result.stdout).toContain("physical-world-terminal");
+      expect(JSON.stringify(result.result)).toContain("physical-world-terminal");
+      expect(result.quiescenceProof).toMatchObject({
+        containmentInstanceId: "containment-bash",
+        proofKind: "operation_containment_ended",
+      });
+    } finally {
+      rmSync(descriptorRoot, { recursive: true, force: true });
     }
   });
 });
