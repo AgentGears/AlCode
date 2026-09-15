@@ -40,10 +40,12 @@ export async function reconstructInferenceProvenanceV1(
     store,
     new CanonicalAdmissionQueue(store),
   );
-  const epochs = (await lifecycle.list()).map((epoch) => ({
-    ...epoch,
-    calls: [] as InferenceOperationCallProjectionV1[],
-  }));
+  const epochs: ReconstructableInferenceEpochV1[] = (await lifecycle.list()).map(
+    (epoch): ReconstructableInferenceEpochV1 => ({
+      ...epoch,
+      calls: [],
+    }),
+  );
   const byId = new Map(epochs.map((epoch) => [epoch.inferenceEpochId, epoch]));
 
   for await (const event of store.replay()) {
