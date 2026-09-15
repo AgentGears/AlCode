@@ -46,6 +46,24 @@ function extractNumber(details: unknown, key: string): number | null | undefined
   return typeof value === "number" || value === null ? value : undefined;
 }
 
+function quiescenceProof(
+  isReadOnly: boolean,
+  context: HostCapabilityContext,
+) {
+  return !isReadOnly && context.quiescenceContract !== undefined
+    ? {
+        containmentInstanceId: context.quiescenceContract.containmentInstanceId,
+        proofContractId: context.quiescenceContract.proofContractId,
+        proofContractVersion: context.quiescenceContract.proofContractVersion,
+        proofKind: "operation_containment_ended" as const,
+        evidence: {
+          kind: "operation_scope_ended",
+          containmentInstanceId: context.quiescenceContract.containmentInstanceId,
+        },
+      }
+    : undefined;
+}
+
 async function executeOwnedTool(
   tool: AnyAgentTool,
   args: unknown,
@@ -61,18 +79,7 @@ async function executeOwnedTool(
     .map((block) => block.text)
     .join("\n");
   const exitCode = extractNumber(result.details, "exitCode");
-  const quiescenceProof = !isReadOnly && context.quiescenceContract !== undefined
-    ? {
-        containmentInstanceId: context.quiescenceContract.containmentInstanceId,
-        proofContractId: context.quiescenceContract.proofContractId,
-        proofContractVersion: context.quiescenceContract.proofContractVersion,
-        proofKind: "operation_containment_ended" as const,
-        evidence: {
-          kind: "operation_scope_ended",
-          containmentInstanceId: context.quiescenceContract.containmentInstanceId,
-        },
-      }
-    : undefined;
+  const proof = quiescenceProof(isReadOnly, context);
   return {
     result: {
       content: result.content,
@@ -81,7 +88,66 @@ async function executeOwnedTool(
     ...(result.executionOutcome !== undefined ? { outcome: result.executionOutcome } : {}),
     stdout: text,
     ...(exitCode !== undefined ? { exitCode } : {}),
-    ...(quiescenceProof !== undefined ? { quiescenceProof } : {}),
+    ...(proof !== undefined ? { quiescenceProof: proof } : {}),
+  };
+}
+
+function requiredBashCommand(args: unknown): string {
+  if (typeof args !== "object" || args === null || Array.isArray(args)) {
+    throw new Error("bash arguments must be an object");
+  }
+  const command = (args as Record<string, unknown>).command;
+  if (typeof command !== "string" || command.length === 0) {
+    throw new Error("bash command must be a non-empty string");
+  }
+  return command;
+}
+
+/**
+ * Execute bash through the Workspace terminal supplied by the exact captured
+ * execution-world generation. This intentionally does not reuse createBashTool:
+ * that compatibility tool spawns on the Host using a cwd string, which would
+ * make an isolated world's process execution escape back to the Host.
+ */
+async function executeCapturedWorldTerminal(
+  workspace: Workspace,
+  args: unknown,
+  context: HostCapabilityContext,
+): Promise<HostCapabilityResult> {
+  const command = requiredBashCommand(args);
+  const execution = await workspace.terminal.execute(
+    { command },
+    context.signal,
+  );
+  const outcome = execution.cancelled
+    ? "cancelled" as const
+    : execution.timedOut
+      ? "timed_out" as const
+      : execution.exitCode !== 0
+        ? "failed" as const
+        : "succeeded" as const;
+  const text = execution.cancelled
+    ? `[cancelled] exit=${execution.exitCode} duration=${execution.durationMs}ms\n${execution.stdout}`
+    : execution.timedOut
+      ? `[timed_out] exit=${execution.exitCode} duration=${execution.durationMs}ms\n${execution.stdout}`
+      : `exit=${execution.exitCode} duration=${execution.durationMs}ms\n${execution.stdout}${execution.stderr ? `\n[stderr]\n${execution.stderr}` : ""}`;
+  const proof = quiescenceProof(false, context);
+  return {
+    result: {
+      content: [{ type: "text", text }],
+      details: {
+        exitCode: execution.exitCode,
+        durationMs: execution.durationMs,
+        timedOut: execution.timedOut,
+        cancelled: execution.cancelled,
+        truncated: execution.truncated,
+      },
+    },
+    outcome,
+    stdout: execution.stdout,
+    stderr: execution.stderr,
+    exitCode: execution.exitCode,
+    ...(proof !== undefined ? { quiescenceProof: proof } : {}),
   };
 }
 
@@ -149,6 +215,9 @@ export function createExecutionWorldHostCapabilities(descriptorWorkspace: Worksp
       executionScope: "workspace_world" as const,
       async execute(args: unknown, context: HostCapabilityContext): Promise<HostCapabilityResult> {
         const workspace = requireCapturedWorkspace(context);
+        if (descriptor.name === "bash") {
+          return executeCapturedWorldTerminal(workspace, args, context);
+        }
         return executeOwnedTool(factory(workspace), args, context);
       },
     };
