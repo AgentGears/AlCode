@@ -1,5 +1,8 @@
 import { digestOf } from "@alcode/context";
 import type {
+  ExecutionWorldOperationBindingV1,
+} from "@alcode/host-runtime";
+import type {
   ExecutionContainmentPolicyDescriptorV1,
   ExecutionProviderDescriptorV1,
   ExecutionWorldActivationEvidenceV1,
@@ -8,6 +11,8 @@ import type {
 } from "@alcode/host-runtime/execution-world";
 import { createLocalWorkspace } from "./capabilities/local-workspace.ts";
 import type { FilesystemCapability, TerminalCapability, Workspace } from "./capabilities/types.ts";
+
+export const CODING_WORKSPACE_EXECUTION_SERVICE_V1 = "alcode.coding.workspace.v1";
 
 export const LOCAL_TRUSTED_EXECUTION_PROVIDER_V1: ExecutionProviderDescriptorV1 = {
   providerKind: "local-trusted",
@@ -35,6 +40,7 @@ export interface WorkspaceExecutionWorldV1 {
   readonly identity: ExecutionWorldIdentityV1;
   readonly workspace: Workspace;
   activationEvidence(): ExecutionWorldActivationEvidenceV1;
+  operationBinding(): ExecutionWorldOperationBindingV1;
   close(): Promise<ExecutionWorldClosureEvidenceV1>;
   isOpen(): boolean;
 }
@@ -91,10 +97,17 @@ export function createLocalExecutionWorldV1(input: LocalExecutionWorldInputV1): 
     }),
   });
 
+  const operationBinding = (): ExecutionWorldOperationBindingV1 => ({
+    provenance: structuredClone(input.identity),
+    assertUsable: requireOpen,
+    getService: (serviceId) => serviceId === CODING_WORKSPACE_EXECUTION_SERVICE_V1 ? workspace : undefined,
+  });
+
   return {
     identity: structuredClone(input.identity),
     workspace,
     activationEvidence,
+    operationBinding,
     isOpen: () => open,
     close: async () => {
       open = false;
