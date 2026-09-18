@@ -113,7 +113,7 @@ function appendBounded(current: Buffer, chunk: Buffer, maximum: number): { value
 function runProcess(
   file: string,
   args: readonly string[],
-  options: { timeoutMs?: number; signal?: AbortSignal; maxOutputBytes?: number } = {},
+  options: { timeoutMs?: number; signal?: AbortSignal | undefined; maxOutputBytes?: number } = {},
 ): Promise<ProcessResult> {
   const timeoutMs = options.timeoutMs ?? DOCKER_CONTROL_TIMEOUT_MS;
   const maximum = options.maxOutputBytes ?? MAX_OUTPUT_BYTES;
@@ -181,7 +181,7 @@ async function docker(
   args: readonly string[],
   options: {
     timeoutMs?: number;
-    signal?: AbortSignal;
+    signal?: AbortSignal | undefined;
     maxOutputBytes?: number;
     allowFailure?: boolean;
   } = {},
