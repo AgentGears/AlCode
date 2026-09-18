@@ -222,12 +222,26 @@ export interface ProgramArtifactReference {
   productionStepId: ProgramArtifactProductionStepId | null;
 }
 
+/**
+ * Provider-neutral A5 physical-world reference. Optional for legacy/replayed
+ * pre-A5 observations; A5 world-bound observation sources populate it so the
+ * existing canonical execution-base comparison naturally fences same-bytes ABA.
+ */
+export interface ExecutionWorldObservationReferenceV1 {
+  workspaceId: string;
+  providerKind: string;
+  executionWorldGenerationId: string;
+  providerDescriptorDigest: string;
+  effectivePolicyDigest: string;
+}
+
 export interface ExecutionObservationIdentity {
   kind: "workspace-observation-v1";
   providerKind: string;
   workspaceIdentity: string;
   coverageDigest: string;
   stateDigest: string;
+  executionWorld?: ExecutionWorldObservationReferenceV1;
 }
 
 export interface ProgramAttemptExecutionBase {

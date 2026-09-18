@@ -25,6 +25,7 @@ import {
 } from "@alcode/program-state";
 import type { WorkspaceEventStore } from "@alcode/storage";
 import { CanonicalAdmissionQueue } from "./admission-queue.ts";
+import type { ExecutionWorldOperationProvenanceV1 } from "./execution-world.ts";
 
 export interface ProgramDispatchWorkspaceCoordinatorV1 {
   runExclusive<T>(work: () => Promise<T>): Promise<T>;
@@ -49,6 +50,10 @@ export interface ProgramFirstDispatchPlanningBridgeV1 {
   recheckAcceptedPlanningBase(programStateId: ReturnType<typeof asEventProgramStateId>): Promise<void>;
 }
 
+export interface ProgramExecutionWorldAuthorityV1 {
+  currentOperationProvenance(): Promise<ExecutionWorldOperationProvenanceV1>;
+}
+
 export interface ProgramDispatchServiceOptionsV1 {
   store: WorkspaceEventStore;
   admission: CanonicalAdmissionQueue;
@@ -57,6 +62,7 @@ export interface ProgramDispatchServiceOptionsV1 {
   agentGenerations: ProgramAgentGenerationAuthorityV1;
   recovery: ProgramRecoveryAuthorityV1;
   firstDispatchPlanning: ProgramFirstDispatchPlanningBridgeV1;
+  executionWorld?: ProgramExecutionWorldAuthorityV1;
 }
 
 export interface ProgramRootOperationContextV1 {
@@ -77,6 +83,7 @@ export interface ProgramRoutedRootOperationInputV1 {
   operationId: string;
   workspaceAccessClass: "no_workspace_access" | "read_only" | "may_write";
   program?: ProgramRootOperationContextV1;
+  executionWorld?: ExecutionWorldOperationProvenanceV1;
   drafts: readonly EventDraft<string, unknown>[];
 }
 
@@ -278,6 +285,98 @@ function sameBase(left: ProgramAttemptExecutionBase, right: ProgramAttemptExecut
   return canonicalStringify(left) === canonicalStringify(right);
 }
 
+function sameExecutionWorld(
+  left: ExecutionWorldOperationProvenanceV1,
+  right: ExecutionWorldOperationProvenanceV1,
+): boolean {
+  return left.workspaceId === right.workspaceId &&
+    left.providerKind === right.providerKind &&
+    left.executionWorldGenerationId === right.executionWorldGenerationId &&
+    left.providerDescriptorDigest === right.providerDescriptorDigest &&
+    left.effectivePolicyDigest === right.effectivePolicyDigest;
+}
+
+function requireExecutionWorldWorkspace(
+  store: WorkspaceEventStore,
+  provenance: ExecutionWorldOperationProvenanceV1,
+): void {
+  if (provenance.workspaceId !== store.workspaceId) {
+    throw new ProgramDispatchStaleError(
+      `Execution-world generation belongs to another Workspace: ${provenance.workspaceId}`,
+    );
+  }
+}
+
+function parseExecutionWorldProvenance(value: unknown): ExecutionWorldOperationProvenanceV1 {
+  const candidate = record(value);
+  const workspaceId = candidate.workspaceId;
+  const providerKind = candidate.providerKind;
+  const executionWorldGenerationId = candidate.executionWorldGenerationId;
+  const providerDescriptorDigest = candidate.providerDescriptorDigest;
+  const effectivePolicyDigest = candidate.effectivePolicyDigest;
+  if (typeof workspaceId !== "string" || workspaceId.length === 0 ||
+      typeof providerKind !== "string" || providerKind.length === 0 ||
+      typeof executionWorldGenerationId !== "string" || executionWorldGenerationId.length === 0 ||
+      typeof providerDescriptorDigest !== "string" || providerDescriptorDigest.length === 0 ||
+      typeof effectivePolicyDigest !== "string" || effectivePolicyDigest.length === 0) {
+    throw new ProgramDispatchControlError("Invalid durable ProgramAttempt execution-world binding");
+  }
+  return {
+    workspaceId,
+    providerKind,
+    executionWorldGenerationId,
+    providerDescriptorDigest,
+    effectivePolicyDigest,
+  };
+}
+
+export function resolveProgramAttemptExecutionWorldBindingV1(
+  events: readonly PersistedDomainEvent<string, unknown>[],
+  programAttemptId: string,
+): ExecutionWorldOperationProvenanceV1 | null {
+  let binding: ExecutionWorldOperationProvenanceV1 | null = null;
+  for (const event of events) {
+    if (event.type !== "program.attempt.execution_world.bound") continue;
+    const payload = record(event.payload);
+    if (String(payload.programAttemptId ?? "") !== programAttemptId) continue;
+    const candidate = parseExecutionWorldProvenance(payload.executionWorld);
+    if (binding !== null && !sameExecutionWorld(binding, candidate)) {
+      throw new ProgramDispatchControlError(
+        `ProgramAttempt ${programAttemptId} has conflicting durable execution-world bindings`,
+      );
+    }
+    binding = candidate;
+  }
+  return binding;
+}
+
+function attemptExecutionWorldBindingEvent(
+  store: WorkspaceEventStore,
+  sessionId: EventSessionId,
+  programStateId: string,
+  programAttemptId: string,
+  workItemId: string,
+  executionWorld: ExecutionWorldOperationProvenanceV1,
+): EventDraft<string, unknown> {
+  return {
+    eventId: mkEventId(),
+    idempotencyKey: `program.attempt.execution_world.bound:${programAttemptId}`,
+    correlationId: programAttemptId,
+    workspaceId: asWorkspaceId(store.workspaceId),
+    sessionId,
+    programStateId: asEventProgramStateId(programStateId),
+    occurredAt: new Date().toISOString(),
+    type: "program.attempt.execution_world.bound",
+    payload: {
+      programAttemptId,
+      workItemId,
+      executionWorld: structuredClone(executionWorld),
+    },
+    payloadSchemaVersion: 1,
+    producer: { kind: "runtime", component: "program-dispatch" },
+  };
+}
+
 function durableWorkspaceEffectGeneration(
   events: readonly PersistedDomainEvent<string, unknown>[],
 ): number | null {
@@ -452,6 +551,11 @@ export class ProgramDispatchServiceV1 {
           return { status: "rebase_required", state: next, mismatchReceiptId: String(receiptId) } as const;
         }
 
+        const executionWorld = this.options.executionWorld === undefined
+          ? null
+          : await this.options.executionWorld.currentOperationProvenance();
+        if (executionWorld !== null) requireExecutionWorldWorkspace(this.options.store, executionWorld);
+
         const attemptId = asProgramAttemptId(uuidv7());
         const executionBase = currentBase;
         const next = applyProgramTransition(state, {
@@ -466,9 +570,20 @@ export class ProgramDispatchServiceV1 {
             expectedExecutionBase: executionBase,
           },
         });
-        await this.options.store.append([
+        const drafts: EventDraft<string, unknown>[] = [
           transitionEvent(this.options.store, input.sessionId, next, "attempt.issue", String(attemptId)),
-        ]);
+        ];
+        if (executionWorld !== null) {
+          drafts.push(attemptExecutionWorldBindingEvent(
+            this.options.store,
+            input.sessionId,
+            programStateId,
+            String(attemptId),
+            String(workItemId),
+            executionWorld,
+          ));
+        }
+        await this.options.store.append(drafts);
         return { status: "issued", state: next, programAttemptId: String(attemptId) } as const;
       });
     });
@@ -553,6 +668,19 @@ export class ProgramDispatchServiceV1 {
         const events = await replayAll(this.options.store);
         const canonicalProgram = currentProgramOperationContextFromEvents(events, input.sessionId);
         const program = input.program ?? canonicalProgram;
+        if (input.executionWorld !== undefined && this.options.executionWorld === undefined) {
+          throw new ProgramDispatchControlError(
+            "Captured Operation execution-world binding cannot be validated without execution-world authority",
+          );
+        }
+        const needExecutionWorld = this.options.executionWorld !== undefined &&
+          (program !== null && program !== undefined || input.executionWorld !== undefined);
+        const currentExecutionWorld = needExecutionWorld
+          ? await this.options.executionWorld!.currentOperationProvenance()
+          : null;
+        if (currentExecutionWorld !== null) {
+          requireExecutionWorldWorkspace(this.options.store, currentExecutionWorld);
+        }
 
         if (program === null || program === undefined) {
           if (input.workspaceAccessClass === "may_write") {
@@ -561,7 +689,17 @@ export class ProgramDispatchServiceV1 {
               throw new ProgramDispatchStaleError(`Outstanding Workspace writer barrier: ${writers.join(",")}`);
             }
           }
-          const ordinary = input.drafts.map((draft) => {
+          let admittedExecutionWorld: ExecutionWorldOperationProvenanceV1 | null = null;
+          if (input.executionWorld !== undefined) {
+            requireExecutionWorldWorkspace(this.options.store, input.executionWorld);
+            if (currentExecutionWorld === null || !sameExecutionWorld(input.executionWorld, currentExecutionWorld)) {
+              throw new ProgramDispatchStaleError(
+                "Captured Operation execution-world generation is stale at admission",
+              );
+            }
+            admittedExecutionWorld = input.executionWorld;
+          }
+          const ordinary = input.drafts.map((draft, index) => {
             if (String(draft.workspaceId) !== this.options.store.workspaceId) {
               throw new ProgramDispatchControlError("Root operation draft belongs to another Workspace");
             }
@@ -573,6 +711,12 @@ export class ProgramDispatchServiceV1 {
             }
             if (draft.programStateId !== undefined) {
               throw new ProgramDispatchControlError("Ordinary root operation may not carry ProgramStateId");
+            }
+            if (index === 0 && admittedExecutionWorld !== null) {
+              return {
+                ...draft,
+                payload: { ...record(draft.payload), executionWorld: structuredClone(admittedExecutionWorld) },
+              };
             }
             return draft;
           });
@@ -638,6 +782,24 @@ export class ProgramDispatchServiceV1 {
           );
         }
 
+        let attemptExecutionWorld: ExecutionWorldOperationProvenanceV1 | null = null;
+        if (this.options.executionWorld !== undefined) {
+          attemptExecutionWorld = resolveProgramAttemptExecutionWorldBindingV1(events, programAttemptId);
+          if (attemptExecutionWorld === null) {
+            throw new ProgramDispatchStaleError("ProgramAttempt lacks a durable execution-world binding");
+          }
+          requireExecutionWorldWorkspace(this.options.store, attemptExecutionWorld);
+          if (currentExecutionWorld === null || !sameExecutionWorld(attemptExecutionWorld, currentExecutionWorld)) {
+            throw new ProgramDispatchStaleError("ProgramAttempt execution-world generation is stale");
+          }
+          if (input.executionWorld !== undefined) {
+            requireExecutionWorldWorkspace(this.options.store, input.executionWorld);
+            if (!sameExecutionWorld(input.executionWorld, attemptExecutionWorld)) {
+              throw new ProgramDispatchStaleError("Captured Operation execution binding does not match ProgramAttempt generation");
+            }
+          }
+        }
+
         const ownership = {
           programStateId,
           expectedProgramRevision: program.expectedProgramRevision,
@@ -660,7 +822,15 @@ export class ProgramDispatchServiceV1 {
           }
           return {
             ...draft,
-            ...(index === 0 ? { payload: { ...record(draft.payload), ...ownership } } : {}),
+            ...(index === 0 ? {
+              payload: {
+                ...record(draft.payload),
+                ...ownership,
+                ...(input.executionWorld !== undefined && attemptExecutionWorld !== null
+                  ? { executionWorld: structuredClone(attemptExecutionWorld) }
+                  : {}),
+              },
+            } : {}),
             programStateId: asEventProgramStateId(programStateId),
           };
         });
@@ -907,6 +1077,10 @@ export class ProgramDispatchServiceV1 {
         const events = await replayAll(this.options.store);
         const state = requireProgramState(events, programStateId);
         const currentBase = effectiveObservedBase(events, observation.base);
+        const currentExecutionWorld = this.options.executionWorld === undefined
+          ? null
+          : await this.options.executionWorld.currentOperationProvenance();
+        if (currentExecutionWorld !== null) requireExecutionWorldWorkspace(this.options.store, currentExecutionWorld);
         requireExactRevision(state, input.expectedProgramRevision);
         if (!sessionIsActive(events, sessionId) ||
             !state.attachedSessionIds.some((id) => String(id) === sessionId)) {
@@ -937,6 +1111,17 @@ export class ProgramDispatchServiceV1 {
           throw new ProgramDispatchStaleError("ProgramAttempt execution base no longer matches the protected current base");
         }
 
+        let attemptExecutionWorld: ExecutionWorldOperationProvenanceV1 | null = null;
+        if (this.options.executionWorld !== undefined) {
+          attemptExecutionWorld = resolveProgramAttemptExecutionWorldBindingV1(events, programAttemptId);
+          if (attemptExecutionWorld === null) {
+            throw new ProgramDispatchStaleError("ProgramAttempt lacks a durable execution-world binding");
+          }
+          if (currentExecutionWorld === null || !sameExecutionWorld(attemptExecutionWorld, currentExecutionWorld)) {
+            throw new ProgramDispatchStaleError("ProgramAttempt execution-world generation is stale");
+          }
+        }
+
         const rootPayload = record(drafts[0]!.payload);
         if (String(rootPayload.programStateId ?? "") !== programStateId ||
             Number(rootPayload.expectedProgramRevision) !== input.expectedProgramRevision ||
@@ -946,7 +1131,8 @@ export class ProgramDispatchServiceV1 {
           throw new ProgramDispatchControlError("operation.requested payload does not match protected ProgramAttempt authority");
         }
 
-        const stamped = drafts.map((draft) => {
+        const worldScoped = rootPayload.workspaceAccessClass !== "no_workspace_access";
+        const stamped = drafts.map((draft, index) => {
           if (String(draft.workspaceId) !== this.options.store.workspaceId) {
             throw new ProgramDispatchControlError("Program operation draft belongs to another Workspace");
           }
@@ -959,7 +1145,13 @@ export class ProgramDispatchServiceV1 {
           if (draft.programStateId !== undefined && String(draft.programStateId) !== programStateId) {
             throw new ProgramDispatchControlError("Program operation draft ProgramStateId does not match Attempt authority");
           }
-          return { ...draft, programStateId: asEventProgramStateId(programStateId) };
+          return {
+            ...draft,
+            ...(index === 0 && worldScoped && attemptExecutionWorld !== null
+              ? { payload: { ...record(draft.payload), executionWorld: structuredClone(attemptExecutionWorld) } }
+              : {}),
+            programStateId: asEventProgramStateId(programStateId),
+          };
         });
         return this.options.store.append(stamped);
       });
@@ -985,6 +1177,10 @@ export class ProgramDispatchServiceV1 {
         const events = await replayAll(this.options.store);
         const state = requireProgramState(events, programStateId);
         const currentBase = effectiveObservedBase(events, observation.base);
+        const currentExecutionWorld = this.options.executionWorld === undefined
+          ? null
+          : await this.options.executionWorld.currentOperationProvenance();
+        if (currentExecutionWorld !== null) requireExecutionWorldWorkspace(this.options.store, currentExecutionWorld);
         requireExactRevision(state, input.expectedProgramRevision);
         if (!sessionIsActive(events, String(input.sessionId)) ||
             !state.attachedSessionIds.some((id) => String(id) === String(input.sessionId))) {
@@ -1013,6 +1209,15 @@ export class ProgramDispatchServiceV1 {
         }
         if (!sameBase(attempt.expectedExecutionBase, currentBase)) {
           throw new ProgramDispatchStaleError("ProgramAttempt execution base no longer matches the protected current base");
+        }
+        if (this.options.executionWorld !== undefined) {
+          const attemptExecutionWorld = resolveProgramAttemptExecutionWorldBindingV1(events, input.programAttemptId);
+          if (attemptExecutionWorld === null) {
+            throw new ProgramDispatchStaleError("ProgramAttempt lacks a durable execution-world binding");
+          }
+          if (currentExecutionWorld === null || !sameExecutionWorld(attemptExecutionWorld, currentExecutionWorld)) {
+            throw new ProgramDispatchStaleError("ProgramAttempt execution-world generation is stale");
+          }
         }
         return { state, executionBase: currentBase };
       });

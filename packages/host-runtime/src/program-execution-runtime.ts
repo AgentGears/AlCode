@@ -31,6 +31,7 @@ import {
   ProgramExecutionApplicationPortV1,
   ProgramExecutionSchedulerV1,
 } from "./program-execution-scheduler.ts";
+import { withProgramDispatchExecutionWorldGuardV1 } from "./program-dispatch-execution-world-guard.ts";
 import {
   ProgramPlanningControlError,
   ProgramPlanningServiceV1,
@@ -40,6 +41,7 @@ import {
   ProgramDispatchServiceV1,
   type ProgramDispatchWorkspaceCoordinatorV1,
   type ProgramExecutionObservationSourceV1,
+  type ProgramExecutionWorldAuthorityV1,
 } from "./program-dispatch.ts";
 import { Phase1RecoveryControllerV1 } from "./program-recovery.ts";
 import type { HostSessionHandle } from "./session-manager.ts";
@@ -87,6 +89,8 @@ export interface ProgramExecutionRuntimeOptionsV1 {
   verifierCatalog?: HostProgramVerifierCatalogV1;
   artifactStore: HostArtifactStore;
   workspaceCoordinator?: ProgramDispatchWorkspaceCoordinatorV1 & PlanningReadBarrierV1;
+  /** Optional for legacy fixtures; production A5 callers bind ProgramAttempts to this exact world authority. */
+  executionWorld?: ProgramExecutionWorldAuthorityV1;
 }
 
 /**
@@ -151,14 +155,18 @@ export class ProgramExecutionRuntimeV1 {
       capabilities: options.host.capabilities,
     });
 
+    const dispatchStore = options.executionWorld === undefined
+      ? this.store
+      : withProgramDispatchExecutionWorldGuardV1(this.store);
     this.dispatch = new ProgramDispatchServiceV1({
-      store: this.store,
+      store: dispatchStore,
       admission: this.host.admission,
       workspaceCoordinator: this.workspaceCoordinator,
       observations: options.observations,
       agentGenerations: this.host.programAgents,
       recovery: this.recovery,
       firstDispatchPlanning: this.creation,
+      ...(options.executionWorld !== undefined ? { executionWorld: options.executionWorld } : {}),
     });
 
     this.scheduler = new ProgramExecutionSchedulerV1({
