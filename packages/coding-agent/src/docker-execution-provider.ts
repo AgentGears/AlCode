@@ -124,8 +124,8 @@ function runProcess(
       windowsHide: true,
       detached: process.platform !== "win32",
     });
-    let stdout = Buffer.alloc(0);
-    let stderr = Buffer.alloc(0);
+    let stdout: Buffer = Buffer.alloc(0);
+    let stderr: Buffer = Buffer.alloc(0);
     let truncated = false;
     let timedOut = false;
     let cancelled = false;
