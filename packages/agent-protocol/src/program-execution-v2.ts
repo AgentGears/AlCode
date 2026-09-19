@@ -314,16 +314,31 @@ export function isProgramProgressProposalV2(value: unknown): value is ProgramPro
     && withinBytes(value, PROGRAM_PROGRESS_MAX_BYTES);
 }
 
+function executionWorldObservation(value: unknown): boolean {
+  return isObject(value)
+    && onlyKeys(value, [
+      "workspaceId", "providerKind", "executionWorldGenerationId", "providerDescriptorDigest", "effectivePolicyDigest",
+    ])
+    && nonEmptyString(value.workspaceId)
+    && nonEmptyString(value.providerKind)
+    && nonEmptyString(value.executionWorldGenerationId)
+    && nonEmptyString(value.providerDescriptorDigest)
+    && nonEmptyString(value.effectivePolicyDigest);
+}
+
 function executionBase(value: unknown): boolean {
   if (!isObject(value) || !onlyKeys(value, ["workspaceEffectGeneration", "observation"])
       || !nonNegativeInteger(value.workspaceEffectGeneration) || !isObject(value.observation)) return false;
   const observation = value.observation;
-  return onlyKeys(observation, ["kind", "providerKind", "workspaceIdentity", "coverageDigest", "stateDigest"])
+  return onlyKeys(observation, [
+    "kind", "providerKind", "workspaceIdentity", "coverageDigest", "stateDigest", "executionWorld",
+  ])
     && observation.kind === "workspace-observation-v1"
     && nonEmptyString(observation.providerKind)
     && nonEmptyString(observation.workspaceIdentity)
     && nonEmptyString(observation.coverageDigest)
-    && nonEmptyString(observation.stateDigest);
+    && nonEmptyString(observation.stateDigest)
+    && (observation.executionWorld === undefined || executionWorldObservation(observation.executionWorld));
 }
 
 function retryFailure(value: unknown): boolean {
