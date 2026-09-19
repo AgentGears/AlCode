@@ -429,11 +429,12 @@ async function main(): Promise<void> {
       throw new Error(`Adaptive baseline acceptance failed: ${adoptedBaseline.decision}${adoptedBaseline.reasonCode ? ` (${adoptedBaseline.reasonCode})` : ""}`);
     }
 
-    // The pre-adoption attachment is deliberately V1. Reattach the same
-    // disposable Agent connection after the canonical baseline cut so routing
-    // negotiates V2 authority; no active Attempt or Operation crosses this seam.
+    // The pre-adoption attachment is deliberately V1. Retire that physical
+    // Agent generation at the canonical baseline cut, then attach a fresh
+    // generation so an asynchronous V1 detach cannot ABA-remove V2 authority.
     attachedAgents.pop()?.detach();
-    await attachConnection(connection, "reattach");
+    connection = await supervisor.replace();
+    await attachConnection(connection, "agent_replaced");
 
     const cancelActiveProgram = async (reason: string): Promise<void> => {
       for (let pass = 0; pass < 2; pass++) {
