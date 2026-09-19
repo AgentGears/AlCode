@@ -95,10 +95,15 @@ function storeThatRecords(
     workspaceId: TEST_WORKSPACE_ID,
     append: async (batch: readonly EventDraft<string, unknown>[]) => {
       appended.push([...batch]);
-      const persisted = batch.map((draft, index) => ({
-        ...draft,
-        sequence: history.length + index + 1,
-      })) as PersistedDomainEvent<string, unknown>[];
+      const persisted: PersistedDomainEvent<string, unknown>[] = batch.map((draft, index) => {
+        const sequence = history.length + index + 1;
+        return {
+          ...draft,
+          sequence,
+          recordedAt: draft.occurredAt,
+          eventDigest: `test-digest-${sequence}`,
+        };
+      });
       history.push(...persisted);
       return persisted;
     },
@@ -173,11 +178,13 @@ describe("A5 fixed Program dispatch execution-world persistence guard", () => {
         sessionId: sessionId as never,
         programStateId: asEventProgramStateId(String(programStateId)),
         occurredAt: "2026-09-16T00:00:00.000Z",
+        recordedAt: "2026-09-16T00:00:00.000Z",
+        eventDigest: "test-digest-1",
         type: "program.transitioned",
         payload: { transitionKind: "attempt.issue", state: issued },
         payloadSchemaVersion: 1,
         producer: { kind: "runtime", component: "program-dispatch" },
-      } as PersistedDomainEvent<string, unknown>,
+      },
       {
         sequence: 2,
         eventId: mkEventId(),
@@ -185,11 +192,13 @@ describe("A5 fixed Program dispatch execution-world persistence guard", () => {
         sessionId: sessionId as never,
         programStateId: asEventProgramStateId(String(programStateId)),
         occurredAt: "2026-09-16T00:00:00.001Z",
+        recordedAt: "2026-09-16T00:00:00.001Z",
+        eventDigest: "test-digest-2",
         type: "program.attempt.execution_world.bound",
         payload: { programAttemptId: String(attemptId), executionWorld: world("g0") },
         payloadSchemaVersion: 1,
         producer: { kind: "runtime", component: "program-dispatch" },
-      } as PersistedDomainEvent<string, unknown>,
+      },
     );
 
     const migrated = applyProgramTransition(issued, {
