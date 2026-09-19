@@ -143,6 +143,67 @@ describeLocked("A5 execution-world generation lifecycle", () => {
     expect(closed.closureEvidence?.bindingUnavailable).toBe(true);
   });
 
+  it("accepts exact lifecycle retries but rejects changed physical evidence or loss semantics", async () => {
+    locked = await openStore(dir);
+    const service = new ExecutionWorldServiceV1(locked.store, new CanonicalAdmissionQueue(locked.store));
+    const workspaceId = String(locked.store.workspaceId);
+    const world = await service.prepareActivation({
+      activationRequestId: "semantic-idempotency", workspaceId, sessionId,
+      providerDescriptor: localProvider, effectivePolicy: localPolicy,
+    });
+    const activationEvidence = {
+      ...readiness("semantic-idempotency"),
+      providerNativeInstanceId: "provider-native-g0",
+    };
+    await service.observeActivation({
+      executionWorldGenerationId: world.executionWorldGenerationId,
+      evidence: activationEvidence,
+    });
+    expect((await service.observeActivation({
+      executionWorldGenerationId: world.executionWorldGenerationId,
+      evidence: activationEvidence,
+    })).state).toBe("active");
+    await expect(service.observeActivation({
+      executionWorldGenerationId: world.executionWorldGenerationId,
+      evidence: { ...activationEvidence, providerNativeInstanceId: "provider-native-other" },
+    })).rejects.toThrow("different physical evidence");
+
+    await service.requestRetirement(world.executionWorldGenerationId);
+    const closureEvidence = {
+      ...closure("semantic-idempotency"),
+      providerNativeInstanceId: "provider-native-g0",
+    };
+    await service.observeClosure({
+      executionWorldGenerationId: world.executionWorldGenerationId,
+      evidence: closureEvidence,
+    });
+    expect((await service.observeClosure({
+      executionWorldGenerationId: world.executionWorldGenerationId,
+      evidence: closureEvidence,
+    })).state).toBe("closed");
+    await expect(service.observeClosure({
+      executionWorldGenerationId: world.executionWorldGenerationId,
+      evidence: { ...closureEvidence, closureEvidenceDigest: digestOf({ kind: "test-closure", label: "other" }) },
+    })).rejects.toThrow("different physical evidence");
+
+    const lostWorld = await service.prepareActivation({
+      activationRequestId: "semantic-loss", workspaceId, sessionId,
+      providerDescriptor: localProvider, effectivePolicy: localPolicy,
+    });
+    await service.markLost({
+      executionWorldGenerationId: lostWorld.executionWorldGenerationId,
+      reasonCode: "provider_disconnected",
+    });
+    expect((await service.markLost({
+      executionWorldGenerationId: lostWorld.executionWorldGenerationId,
+      reasonCode: "provider_disconnected",
+    })).state).toBe("lost_or_unknown");
+    await expect(service.markLost({
+      executionWorldGenerationId: lostWorld.executionWorldGenerationId,
+      reasonCode: "different_reason",
+    })).rejects.toThrow("different reason");
+  });
+
   it("rebuilds lifecycle and current-generation projection exactly after restart", async () => {
     locked = await openStore(dir);
     const first = new ExecutionWorldServiceV1(locked.store, new CanonicalAdmissionQueue(locked.store));
