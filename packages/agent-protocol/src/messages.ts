@@ -101,6 +101,14 @@ export interface ProgramExecutionObservationIdentityV1 {
   workspaceIdentity: string;
   coverageDigest: string;
   stateDigest: string;
+  /** Exact A5 physical execution-world provenance when the observation is world-bound. */
+  executionWorld?: {
+    workspaceId: string;
+    providerKind: string;
+    executionWorldGenerationId: string;
+    providerDescriptorDigest: string;
+    effectivePolicyDigest: string;
+  };
 }
 
 export interface ProgramAttemptExecutionBaseV1 {

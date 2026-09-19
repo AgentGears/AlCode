@@ -1,0 +1,89 @@
+name: A5 Execution Provider
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/a5-execution-provider-*.md'
+      - 'packages/program-state/src/types.ts'
+      - 'packages/program-state/src/validation.ts'
+      - 'packages/program-state/src/execution-world-validation.test.ts'
+      - 'packages/host-runtime/src/capability-broker.ts'
+      - 'packages/host-runtime/src/capability-broker-execution-world-race.test.ts'
+      - 'packages/host-runtime/src/execution-world.ts'
+      - 'packages/host-runtime/src/execution-world.test.ts'
+      - 'packages/host-runtime/src/execution-world-binding.ts'
+      - 'packages/host-runtime/src/execution-world-binding.test.ts'
+      - 'packages/host-runtime/src/program-dispatch.ts'
+      - 'packages/host-runtime/src/program-dispatch-execution-world-guard.ts'
+      - 'packages/host-runtime/src/program-dispatch-execution-world-guard.test.ts'
+      - 'packages/host-runtime/src/program-execution-runtime.ts'
+      - 'packages/host-runtime/src/program-execution-world-binding.test.ts'
+      - 'packages/host-runtime/src/program-adaptive-execution-world-v1.ts'
+      - 'packages/host-runtime/src/program-adaptive-execution-world-v1.test.ts'
+      - 'packages/host-runtime/src/program-adaptive-production-entry-v1.ts'
+      - 'packages/host-runtime/src/index.ts'
+      - 'packages/coding-agent/src/cli.ts'
+      - 'packages/coding-agent/src/*execution-provider*.ts'
+      - 'packages/coding-agent/src/*execution-world*.ts'
+      - 'packages/coding-agent/src/host-capabilities.ts'
+      - 'packages/coding-agent/src/host-capabilities.program.test.ts'
+      - 'packages/coding-agent/src/planning-read-catalog.ts'
+      - 'packages/coding-agent/src/verification-profile.ts'
+      - 'packages/coding-agent/src/cli-a5-isolated-s02.integration.test.ts'
+      - 'scripts/gate/gate-a5-execution-provider.ts'
+      - 'package.json'
+      - '.github/workflows/a5-execution-provider.yml'
+  pull_request:
+    paths:
+      - 'docs/a5-execution-provider-*.md'
+      - 'packages/program-state/src/types.ts'
+      - 'packages/program-state/src/validation.ts'
+      - 'packages/program-state/src/execution-world-validation.test.ts'
+      - 'packages/host-runtime/src/capability-broker.ts'
+      - 'packages/host-runtime/src/capability-broker-execution-world-race.test.ts'
+      - 'packages/host-runtime/src/execution-world.ts'
+      - 'packages/host-runtime/src/execution-world.test.ts'
+      - 'packages/host-runtime/src/execution-world-binding.ts'
+      - 'packages/host-runtime/src/execution-world-binding.test.ts'
+      - 'packages/host-runtime/src/program-dispatch.ts'
+      - 'packages/host-runtime/src/program-dispatch-execution-world-guard.ts'
+      - 'packages/host-runtime/src/program-dispatch-execution-world-guard.test.ts'
+      - 'packages/host-runtime/src/program-execution-runtime.ts'
+      - 'packages/host-runtime/src/program-execution-world-binding.test.ts'
+      - 'packages/host-runtime/src/program-adaptive-execution-world-v1.ts'
+      - 'packages/host-runtime/src/program-adaptive-execution-world-v1.test.ts'
+      - 'packages/host-runtime/src/program-adaptive-production-entry-v1.ts'
+      - 'packages/host-runtime/src/index.ts'
+      - 'packages/coding-agent/src/cli.ts'
+      - 'packages/coding-agent/src/*execution-provider*.ts'
+      - 'packages/coding-agent/src/*execution-world*.ts'
+      - 'packages/coding-agent/src/host-capabilities.ts'
+      - 'packages/coding-agent/src/host-capabilities.program.test.ts'
+      - 'packages/coding-agent/src/planning-read-catalog.ts'
+      - 'packages/coding-agent/src/verification-profile.ts'
+      - 'packages/coding-agent/src/cli-a5-isolated-s02.integration.test.ts'
+      - 'scripts/gate/gate-a5-execution-provider.ts'
+      - 'package.json'
+      - '.github/workflows/a5-execution-provider.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10.13.1 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.17.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Verify Docker backend availability
+        run: docker version
+      - name: Run frozen A5 execution-provider gate
+        run: pnpm gate:a5-execution-provider

@@ -31,6 +31,10 @@ export interface DefaultProgramVerifierConfigurationV1 {
   pathObservations: ProgramWorkspacePathObservationSourceV1;
 }
 
+export interface ProgramWorkspacePathStateObserverV1 {
+  observePathState(path: string): Promise<WorkspacePathState>;
+}
+
 function containedPath(root: string, requested: string): string {
   if (typeof requested !== "string" || requested.length === 0 || isAbsolute(requested)) {
     throw new Error("Verifier path must be a non-empty Workspace-relative path");
@@ -72,7 +76,7 @@ function safeTestTarget(root: string, value: unknown): string {
   return value.replace(/\\/g, "/");
 }
 
-async function observePathState(absolute: string): Promise<WorkspacePathState> {
+async function observeHostLocalPathState(absolute: string): Promise<WorkspacePathState> {
   try {
     const stat = await lstat(absolute);
     if (stat.isSymbolicLink()) return "symlink";
@@ -100,6 +104,7 @@ export function createDefaultProgramVerifierConfiguration(options: {
   root: string;
   capabilities: readonly HostCapability[];
   observations: ProgramExecutionObservationSourceV1;
+  pathStateObserver?: ProgramWorkspacePathStateObserverV1;
 }): DefaultProgramVerifierConfigurationV1 {
   const bash = options.capabilities.find((capability) => capability.name === "bash");
   if (bash === undefined || bash.inputSchema === undefined) {
@@ -215,10 +220,11 @@ export function createDefaultProgramVerifierConfiguration(options: {
   const pathObservations: ProgramWorkspacePathObservationSourceV1 = {
     observePath: async (path) => {
       try {
-        const absolute = containedPath(options.root, path);
         const before = await options.observations.observe();
         if (before.status === "unknown") return before;
-        const pathState = await observePathState(absolute);
+        const pathState = options.pathStateObserver === undefined
+          ? await observeHostLocalPathState(containedPath(options.root, path))
+          : await options.pathStateObserver.observePathState(path);
         const after = await options.observations.observe();
         if (after.status === "unknown") return after;
         if (JSON.stringify(before.base) !== JSON.stringify(after.base)) {

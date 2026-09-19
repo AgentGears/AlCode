@@ -25,6 +25,10 @@ import {
 } from "@alcode/storage";
 import { CanonicalAdmissionQueue } from "./admission-queue.ts";
 import { CognitionGateway } from "./cognition-gateway.ts";
+import type {
+  ExecutionWorldOperationBindingAuthorityV1,
+  ExecutionWorldOperationBindingV1,
+} from "./execution-world-binding.ts";
 import type { HostPolicy } from "./policy.ts";
 import type { WorkspaceMutationAdmissionAuthorityV1 } from "./program-recovery.ts";
 import {
@@ -64,9 +68,12 @@ export interface HostCapabilityContext {
   signal?: AbortSignal;
   /** Exact persisted operation-local contract the adapter must prove ended. */
   quiescenceContract?: HostCapabilityExecutionQuiescenceContractV1;
+  /** Host-captured immutable physical execution binding for this Operation. */
+  executionWorldBinding?: ExecutionWorldOperationBindingV1;
 }
 
 export type WorkspaceAccessClassV1 = "no_workspace_access" | "read_only" | "may_write";
+export type HostCapabilityExecutionScopeV1 = "host" | "workspace_world";
 
 export interface HostCapabilityQuiescenceRecoveryInputV1 {
   operationId: string;
@@ -120,6 +127,8 @@ export interface HostCapability {
   /** Legacy trusted metadata; explicit workspaceAccessClass is authoritative. */
   isReadOnly?: boolean;
   workspaceAccessClass?: WorkspaceAccessClassV1;
+  /** Physical execution authority is independent of logical Workspace access. */
+  executionScope?: HostCapabilityExecutionScopeV1;
   /** Host-owned containment proof contract for Program-linked may_write execution. */
   quiescence?: HostCapabilityQuiescenceV1;
   /** Optional stable Host-owned historical effect reconciliation contract. */
@@ -211,6 +220,21 @@ function record(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
     : { value };
+}
+
+function stampExecutionWorld(
+  drafts: readonly EventDraft<string, unknown>[],
+  binding: ExecutionWorldOperationBindingV1,
+): EventDraft<string, unknown>[] {
+  return drafts.map((draft, index) => index === 0
+    ? {
+        ...draft,
+        payload: {
+          ...record(draft.payload),
+          executionWorld: structuredClone(binding.provenance),
+        },
+      }
+    : draft);
 }
 
 async function replayAllEvents(store: WorkspaceEventStore): Promise<PersistedDomainEvent<string, unknown>[]> {
@@ -372,6 +396,7 @@ export class CapabilityBroker {
   private hookCoordinator: CapabilityHookCoordinator | undefined;
   private programOperationAuthority: ProgramRootOperationAuthorityV1 | undefined;
   private workspaceMutationAdmissionAuthority: WorkspaceMutationAdmissionAuthorityV1 | undefined;
+  private executionWorldBindingAuthority: ExecutionWorldOperationBindingAuthorityV1 | undefined;
 
   constructor(
     private readonly store: WorkspaceEventStore,
@@ -461,6 +486,10 @@ export class CapabilityBroker {
     this.workspaceMutationAdmissionAuthority = authority;
   }
 
+  setExecutionWorldBindingAuthority(authority: ExecutionWorldOperationBindingAuthorityV1 | undefined): void {
+    this.executionWorldBindingAuthority = authority;
+  }
+
   private approvalKey(sessionId: SessionId, toolName: string): string {
     return `${sessionId as string}:${toolName}`;
   }
@@ -511,7 +540,15 @@ export class CapabilityBroker {
     const capability = registration.capability;
     const frozenArgs = freezeCanonical(request.args);
     const workspaceAccessClass = workspaceAccessClassOf(capability);
+    const worldScoped = capability.executionScope === "workspace_world";
     const isReadOnly = workspaceAccessClass !== "may_write";
+    if (worldScoped && this.executionWorldBindingAuthority === undefined) {
+      return this.finish(request, {
+        outcome: "denied",
+        errorCode: "execution_world_binding_unavailable",
+        error: `Workspace-world capability lacks Host execution-world binding authority: ${request.toolName}`,
+      });
+    }
     const approvalKey = this.approvalKey(request.sessionId, request.toolName);
     const alreadyApproved = this.alwaysApproved.has(approvalKey);
 
@@ -662,13 +699,18 @@ export class CapabilityBroker {
     ];
     let pre: PersistedDomainEvent<string, unknown>[];
     let program: ProgramCapabilityOperationContextV1 | null = null;
+    let executionWorldBinding: ExecutionWorldOperationBindingV1 | undefined;
     try {
       if (this.programOperationAuthority !== undefined) {
+        if (worldScoped) {
+          executionWorldBinding = await this.executionWorldBindingAuthority!.captureCurrent();
+        }
         const routed = await this.programOperationAuthority.appendRoutedRootOperation({
           sessionId: request.sessionId,
           operationId: operationId as string,
           workspaceAccessClass,
           ...(request.program !== undefined ? { program: request.program } : {}),
+          ...(executionWorldBinding !== undefined ? { executionWorld: executionWorldBinding.provenance } : {}),
           drafts: preDrafts,
         });
         if (routed.status === "program_may_write_blocked") {
@@ -704,7 +746,12 @@ export class CapabilityBroker {
               return { status: "workspace_mutation_blocked" as const, recoveryStatus };
             }
           }
-          return { status: "appended" as const, events: await this.store.append(preDrafts) };
+          let admittedDrafts = preDrafts;
+          if (worldScoped) {
+            executionWorldBinding = await this.executionWorldBindingAuthority!.captureCurrent();
+            admittedDrafts = stampExecutionWorld(preDrafts, executionWorldBinding);
+          }
+          return { status: "appended" as const, events: await this.store.append(admittedDrafts) };
         });
         if (routed.status === "program_authority_required") {
           return this.finish(request, {
@@ -755,9 +802,13 @@ export class CapabilityBroker {
     let execution: HostCapabilityResult;
     let outcome: ExecutionOutcome;
     try {
+      if (executionWorldBinding !== undefined) {
+        await executionWorldBinding.assertUsable();
+      }
       const context: HostCapabilityContext = {
         ...(request.signal ? { signal: request.signal } : {}),
         ...(quiescenceContract !== undefined ? { quiescenceContract } : {}),
+        ...(executionWorldBinding !== undefined ? { executionWorldBinding } : {}),
       };
       execution = await capability.execute(frozenArgs, context);
       const rawOutcome = execution.outcome ?? "succeeded";

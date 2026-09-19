@@ -16,7 +16,8 @@ describe("A1 CLI adaptive production wiring", () => {
     expect(cli).toContain('type: "program.semantic_baseline.seal"');
     expect(cli).toContain('type: "program.semantic_baseline.accept"');
     expect(cli).toContain("createdProgram.activeAttempt !== undefined");
-    expect(cli).toContain('await attachConnection(connection, "reattach")');
+    expect(cli).toContain("connection = await supervisor.replace()");
+    expect(cli).toContain('await attachConnection(connection, "agent_replaced")');
   });
 
   it("drives post-adoption work only through adaptive execution and terminal authority", () => {
@@ -29,7 +30,7 @@ describe("A1 CLI adaptive production wiring", () => {
 
   it("recovers a dead adaptive generation before attaching its replacement", () => {
     const recovery = cli.indexOf("await recoverAfterAgentReplacement(");
-    const replacementAttach = cli.indexOf('await attachConnection(connection, "agent_replaced")');
+    const replacementAttach = cli.indexOf('await attachConnection(connection, "agent_replaced")', recovery);
     expect(recovery).toBeGreaterThan(-1);
     expect(replacementAttach).toBeGreaterThan(recovery);
   });

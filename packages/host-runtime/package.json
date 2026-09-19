@@ -21,6 +21,14 @@
     "./code-intelligence": {
       "types": "./src/code-intelligence.ts",
       "import": "./src/code-intelligence.ts"
+    },
+    "./execution-world": {
+      "types": "./src/execution-world.ts",
+      "import": "./src/execution-world.ts"
+    },
+    "./execution-world-binding": {
+      "types": "./src/execution-world-binding.ts",
+      "import": "./src/execution-world-binding.ts"
     }
   },
   "scripts": {
