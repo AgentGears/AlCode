@@ -173,6 +173,25 @@ function validateNativeId(value: string | undefined): void {
   }
 }
 
+function activationEvidenceMatches(
+  value: unknown,
+  expected: ExecutionWorldActivationEvidenceV1,
+): boolean {
+  const actual = record(value);
+  return actual.readinessEvidenceDigest === expected.readinessEvidenceDigest
+    && actual.providerNativeInstanceId === expected.providerNativeInstanceId;
+}
+
+function closureEvidenceMatches(
+  value: unknown,
+  expected: ExecutionWorldClosureEvidenceV1,
+): boolean {
+  const actual = record(value);
+  return actual.closureEvidenceDigest === expected.closureEvidenceDigest
+    && actual.bindingUnavailable === true
+    && actual.providerNativeInstanceId === expected.providerNativeInstanceId;
+}
+
 function providerDescriptorDigest(descriptor: ExecutionProviderDescriptorV1): string {
   return digestOf(descriptor);
 }
@@ -345,7 +364,16 @@ export class ExecutionWorldServiceV1 {
 
     await this.admission.enqueue(async () => {
       const events = await replayAll(this.store);
-      if (events.some((event) => event.idempotencyKey === idempotencyKey)) return;
+      const existing = events.find((event) => event.idempotencyKey === idempotencyKey);
+      if (existing !== undefined) {
+        const payload = record(existing.payload);
+        if (!activationEvidenceMatches(payload.evidence, input.evidence)) {
+          throw new ExecutionWorldControlError(
+            "Execution-world activation observation was retried with different physical evidence",
+          );
+        }
+        return;
+      }
       const generation = projectExecutionWorldsV1(events).generations.get(input.executionWorldGenerationId);
       if (generation === undefined || generation.state !== "prepared") {
         throw new ExecutionWorldControlError("Execution-world activation can only be observed from prepared state");
@@ -406,7 +434,16 @@ export class ExecutionWorldServiceV1 {
     const idempotencyKey = `execution-world:closure:observed:${input.executionWorldGenerationId}`;
     await this.admission.enqueue(async () => {
       const events = await replayAll(this.store);
-      if (events.some((event) => event.idempotencyKey === idempotencyKey)) return;
+      const existing = events.find((event) => event.idempotencyKey === idempotencyKey);
+      if (existing !== undefined) {
+        const payload = record(existing.payload);
+        if (!closureEvidenceMatches(payload.evidence, input.evidence)) {
+          throw new ExecutionWorldControlError(
+            "Execution-world closure observation was retried with different physical evidence",
+          );
+        }
+        return;
+      }
       const generation = projectExecutionWorldsV1(events).generations.get(input.executionWorldGenerationId);
       if (generation === undefined || (generation.state !== "retiring" && generation.state !== "lost_or_unknown")) {
         throw new ExecutionWorldControlError("Execution-world closure requires retiring or lost/unknown state");
@@ -431,7 +468,16 @@ export class ExecutionWorldServiceV1 {
     const idempotencyKey = `execution-world:lost:${input.executionWorldGenerationId}`;
     await this.admission.enqueue(async () => {
       const events = await replayAll(this.store);
-      if (events.some((event) => event.idempotencyKey === idempotencyKey)) return;
+      const existing = events.find((event) => event.idempotencyKey === idempotencyKey);
+      if (existing !== undefined) {
+        const payload = record(existing.payload);
+        if (payload.reasonCode !== input.reasonCode) {
+          throw new ExecutionWorldControlError(
+            "Execution-world loss was retried with a different reason",
+          );
+        }
+        return;
+      }
       const generation = projectExecutionWorldsV1(events).generations.get(input.executionWorldGenerationId);
       if (generation === undefined || generation.state === "closed") {
         throw new ExecutionWorldControlError("Unknown or already closed execution-world generation");
